@@ -130,17 +130,17 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
 
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-foreground-muted mb-6" aria-label="Breadcrumb">
-        <Link href="/" className="hover:text-primary transition-colors">Home</Link>
-        <span className="text-border-strong">/</span>
+        <Link href="/" className="hover:text-primary transition-colors duration-150">Home</Link>
+        <svg className="w-3.5 h-3.5 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
         {product.category && (
           <>
-            <Link href={`/categories/${product.category.slug}`} className="hover:text-primary transition-colors">
+            <Link href={`/categories/${product.category.slug}`} className="hover:text-primary transition-colors duration-150">
               {product.category.name_en}
             </Link>
-            <span className="text-border-strong">/</span>
+            <svg className="w-3.5 h-3.5 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
           </>
         )}
-        <span className="text-foreground">{product.name}</span>
+        <span className="text-foreground font-medium truncate max-w-[200px] md:max-w-md">{product.name}</span>
       </nav>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
@@ -167,8 +167,8 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
               {product.images.map(img => (
                 <div
                   key={img.id}
-                  className={`w-16 h-16 flex-shrink-0 border rounded-md overflow-hidden cursor-pointer transition-colors relative ${
-                    img.isPrimary ? "border-primary ring-1 ring-primary" : "border-border hover:border-border-strong"
+                  className={`w-16 h-16 flex-shrink-0 border rounded-md overflow-hidden cursor-pointer transition-all duration-150 relative ${
+                    img.isPrimary ? "border-primary ring-2 ring-primary" : "border-border hover:border-border-strong hover:ring-1 hover:ring-primary/30"
                   }`}
                 >
                   <Image src={img.url} alt={img.altText || ""} fill className="object-cover" sizes="64px" />
@@ -207,16 +207,16 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
 
           <p className="text-xs text-foreground-muted font-mono">SKU: {product.sku}</p>
 
-          <div className="border-y border-border py-4">
+          <div className="border-y border-border py-5 space-y-3">
             {product.salePrice ? (
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-baseline gap-3 flex-wrap">
                 <span className="text-3xl font-bold text-primary font-heading">
                   {formatPrice(product.salePrice)}
                 </span>
-                <span className="text-base text-foreground-muted line-through">
+                <span className="text-base text-foreground-muted/70 line-through">
                   {formatPrice(product.basePrice)}
                 </span>
-                <span className="text-sm font-bold text-danger">
+                <span className="text-sm font-semibold text-danger bg-danger-light px-2 py-0.5 rounded">
                   -{Math.round(((product.basePrice - product.salePrice) / product.basePrice) * 100)}%
                 </span>
               </div>
@@ -225,16 +225,19 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
                 {formatPrice(product.basePrice)}
               </span>
             )}
-            <div className="flex items-center gap-1.5 mt-2">
+            <div className="flex items-center gap-2">
               {hasStock ? (
                 <>
-                  <Check className="w-4 h-4 text-success" />
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
+                  </span>
                   <span className="text-sm text-success font-medium">In Stock</span>
                   <span className="text-xs text-foreground-muted">({product.availableStock} available)</span>
                 </>
               ) : (
                 <>
-                  <X className="w-4 h-4 text-danger" />
+                  <span className="inline-flex rounded-full h-2.5 w-2.5 bg-danger"></span>
                   <span className="text-sm text-danger font-medium">Out of Stock</span>
                 </>
               )}
@@ -254,16 +257,16 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
           </button>
 
           {/* Tabs */}
-          <div className="mt-4">
+          <div className="mt-6">
             <div className="border-b border-border">
-              <div className="flex gap-6">
-                <button className="border-b-2 border-primary pb-3 text-sm font-medium text-primary">
+              <div className="flex gap-1">
+                <button className="relative px-4 pb-3 text-sm font-medium text-primary after:content-[''] after:absolute after:bottom-0 after:left-0 after:w-full after:h-0.5 after:bg-primary transition-colors">
                   Description
                 </button>
-                <button className="pb-3 text-sm text-foreground-muted hover:text-foreground transition-colors">
+                <button className="relative px-4 pb-3 text-sm text-foreground-muted hover:text-foreground transition-colors duration-150">
                   Specifications
                 </button>
-                <button className="pb-3 text-sm text-foreground-muted hover:text-foreground transition-colors">
+                <button className="relative px-4 pb-3 text-sm text-foreground-muted hover:text-foreground transition-colors duration-150">
                   Reviews
                 </button>
               </div>
@@ -280,10 +283,10 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
                   <h3 className="text-sm font-semibold text-foreground mb-3">Specifications</h3>
                   <table className="w-full text-sm border-collapse">
                     <tbody>
-                      {product.attributes.map((attr, i) => (
-                        <tr key={attr.id} className={i % 2 === 0 ? 'bg-surface' : 'bg-white'}>
-                          <td className="py-2 px-3 text-foreground-muted font-medium w-1/3">{attr.name}</td>
-                          <td className="py-2 px-3 text-foreground font-mono">{attr.value}</td>
+                      {product.attributes.map((attr) => (
+                        <tr key={attr.id} className="border-b border-border hover:bg-surface/50 transition-colors duration-150">
+                          <td className="py-2.5 px-3 text-foreground-muted font-medium w-1/3">{attr.name}</td>
+                          <td className="py-2.5 px-3 text-foreground font-mono">{attr.value}</td>
                         </tr>
                       ))}
                     </tbody>

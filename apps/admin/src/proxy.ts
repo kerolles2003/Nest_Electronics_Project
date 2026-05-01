@@ -8,8 +8,8 @@ export async function proxy(request: NextRequest) {
   /*  Skip auth check for public pages and static assets                */
   /* ------------------------------------------------------------------ */
   if (
-    pathname === '/admin/login' ||
-    pathname === '/admin/unauthorized' ||
+    pathname === '/login' ||
+    pathname === '/unauthorized' ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
   ) {
@@ -64,7 +64,9 @@ export async function proxy(request: NextRequest) {
   /* ------------------------------------------------------------------ */
   /*  2. Verify admin role — lightweight indexed lookup                  */
   /* ------------------------------------------------------------------ */
-  const { data: profile, error: profileError } = await supabase
+  const { createAdminClient } = await import('./lib/supabase')
+  const adminClient = await createAdminClient()
+  const { data: profile, error: profileError } = await adminClient
     .from('profiles')
     .select('role')
     .eq('id', user.id)

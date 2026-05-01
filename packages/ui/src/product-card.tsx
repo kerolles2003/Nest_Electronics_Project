@@ -1,3 +1,5 @@
+"use client"
+
 import * as React from "react"
 import { Heart, Star, ShoppingCart } from "lucide-react"
 import { type ProductCardDTO } from "@nest/types"
@@ -38,6 +40,7 @@ function StarRating({ rating, count }: { rating: number; count: number }) {
 }
 
 export function ProductCard({ product, className, onAddToCart, onWishlist, ...props }: ProductCardProps) {
+  const [imgLoaded, setImgLoaded] = React.useState(false)
   const outOfStock = !product.inStock
   const onSale = product.salePrice != null && product.salePrice < product.basePrice
   const discount = onSale ? Math.round(((product.basePrice - product.salePrice!) / product.basePrice) * 100) : 0
@@ -45,7 +48,7 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
   return (
     <div
       className={cn(
-        "group relative bg-white border border-border rounded-md overflow-hidden hover:shadow-card-hover hover:border-border-strong transition-all duration-200 cursor-pointer flex flex-col",
+        "group relative bg-white border border-border rounded-md overflow-hidden hover:shadow-elevated hover:border-border-strong transition-all duration-200 cursor-pointer flex flex-col",
         className
       )}
       {...props}
@@ -57,8 +60,12 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
             <img
               src={product.imageUrl}
               alt={product.name}
-              className="object-contain w-full h-full group-hover:scale-[1.03] transition-transform duration-300"
+              className={cn(
+                "object-contain w-full h-full transition-opacity duration-300",
+                imgLoaded ? "opacity-100" : "opacity-0"
+              )}
               loading="lazy"
+              onLoad={() => setImgLoaded(true)}
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-surface-low rounded-md">
@@ -68,19 +75,19 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
         </a>
 
         {/* Badges */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
+        <div className="absolute top-2 left-2 flex flex-col gap-1.5">
           {onSale && discount > 0 && (
-            <span className="badge bg-danger-light text-danger border border-danger/20">Sale</span>
+            <span className="badge bg-danger-light text-danger border border-danger/20 shadow-sm">Sale</span>
           )}
           {product.isFeatured && (
-            <span className="badge bg-amber-50 text-amber-700 border border-amber-200">Featured</span>
+            <span className="badge bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">Featured</span>
           )}
         </div>
 
-        {/* Wishlist button */}
+        {/* Wishlist button — visible on mobile, hover on desktop */}
         <button
           onClick={() => onWishlist?.(product)}
-          className="absolute top-2 right-2 p-1.5 rounded-full bg-white/80 hover:bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-opacity text-foreground-muted hover:text-danger"
+          className="absolute top-2 right-2 p-1.5 rounded-full bg-white/90 hover:bg-white shadow-sm text-foreground-muted hover:text-danger transition-all duration-150 md:opacity-0 md:group-hover:opacity-100"
           aria-label="Add to wishlist"
         >
           <Heart className="w-3.5 h-3.5" />
@@ -95,7 +102,7 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
           </span>
         )}
         <a href={`/products/${product.slug}`} className="block">
-          <h3 className="text-[13px] text-foreground font-medium line-clamp-2 leading-snug mb-2 flex-1 hover:text-primary transition-colors">
+          <h3 className="text-[13px] text-foreground font-medium line-clamp-2 leading-snug mb-2 flex-1 hover:text-primary transition-colors duration-150">
             {product.name}
           </h3>
         </a>
@@ -104,19 +111,19 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
           <StarRating rating={product.rating} count={product.reviewCount} />
         </div>
 
-        <div className="flex items-baseline gap-2 mt-auto">
+        <div className="flex items-baseline gap-2 mt-auto flex-wrap">
           {product.salePrice ? (
             <>
-              <span className="text-base font-semibold text-primary font-heading">
+              <span className="text-base font-bold text-primary font-heading">
                 {formatPrice(product.salePrice)} EGP
               </span>
-              <span className="text-xs text-foreground-muted line-through">
+              <span className="text-xs text-foreground-muted/70 line-through">
                 {formatPrice(product.basePrice)} EGP
               </span>
-              <span className="text-[11px] font-bold text-danger">-{discount}%</span>
+              <span className="text-[11px] font-semibold text-danger">-{discount}%</span>
             </>
           ) : (
-            <span className="text-base font-semibold text-primary font-heading">
+            <span className="text-base font-bold text-primary font-heading">
               {formatPrice(product.basePrice)} EGP
             </span>
           )}
@@ -125,7 +132,7 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
         <button
           onClick={() => onAddToCart?.(product)}
           disabled={outOfStock}
-          className="mt-3 w-full btn-primary text-xs py-1.5 rounded flex items-center justify-center gap-1.5 disabled:bg-foreground-disabled disabled:text-foreground-subtle disabled:cursor-not-allowed"
+          className="mt-3 w-full btn-primary text-xs py-1.5 rounded flex items-center justify-center gap-1.5 disabled:bg-foreground-disabled disabled:text-foreground-subtle disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
         >
           <ShoppingCart className="w-3.5 h-3.5" />
           {outOfStock ? "Out of Stock" : "Add to Cart"}
@@ -137,14 +144,14 @@ export function ProductCard({ product, className, onAddToCart, onWishlist, ...pr
 
 export function ProductCardSkeleton() {
   return (
-    <div className="bg-white border border-border rounded-md overflow-hidden">
+    <div className="bg-white border border-border rounded-md overflow-hidden flex flex-col">
       <div className="aspect-square bg-surface animate-pulse" />
-      <div className="p-3 space-y-2">
+      <div className="p-3 space-y-2 flex-1 flex flex-col">
         <div className="h-2 bg-surface-low animate-pulse w-1/3 rounded" />
         <div className="h-3 bg-surface-low animate-pulse w-full rounded" />
         <div className="h-3 bg-surface-low animate-pulse w-2/3 rounded" />
-        <div className="h-5 bg-surface-low animate-pulse w-1/2 rounded mt-1" />
-        <div className="h-7 bg-surface-low animate-pulse w-full rounded-sm mt-2" />
+        <div className="h-5 bg-surface-low animate-pulse w-1/2 rounded mt-auto" />
+        <div className="h-7 bg-surface-low animate-pulse w-full rounded-sm mt-1" />
       </div>
     </div>
   )

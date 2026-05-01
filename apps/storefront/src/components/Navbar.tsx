@@ -278,14 +278,17 @@ export function Navbar() {
       {/* Mobile Menu Drawer */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
-          <div className="fixed inset-0 bg-black/50" onClick={closeMobileMenu} />
-          <div className="relative flex-1 w-full max-w-xs bg-white h-full shadow-2xl overflow-y-auto flex flex-col">
+          <div 
+            className="fixed inset-0 bg-black/50 animate-in fade-in duration-200" 
+            onClick={closeMobileMenu} 
+          />
+          <div className="relative flex-1 w-full max-w-xs bg-white h-full shadow-2xl overflow-y-auto flex flex-col animate-in slide-in-from-left-full duration-300 ease-out">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <div className="flex flex-col leading-none">
                 <span className="font-heading font-bold text-xl text-foreground">NEST</span>
                 <span className="text-[10px] tracking-[0.2em] text-primary uppercase font-semibold">ELECTRONICS</span>
               </div>
-              <button onClick={closeMobileMenu} className="p-2 text-foreground-muted hover:bg-surface rounded-md transition-colors">
+              <button onClick={closeMobileMenu} className="p-2 text-foreground-muted hover:bg-surface rounded-md transition-colors duration-150">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -299,40 +302,40 @@ export function Navbar() {
                   value={mobileSearchValue}
                   onChange={(e) => setMobileSearchValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleMobileSearch(); }}
-                  className="w-full h-10 pl-9 pr-4 text-sm bg-surface border border-border rounded-md focus:outline-none focus:border-primary transition-colors"
+                  className="w-full h-10 pl-9 pr-4 text-sm bg-surface border border-border rounded-md focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors duration-150"
                 />
               </div>
             </div>
 
             <nav className="flex flex-col py-2 flex-1">
-              <Link href={ROUTES.products} onClick={closeMobileMenu} className="flex items-center gap-2 px-5 py-3 text-sm font-medium text-foreground hover:bg-surface transition-colors">
+              <Link href={ROUTES.products} onClick={closeMobileMenu} className="flex items-center gap-2 px-5 py-3 text-sm font-medium text-foreground hover:bg-surface transition-colors duration-150">
                 <LayoutGrid className="w-4 h-4" /> All Categories
               </Link>
               {rootCategories.map((cat) => (
-                <Link key={cat.id} href={`/categories/${cat.slug}`} onClick={closeMobileMenu} className="px-5 py-3 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface transition-colors">
+                <Link key={cat.id} href={`/categories/${cat.slug}`} onClick={closeMobileMenu} className="px-5 py-3 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface transition-colors duration-150">
                   {cat.name_en}
                 </Link>
               ))}
             </nav>
 
             <div className="border-t border-border p-4 space-y-1">
-              <Link href={ROUTES.wishlist} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors">
+              <Link href={ROUTES.wishlist} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors duration-150">
                 <Heart className="w-4 h-4" /> Wishlist
               </Link>
               {user ? (
                 <>
-                  <Link href={ROUTES.account.orders} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors">
+                  <Link href={ROUTES.account.orders} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors duration-150">
                     <Package className="w-4 h-4" /> My Orders
                   </Link>
-                  <Link href={ROUTES.account.profile} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors">
+                  <Link href={ROUTES.account.profile} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors duration-150">
                     <User className="w-4 h-4" /> My Profile
                   </Link>
-                  <button onClick={handleSignOut} className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-danger hover:bg-danger-light rounded-md transition-colors">
+                  <button onClick={handleSignOut} className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-danger hover:bg-danger-light rounded-md transition-colors duration-150">
                     <LogOut className="w-4 h-4" /> Sign Out
                   </button>
                 </>
               ) : (
-                <Link href={ROUTES.login} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors">
+                <Link href={ROUTES.login} onClick={closeMobileMenu} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-foreground-muted hover:text-foreground hover:bg-surface rounded-md transition-colors duration-150">
                   <User className="w-4 h-4" /> Login / Register
                 </Link>
               )}

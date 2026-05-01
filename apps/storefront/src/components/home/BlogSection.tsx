@@ -39,7 +39,7 @@ export function BlogSection() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {posts.map((post) => (
             <div key={post.id} className="group cursor-pointer">
-              <div className={`relative aspect-[16/10] rounded-2xl overflow-hidden mb-6 bg-gradient-to-br ${post.gradient} flex items-center justify-center group-hover:scale-105 transition-transform duration-700`}>
+              <div className={`relative aspect-[16/10] rounded-2xl overflow-hidden mb-6 bg-gradient-to-br ${post.gradient} flex items-center justify-center group-hover:scale-105 transition-transform duration-300`}>
                 <span className="text-5xl">{post.emoji}</span>
                 <div className="absolute top-4 left-4 bg-white px-3 py-1 rounded-full text-[9px] font-black text-secondary shadow-lg">
                   {post.category}

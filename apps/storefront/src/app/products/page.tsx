@@ -125,7 +125,7 @@ export default async function ProductsPage(
       {/* Breadcrumbs */}
       <nav className="flex items-center gap-1.5 text-xs text-foreground-muted mb-4" aria-label="Breadcrumb">
         <Link href="/" className="hover:text-primary transition-colors">Home</Link>
-        <span>/</span>
+        <svg className="w-3 h-3 text-foreground-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
         <span className="text-foreground font-medium">All Products</span>
       </nav>
 
@@ -139,10 +139,10 @@ export default async function ProductsPage(
               <Link
                 key={opt.value}
                 href={buildUrl(currentParams, { sort: opt.value, page: undefined })}
-                className={`px-2 py-1 text-xs rounded-sm transition-colors ${
+                className={`px-3 py-1.5 text-xs font-medium transition-colors duration-150 ${
                   activeSort === opt.value
-                    ? "bg-foreground text-white font-medium"
-                    : "text-foreground-muted hover:text-foreground hover:bg-surface"
+                    ? "bg-foreground text-white rounded-full"
+                    : "text-foreground-muted hover:text-foreground hover:bg-surface rounded-md"
                 }`}
               >
                 {opt.label}
@@ -169,10 +169,10 @@ export default async function ProductsPage(
                   <Link
                     key={f.key}
                     href={f.removeUrl}
-                    className="inline-flex items-center gap-1 bg-primary-light text-primary text-xs rounded-full border border-primary/20 px-2.5 py-1 hover:bg-primary/10 transition-colors"
+                    className="inline-flex items-center gap-1.5 bg-surface text-foreground text-xs rounded-full border border-border px-3 py-1.5 hover:bg-surface-low hover:border-border-strong transition-colors duration-150"
                   >
                     {f.label}
-                    <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                    <svg className="w-3 h-3 text-foreground-subtle" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
                   </Link>
                 ))}
                 {activeFilters.length > 1 && (

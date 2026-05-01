@@ -492,7 +492,7 @@ export function ProductTable({
                 return (
                   <tr
                     key={product.id}
-                    className={`hover:bg-muted/20 transition-colors group ${isSelected ? 'bg-primary/5' : ''}`}
+                    className={`hover:bg-muted/20 transition-colors duration-150 group ${isSelected ? 'bg-primary/5' : ''}`}
                   >
                     {/* Checkbox */}
                     <td className="px-4 py-3">
@@ -603,24 +603,24 @@ export function ProductTable({
 
                     {/* Actions */}
                     <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity duration-150">
                         <Link
                           href={`/products/${product.id}/edit`}
-                          className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all"
+                          className="inline-flex items-center justify-center rounded-md h-8 w-8 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors duration-150"
                           title="Edit product"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </Link>
                         <button
                           onClick={() => handleToggleStatus(product.id, product.is_active)}
-                          className={`inline-flex items-center justify-center rounded-md p-1.5 transition-all ${product.is_active ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-amber-400 hover:bg-amber-500/10'}`}
+                          className={`inline-flex items-center justify-center rounded-md h-8 w-8 transition-colors duration-150 ${product.is_active ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-amber-400 hover:bg-amber-500/10'}`}
                           title={product.is_active ? 'Deactivate' : 'Activate'}
                         >
                           {product.is_active ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
                         </button>
                         <button
                           onClick={() => handleDelete(product.id)}
-                          className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400 transition-all"
+                          className="inline-flex items-center justify-center rounded-md h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400 transition-colors duration-150"
                           title="Delete product"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

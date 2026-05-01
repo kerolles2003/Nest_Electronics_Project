@@ -62,7 +62,7 @@ async function ActivityFeed() {
         {activities.length > 0 ? (
           <div className="divide-y divide-border">
             {activities.map((activity) => (
-              <div key={activity.id} className="flex items-start gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors">
+              <div key={activity.id} className="flex items-start gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
                 <div className={`mt-0.5 rounded-full p-1.5 shrink-0 ${activity.type === 'order' ? 'bg-primary/10' : 'bg-purple/10'}`}>
                   {activity.type === 'order' ? (
                     <Box className="h-3 w-3 text-primary" />
@@ -204,7 +204,7 @@ export default async function AdminPage() {
           const colors = colorMap[stat.color];
           const displayValue = stat.format === 'currency' ? formatCurrency(stat.value) : formatNumber(stat.value);
           return (
-            <div key={stat.label} className={`rounded-lg border ${colors.border} bg-card p-4 transition-colors hover:border-border-strong`}>
+            <div key={stat.label} className={`rounded-lg border ${colors.border} bg-card p-4 transition-all duration-150 hover:border-border-strong hover:shadow-subtle`}>
               <div className="flex items-center justify-between mb-2">
                 <div className={`rounded-md p-1.5 ${colors.bg}`}>
                   <Icon className={`h-4 w-4 ${colors.icon}`} />
@@ -316,7 +316,7 @@ export default async function AdminPage() {
                   {stats.lowStock.map((item) => {
                     const available = item.stock_quantity - (item.reserved_quantity ?? 0);
                     return (
-                      <div key={item.sku} className="flex items-center justify-between px-5 py-2.5 hover:bg-surface-high/30 transition-colors group">
+                      <div key={item.sku} className="flex items-center justify-between px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150 group">
                         <div className="flex flex-col min-w-0">
                           <span className="text-xs font-semibold text-foreground truncate group-hover:text-warning transition-colors">{item.name_en}</span>
                           <span className="text-[10px] text-foreground-subtle font-mono">{item.sku}</span>
@@ -362,7 +362,7 @@ export default async function AdminPage() {
               {stats.topProducts.length > 0 ? (
                 <div className="divide-y divide-border">
                   {stats.topProducts.map((product, index) => (
-                    <div key={product.name} className="flex items-center gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors">
+                    <div key={product.name} className="flex items-center gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
                       <span className="text-[10px] font-bold text-foreground-subtle w-4 text-center">{index + 1}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-foreground truncate">{product.name}</p>

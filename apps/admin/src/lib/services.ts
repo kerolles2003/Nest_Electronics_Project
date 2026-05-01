@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase'
+import { createClient, createAdminClient } from '@/lib/supabase'
 import { SupabaseCategoryProvider, SupabaseBrandProvider, SupabaseProductProvider, SupabaseOrderProvider } from '@nest/providers'
 import { ProductService, OrderService } from '@nest/services'
 import { redirect } from 'next/navigation'
@@ -19,9 +19,10 @@ export async function requireAdmin() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: profile, error } = await (supabase as any)
+  const adminClient = await createAdminClient()
+  const { data: profile, error } = await adminClient
     .from('profiles')
-    .select('id, role, full_name, email, avatar_url, phone')
+    .select('id, role, full_name, avatar_url, phone')
     .eq('id', user.id)
     .single()
 

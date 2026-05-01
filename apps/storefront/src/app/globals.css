@@ -6,6 +6,19 @@
   --font-sans: var(--font-inter);
   --font-heading: var(--font-space-grotesk);
   --font-mono: var(--font-jetbrains-mono);
+
+  /* Tokens */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-subtle: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-elevated: 0 4px 16px rgba(0,0,0,0.08);
+
+  --transition-fast: 150ms;
+  --transition-base: 200ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 * { box-sizing: border-box; }
@@ -53,15 +66,15 @@ body {
 .card {
   background: white;
   border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
 }
 
 .card-hover {
-  transition: box-shadow 0.2s, border-color 0.2s;
+  transition: box-shadow var(--transition-base) var(--ease-default), border-color var(--transition-base) var(--ease-default);
 }
 .card-hover:hover {
-  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  box-shadow: var(--shadow-elevated);
   border-color: #cbd5e1;
 }
 
@@ -71,7 +84,7 @@ body {
   align-items: center;
   gap: 0.25rem;
   padding: 0.125rem 0.5rem;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 600;
 }
@@ -81,35 +94,41 @@ body {
   background: #1d4ed8;
   color: white;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 500;
-  transition: background-color 0.15s;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 .btn-primary:hover {
   background: #1e40af;
+}
+.btn-primary:active {
+  transform: scale(0.98);
 }
 
 .btn-secondary {
   background: #f1f5f9;
   color: #334155;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
   font-weight: 500;
   border: 1px solid #e2e8f0;
-  transition: background-color 0.15s;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 .btn-secondary:hover {
   background: #e2e8f0;
+}
+.btn-secondary:active {
+  transform: scale(0.98);
 }
 
 .btn-ghost {
   color: #64748b;
   padding: 0.5rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
-  transition: color 0.15s, background-color 0.15s;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 .btn-ghost:hover {
   color: #0f172a;
@@ -122,10 +141,10 @@ body {
   padding: 0.5rem 0.75rem;
   background: white;
   border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 14px;
   color: #0f172a;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 .input-base::placeholder {
   color: #94a3b8;
@@ -178,6 +197,25 @@ body {
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
+/* Shimmer animation for skeletons */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Nav icon button */
 .nav-icon-btn {
   display: inline-flex;
@@ -187,7 +225,7 @@ body {
   height: 2.25rem;
   border-radius: 0.375rem;
   color: #64748b;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 .nav-icon-btn:hover {
   background-color: #f1f5f9;

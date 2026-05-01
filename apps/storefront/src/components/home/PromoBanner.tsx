@@ -30,7 +30,7 @@ export function PromoBanner() {
                       {game.badge}
                     </span>
                   )}
-                  <div className="w-[85%] aspect-[3/4] mb-3 mt-2 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 rounded-sm group-hover:scale-105 transition-transform duration-500">
+                    <div className="w-[85%] aspect-[3/4] mb-3 mt-2 overflow-hidden flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 rounded-sm group-hover:scale-105 transition-transform duration-300">
                     <span className="text-4xl">{game.emoji}</span>
                   </div>
                   <h4 className="text-[12px] font-bold text-gray-800 leading-tight mb-0.5 px-1">{game.name}</h4>

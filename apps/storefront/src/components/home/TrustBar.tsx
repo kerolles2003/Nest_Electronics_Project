@@ -9,15 +9,17 @@ export function TrustBar() {
   ];
 
   return (
-    <section className="bg-surface border-y border-border py-4">
+    <section className="bg-surface border-y border-border py-5">
       <div className="container-nest">
-        <div className="flex flex-wrap justify-center divide-x divide-border">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
           {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-3 px-6 py-2">
-              <item.icon className="text-primary text-xl" strokeWidth={1.5} />
-              <div>
-                <p className="text-sm font-semibold text-foreground">{item.title}</p>
-                <p className="text-xs text-foreground-muted">{item.sub}</p>
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <item.icon className="text-primary w-4 h-4" strokeWidth={1.5} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground leading-tight">{item.title}</p>
+                <p className="text-xs text-foreground-muted leading-tight mt-0.5">{item.sub}</p>
               </div>
             </div>
           ))}

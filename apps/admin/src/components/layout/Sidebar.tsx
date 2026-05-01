@@ -45,7 +45,7 @@ export function AdminSidebar() {
       <aside
         className={`
           fixed inset-y-0 left-0 z-40 w-60 shrink-0 bg-card border-r border-border
-          flex flex-col transition-transform duration-150 ease-in-out
+          flex flex-col transition-transform duration-200 ease-out
           lg:relative lg:translate-x-0
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
@@ -68,18 +68,18 @@ export function AdminSidebar() {
                   const Icon = item.icon;
                   const active = isActive(item.href);
                   return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMobileOpen(false)}
-                      className={`
-                        flex items-center gap-3 px-4 py-2 rounded-md text-sm transition-colors
-                        ${active
-                          ? 'bg-primary/10 text-primary font-medium'
-                          : 'text-foreground-muted hover:text-foreground hover:bg-surface-high'
-                        }
-                      `}
-                    >
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={`
+                    flex items-center gap-3 px-4 py-2 rounded-md text-sm transition-colors duration-150
+                    ${active
+                      ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary'
+                      : 'text-foreground-muted hover:text-foreground hover:bg-surface-high'
+                    }
+                  `}
+                >
                       <Icon className="h-4 w-4 shrink-0" />
                       {item.label}
                     </Link>
