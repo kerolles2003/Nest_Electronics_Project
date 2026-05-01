@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# MCP
+.mcp.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Project private docs
+.project_plan/
+.prompts/
+
+# Scripts / temp files
+fix_hero.js
+fix_hero2.js
+fix_hero3.js
+adjust_images.js
+rewrite.js
+rewrite2.js
+
+# Seeds
+seed.js
+seed_data.json
+
+# Internal docs
+AGENTS.md

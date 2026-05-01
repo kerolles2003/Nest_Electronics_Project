@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "nextjs-devtools": {
+      "command": "npx",
+      "args": ["-y", "next-devtools-mcp@latest"]
+    },
+    "supabase": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres@latest"],
+      "env": {
+        "POSTGRES_URL": "postgresql://postgres.quhllllvwwuizjfrxvdz:YOUR_DB_PASSWORD@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+      }
+    }
+  }
+}

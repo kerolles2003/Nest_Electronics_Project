@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-space-grotesk);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: #ffffff;
+  color: #0f172a;
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection { background: rgba(29, 78, 216, 0.15); color: #1d4ed8; }
+
+/* Container */
+.container-nest {
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+@media (min-width: 768px) {
+  .container-nest {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+/* Section gap */
+.section-gap {
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+@media (min-width: 768px) {
+  .section-gap {
+    padding-top: 3.5rem;
+    padding-bottom: 3.5rem;
+  }
+}
+
+/* Card */
+.card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.card-hover {
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.card-hover:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  border-color: #cbd5e1;
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Buttons */
+.btn-primary {
+  background: #1d4ed8;
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-primary:hover {
+  background: #1e40af;
+}
+
+.btn-secondary {
+  background: #f1f5f9;
+  color: #334155;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid #e2e8f0;
+  transition: background-color 0.15s;
+}
+.btn-secondary:hover {
+  background: #e2e8f0;
+}
+
+.btn-ghost {
+  color: #64748b;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: color 0.15s, background-color 0.15s;
+}
+.btn-ghost:hover {
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+/* Input */
+.input-base {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #0f172a;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input-base::placeholder {
+  color: #94a3b8;
+}
+.input-base:focus {
+  outline: none;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.15);
+}
+
+/* Price styles */
+.price-current {
+  color: #1d4ed8;
+  font-weight: 600;
+  font-family: var(--font-space-grotesk), sans-serif;
+}
+.price-original {
+  color: #64748b;
+  text-decoration: line-through;
+  font-size: 14px;
+}
+
+/* Scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  height: 4px;
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 2px;
+}
+
+/* Line clamp */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Safe area */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Nav icon button */
+.nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.375rem;
+  color: #64748b;
+  transition: background-color 0.15s, color 0.15s;
+}
+.nav-icon-btn:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}

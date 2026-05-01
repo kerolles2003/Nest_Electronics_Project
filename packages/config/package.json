@@ -1,0 +1,13 @@
+{
+  "name": "@nest/config",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    "./tailwind": "./src/tailwind.preset.ts",
+    "./env": "./src/env.ts",
+    "./constants": "./src/constants.ts"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* Core surfaces */
+  --color-background: #0f1117;
+  --color-foreground: #e2e8f0;
+  --color-card: #1a1d27;
+  --color-card-foreground: #e2e8f0;
+  --color-popover: #1a1d27;
+  --color-popover-foreground: #e2e8f0;
+
+  /* Primary */
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-primary-hover: #2563eb;
+  --color-primary-light: #1e3a5f;
+
+  /* Secondary / Surface hierarchy */
+  --color-secondary: #22263a;
+  --color-secondary-foreground: #e2e8f0;
+  --color-surface: #1a1d27;
+  --color-surface-high: #22263a;
+  --color-surface-highest: #2a2f47;
+
+  /* Muted */
+  --color-muted: #22263a;
+  --color-muted-foreground: #94a3b8;
+  --color-foreground-muted: #94a3b8;
+  --color-foreground-subtle: #64748b;
+
+  /* Accent */
+  --color-accent: #2a2f47;
+  --color-accent-foreground: #e2e8f0;
+
+  /* Destructive / Danger */
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-danger: #ef4444;
+  --color-danger-light: #450a0a;
+
+  /* Success */
+  --color-success: #22c55e;
+  --color-success-light: #14532d;
+
+  /* Warning */
+  --color-warning: #f59e0b;
+  --color-warning-light: #451a03;
+
+  /* Purple */
+  --color-purple: #a855f7;
+  --color-purple-light: #3b0764;
+
+  /* Borders & Inputs */
+  --color-border: #2e3347;
+  --color-border-strong: #3d4463;
+  --color-input: #2e3347;
+  --color-ring: #3b82f6;
+
+  /* Radius */
+  --radius: 0.5rem;
+
+  /* Typography */
+  --font-sans: var(--font-inter), Arial, Helvetica, sans-serif;
+  --font-heading: var(--font-space-grotesk), Arial, Helvetica, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
