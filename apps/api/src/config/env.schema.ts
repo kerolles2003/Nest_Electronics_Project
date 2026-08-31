@@ -1,0 +1,241 @@
+import { z } from 'zod';
+
+/**
+ * THE SINGLE ENVIRONMENT BOUNDARY.
+ *
+ * ConfigModule performs the raw read and hands the merged environment to
+ * `validateEnv` below; no other file in this codebase touches `process.env`
+ * at all. Everywhere else, configuration arrives through typed injection. A
+ * `process.env.X` in a service is three problems at once: untyped
+ * (`string | undefined`), unvalidated (a typo yields `undefined` at 3 a.m.
+ * rather than at boot), and untestable (overriding it means mutating global
+ * state).
+ *
+ * Authority: docs/architecture/CONFIGURATION-ARCHITECTURE.md §1, §3.
+ *
+ * The legacy precedent this exists to avoid: `packages/config/src/env.ts`
+ * implemented exactly this fail-fast validation and was imported by NOTHING,
+ * so it never ran. Here the schema executes inside ConfigModule at boot and
+ * the process cannot start without it.
+ */
+
+/** Environment variables are strings; accept the usual spellings of a boolean. */
+const booleanFromString = z
+  .enum(['true', 'false', '1', '0'])
+  .transform((value) => value === 'true' || value === '1');
+
+/**
+ * A token lifetime such as `15m` or `30d`.
+ *
+ * Validated as a shape here so a typo like `15min` fails at boot rather than
+ * producing a token that expires at an unintended moment — jsonwebtoken would
+ * silently accept some malformed values.
+ */
+const durationString = z
+  .string()
+  .regex(/^[1-9][0-9]*[smhd]$/, { message: 'Must be a duration like 15m, 24h or 30d' });
+
+/**
+ * Keys whose validation message must never echo the supplied value.
+ * Zod's default enum/string messages can include `received '…'`, which would
+ * put a secret into a log line.
+ *
+ * Authority: docs/architecture/CONFIGURATION-ARCHITECTURE.md §6 — secrets are
+ * never logged.
+ */
+const SECRET_KEYS: ReadonlySet<string> = new Set(['MONGODB_URI', 'RESEND_API_KEY', 'JWT_SECRET']);
+
+export const envSchema = z.object({
+  // ---- Application ----
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3002),
+  API_PREFIX: z.string().min(1).default('api'),
+
+  /**
+   * Absent means "follow the frozen rule": Swagger is a non-production surface.
+   * Normalised in app.config.ts so the default is computed once.
+   */
+  SWAGGER_ENABLED: booleanFromString.optional(),
+
+  // ---- Database ----
+  /**
+   * Connection string. REQUIRED and deliberately WITHOUT a default: it is a
+   * secret, and "defaulting a secret is a weak default that silently reaches
+   * production" (CONFIGURATION-ARCHITECTURE.md §11).
+   *
+   * The shape is checked here so an obviously wrong value is rejected at boot
+   * rather than becoming a cryptic driver error 30 seconds into startup. This
+   * validates the FORM only — reachability is the connection's job.
+   */
+  MONGODB_URI: z
+    .string()
+    .min(1)
+    .refine((value) => /^mongodb(\+srv)?:\/\/\S+$/.test(value), {
+      // Deliberately describes the expected shape without echoing the value.
+      message: 'Must be a mongodb:// or mongodb+srv:// connection string',
+    }),
+
+  // ---- Authentication ----
+  /**
+   * HS256 signing key for access tokens. REQUIRED, no default: a defaulted
+   * signing key is a forged-token vulnerability that reaches production
+   * silently. Minimum 32 characters is a frozen requirement
+   * (CONFIGURATION-ARCHITECTURE.md §11) — below that the key is brute-forceable
+   * offline from a single captured token.
+   */
+  JWT_SECRET: z
+    .string()
+    .min(32, { message: 'Must be at least 32 characters' })
+    .refine((value) => value.trim().length >= 32, {
+      message: 'Must be at least 32 characters',
+    }),
+
+  /** Access-token lifetime. Short by design: access tokens are NOT revocable. */
+  JWT_ACCESS_TTL: durationString.default('15m'),
+
+  /** Refresh-token lifetime. Long, but revocable and rotated on every use. */
+  JWT_REFRESH_TTL: durationString.default('30d'),
+
+  /**
+   * bcrypt cost factor. 12 is the frozen value (AUTHORIZATION-MODEL.md §2.2).
+   * Bounded below at 10 so a misconfiguration cannot silently weaken hashing,
+   * and above at 15 so it cannot silently turn login into a timeout.
+   */
+  BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+
+  /**
+   * Whether an unverified account may log in.
+   *
+   * The frozen posture is that verification is REQUIRED (AUTHORIZATION-MODEL.md
+   * §2.5). Delivery belongs to NotificationsModule, which does not exist yet, so
+   * development needs to be able to log in. The superRefine below makes it
+   * impossible to disable this in production — the escape hatch cannot escape.
+   */
+  AUTH_REQUIRE_EMAIL_VERIFICATION: booleanFromString.default('true'),
+
+  // ---- Fulfilment (shipping cost policy) ----
+  /**
+   * Flat delivery fee in integer MINOR UNITS (piastres), applied to every
+   * governorate.
+   *
+   * Defaults to 0, which reproduces the current behaviour exactly. OPEN-001
+   * records the real per-governorate rate table as business input that has not
+   * been supplied, and a fabricated number presented to a customer as
+   * authoritative is worse than charging nothing — so the default charges
+   * nothing and says so, rather than guessing.
+   *
+   * Integer only: MONEY-MODEL.md §5 forbids a float anywhere a payable amount is
+   * derived, and `z.coerce.number().int()` rejects `50.5` rather than rounding
+   * it into a total.
+   */
+  SHIPPING_FLAT_FEE: z.coerce.number().int().min(0).max(1_000_000).default(0),
+
+  /**
+   * Order value in integer MINOR UNITS at or above which delivery is free.
+   *
+   * Absent means "no threshold" — the flat fee always applies. Compared against
+   * the POST-DISCOUNT subtotal (MONEY-MODEL.md §7.1).
+   */
+  FREE_SHIPPING_THRESHOLD: z.coerce.number().int().min(0).optional(),
+
+  // ---- Email provider selection (application level) ----
+  // Selection only. NO SDK is initialised in this phase, and no business code
+  // may ever branch on this value.
+  // Authority: CONFIGURATION-ARCHITECTURE.md §5; PROVIDER-ARCHITECTURE.md §5.5.
+  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+
+  // ---- Email provider credentials (vendor level) ----
+  // Conditionally required — see the superRefine below. Deliberately NOT
+  // exposed through any application-level namespace: when the Resend adapter
+  // exists it reads this through its own vendor config, and nothing else does.
+  RESEND_API_KEY: z.string().min(1).optional(),
+});
+
+/**
+ * Vendor credentials are required ONLY when their provider is selected.
+ * Choosing `console` in development must not demand a Resend key.
+ *
+ * Authority: CONFIGURATION-ARCHITECTURE.md §5 — "Conditional validation".
+ */
+const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
+  // Email verification is a production security control, not a preference.
+  if (value.NODE_ENV === 'production' && !value.AUTH_REQUIRE_EMAIL_VERIFICATION) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['AUTH_REQUIRE_EMAIL_VERIFICATION'],
+      message: "Must be true when NODE_ENV='production'",
+    });
+  }
+
+  if (value.EMAIL_PROVIDER === 'resend' && value.RESEND_API_KEY === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RESEND_API_KEY'],
+      message: "Required when EMAIL_PROVIDER='resend'",
+    });
+  }
+});
+
+export type Env = Readonly<z.infer<typeof envSchema>>;
+
+/** Formats issues as `KEY  message`, redacting any message that could echo a secret. */
+export function formatIssues(error: z.ZodError): string[] {
+  return error.issues.map((issue) => {
+    const key = issue.path.join('.') || '(root)';
+    const message = SECRET_KEYS.has(key) ? 'Invalid or missing value' : issue.message;
+    return `${key.padEnd(20)} ${message}`;
+  });
+}
+
+/**
+ * Treats an empty environment variable as absent, so schema defaults apply.
+ *
+ * `PORT=` in a compose file, a CI secret that resolves to empty, or a bare
+ * `LOG_LEVEL=` line in a .env file all arrive as `''`. Every deployment
+ * platform treats those as "not set"; Zod's `.default()` only fires on
+ * `undefined`, so without this an empty value becomes a confusing boot failure
+ * instead of the intended default.
+ */
+function stripEmpty(raw: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).filter(([, value]) => value !== ''));
+}
+
+let validated: Env | undefined;
+
+/**
+ * Parses and validates the environment. Reports EVERY problem at once — a
+ * developer setting up the project should see all missing variables in one
+ * run, not discover them one restart at a time — then exits.
+ *
+ * Wired as ConfigModule's `validate`, so it runs before any config factory.
+ */
+export function validateEnv(raw: Record<string, unknown>): Env {
+  const result = envSchemaWithConditionals.safeParse(stripEmpty(raw));
+
+  if (!result.success) {
+    const issues = formatIssues(result.error);
+    // Written directly to stderr: the Nest logger is not yet constructed, and
+    // this must be readable even when nothing else has started.
+    process.stderr.write(`\n✖ Configuration invalid — ${String(issues.length)} problem(s):\n`);
+    for (const issue of issues) {
+      process.stderr.write(`  ${issue}\n`);
+    }
+    process.stderr.write('\nSee apps/api/.env.example for the full variable set.\n\n');
+    process.exit(1);
+  }
+
+  validated = Object.freeze(result.data);
+  return validated;
+}
+
+/**
+ * The validated environment, for config factories only.
+ * Throws rather than returning undefined if reached before validation — a
+ * loud failure beats a silently empty configuration.
+ */
+export function env(): Env {
+  if (validated === undefined) {
+    throw new Error('Configuration accessed before validateEnv() ran. Import ConfigModule first.');
+  }
+  return validated;
+}

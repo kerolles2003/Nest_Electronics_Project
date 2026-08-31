@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  // The build emits from src only: `rootDir` lives here so dist keeps its
+  // shape (dist/main.js), and tests never reach the compiler.
+  "compilerOptions": {
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}
