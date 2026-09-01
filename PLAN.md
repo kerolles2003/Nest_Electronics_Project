@@ -206,7 +206,7 @@ The existing 40-endpoint surface `[V]` is sound and consumed by `/shop` (verifie
 
 | Consumer | Needed endpoints | Notes |
 |---|---|---|
-| Storefront T2 | `PATCH /users/me` (profile); password reset pair (`POST /auth/password-reset/request`, `POST /auth/password-reset/confirm`) with the same token discipline as verification (hashed at rest, single-use, neutral responses) | Without these, `/account/profile` and `/forgot-password` cannot migrate. |
+| ~~Storefront T2~~ | ~~`PATCH /users/me`; password reset pair~~ **LANDED (5a) `[V]`** — all three endpoints exist with the §2.8 discipline: hashed at rest, single-use, 1-hour TTL, neutral responses, `tokenVersion` bump and full refresh-token revocation in one transaction. | The API half of `/account/profile` and `/forgot-password` is done; the PAGES are 5b. **Path note:** `AUTHORIZATION-MODEL.md` §2.8 sketches these as `/auth/forgot-password` and `/auth/reset-password`; the paths built are the ones named here and in the 5a brief. Behaviour is §2.8's exactly — only the two URLs differ. |
 | Storefront T2 (D-8) | Shipping-rate read inside the existing quote (no new public endpoint — `FulfilmentService` body change + the frozen Mongo **`shippingRates`** collection) | See §3 shipping row and Phase 5. **Name and field shape are taken from the frozen `MONEY-MODEL.md` §6 / `MONGODB-DESIGN.md` §11, not invented here.** |
 | Storefront (frozen promise) | Guest order tracking endpoint per `GUEST-CHECKOUT.md` (“secure server-side endpoint”) `[P]` — order number + email/phone proof, heavily throttled | `/order-tracking` page exists with a client store today `[V]`. Built in Phase 8. |
 | Admin | products/categories/brands CRUD (+slug rules per `CATALOG-MODEL.md`); media upload (§13, ADR-MEDIA-001); inventory adjustment/restock (§14); customers list/detail/role change; **shipping-rules CRUD (D-8)**; admin audit trail per `AUDIT-MODEL.md` | The admin/orders lifecycle surface already exists `[V]` — the admin UI just doesn’t call it. |
@@ -218,7 +218,7 @@ Rules for all additions: additive within `/api/v1`, same envelope, DTO validatio
 ## 10. Authentication Completion Plan
 
 - **Authority end-state:** API JWT (15-min access, 30-day rotating refresh, reuse-detection terminal) — verified working including silent refresh discipline `[V]`.
-- **Work:** password reset + profile endpoints (§9); staff provisioning (a documented, seed- or CLI-based path to mint the first `SUPER_ADMIN` — none found `[A]`, Phase 6); the T2 proxy rewrite (guard `/account`+`/checkout` on `nest_rt`, never redirect action POSTs); removal of Supabase Auth usage and `@nest/providers` clients (Phase 9).
+- **Work:** ~~password reset + profile endpoints (§9)~~ **LANDED (5a) `[V]`**; staff provisioning (a documented, seed- or CLI-based path to mint the first `SUPER_ADMIN` — none found `[A]`, Phase 6); the T2 proxy rewrite (guard `/account`+`/checkout` on `nest_rt`, never redirect action POSTs); removal of Supabase Auth usage and `@nest/providers` clients (Phase 9).
 - **Google login: NOT required (D-3).** The OAuth buttons are removed during T2; an API OAuth flow is recorded as post-launch work. No `GET /auth/google` is planned in v1.
 - **Session cookie hardening for production:** `secure` flips on `NODE_ENV=production` already `[V]`; the deployment topology keeps cookies first-party to the storefront `[P]` — preserve that property when deploying (§21).
 - **Verification UX:** keep the API’s neutral-response / single-use semantics `[V]`; F-11 wording fix in Phase 1.
@@ -695,7 +695,7 @@ no images are loaded, because the real catalogue does not exist yet. **The admin
 stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
 on Phase 7 is now satisfied earlier** and is recorded as such.
 
-**27 — Phase 5a: index enforcement and the D-8 rate table land; no cutover.**
+**27 — Phase 5a: index enforcement, the D-8 rate table and the missing auth endpoints; no cutover.**
 The additive half of Phase 5. Readiness (`GET /health/ready`) now **refuses traffic when a
 declared index is missing**, names each one and prints the remedy — because several unique
 indexes are not optimisations but the entire enforcement behind an invariant, and two
@@ -703,7 +703,16 @@ repositories delegate their concurrency control to MongoDB error 11000. On its f
 found `mediaAssets.media_asset_public_id_unique` genuinely absent from the development
 database. `shippingRates` landed with the frozen shape and its 27 ratified rows, `quote()`
 reads it, and a miss raises. Open question 3 is resolved by D-8 rather than answered.
-Updated Phase 5, D-8, §3, open questions.
+
+The three endpoints G-01 listed as missing for T2 also landed: password reset
+(`request`/`confirm`) and `PATCH /users/me`. A reset now ends every session —
+`tokenVersion` bump plus full refresh-token revocation, in ONE transaction with
+the credential change, because a reset that leaves an intruder's refresh token
+alive has not reset anything. The two token kinds live in separate fields and are
+looked up separately, and a test proves a verification token cannot be redeemed
+at the reset endpoint or the reverse.
+
+Updated Phase 5, D-8, §3, §9, §10, open questions.
 
 **26b — Shipping model realigned to the frozen `MONEY-MODEL.md`. The frozen document wins.**
 This plan had proposed a `shippingRules` collection shaped `{ governorates[], fee, isDefault }`.

@@ -21,12 +21,15 @@ import { AppException } from '../../../common/errors/app.exception';
 import { UsersService } from '../../users/application/users.service';
 import { AuthService } from '../application/auth.service';
 import { EmailVerificationService } from '../application/email-verification.service';
+import { PasswordResetService } from '../application/password-reset.service';
 import type { AuthenticatedUser } from '../domain/authenticated-user';
 import { TokenService } from '../application/token.service';
 import {
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
+  PasswordResetConfirmDto,
+  PasswordResetRequestDto,
   ResendVerificationDto,
   VerifyEmailDto,
 } from './dto/auth-request.dto';
@@ -64,6 +67,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly tokens: TokenService,
     private readonly verification: EmailVerificationService,
+    private readonly passwordReset: PasswordResetService,
     private readonly users: UsersService,
   ) {}
 
@@ -298,6 +302,78 @@ export class AuthController {
 
     return {
       data: { message: 'If that address needs verification, a new email is on its way.' },
+    };
+  }
+
+  @Post('password-reset/request')
+  @Header('Cache-Control', NO_STORE)
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ global: { limit: 3, ttl: HOUR_MS } })
+  @ThrottleByEmail()
+  @ApiOperation({
+    summary: 'Request a password-reset link',
+    description: [
+      '**Always returns 200**, with the same body, whether or not the address has an account.',
+      'Anything else would make this a password-free account-existence oracle — an attacker with',
+      'a list of addresses would learn which ones are registered here.',
+      '',
+      'The token is 32 random bytes, stored only as a SHA-256 digest, single-use, and valid for',
+      'one hour. Requesting again invalidates the previous link.',
+      '',
+      'Rate limited to 3 requests per hour, per IP **and** email — the same limit as registration,',
+      'because this endpoint also causes an email to be sent to an address the caller names.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: MessageResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto, description: 'VALIDATION_ERROR' })
+  @ApiTooManyRequestsResponse({ type: ErrorResponseDto, description: 'RATE_LIMIT_EXCEEDED' })
+  async requestPasswordReset(@Body() dto: PasswordResetRequestDto): Promise<MessageResponseDto> {
+    await this.passwordReset.request(dto.email);
+
+    /*
+     * ONE message, built here rather than returned by the service, so the
+     * service has no way to vary it. The oracle this endpoint must not become
+     * would take exactly one well-meaning `if` in a response body to create.
+     */
+    return {
+      data: { message: 'If that address has an account, a password-reset link is on its way.' },
+    };
+  }
+
+  @Post('password-reset/confirm')
+  @Header('Cache-Control', NO_STORE)
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ global: { limit: 10, ttl: HOUR_MS } })
+  @ApiOperation({
+    summary: 'Complete a password reset',
+    description: [
+      'Consumes the single-use token and sets the new password. Unknown, expired and',
+      'already-used tokens are reported identically.',
+      '',
+      'On success this **signs the account out everywhere**: `tokenVersion` is incremented,',
+      'which invalidates every outstanding access token, and every refresh token is revoked.',
+      'Both happen in one transaction with the credential change — a reset that left an',
+      "attacker's session alive would not have reset anything.",
+      '',
+      'The new password must satisfy the full server-side policy, including not containing the',
+      "account's own email address.",
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: MessageResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'VALIDATION_ERROR — token invalid or expired, or the password is refused.',
+  })
+  @ApiTooManyRequestsResponse({ type: ErrorResponseDto, description: 'RATE_LIMIT_EXCEEDED' })
+  async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto): Promise<MessageResponseDto> {
+    await this.passwordReset.confirm(dto.token, dto.newPassword);
+
+    return {
+      data: {
+        message: 'Password updated. You have been signed out on every device — please sign in again.',
+      },
     };
   }
 }

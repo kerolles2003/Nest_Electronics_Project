@@ -8,6 +8,7 @@ import { EmailSenderPort, type OutboundEmail } from './ports/email-sender.port';
 import { TemplateRendererPort } from './ports/template-renderer.port';
 import type { TemplateId } from './templates/template-id';
 import type { OrderPlacedData, OrderPlacedItem } from './templates/order-placed.data';
+import type { PasswordResetData } from './templates/password-reset.data';
 import type { VerifyEmailData } from './templates/verify-email.data';
 
 /**
@@ -23,6 +24,17 @@ const SEND_TIMEOUT_MS = 10_000;
 
 /** Matches the 24-hour TTL in `EmailVerificationService`. Display copy only. */
 const VERIFICATION_EXPIRY_COPY = '24 hours';
+
+/**
+ * Display copy for the reset TTL. One hour, per AUTHORIZATION-MODEL.md §2.8.
+ *
+ * A literal beside the verification one rather than derived from
+ * `RESET_TTL_MS`, which lives in AuthModule: this module deliberately imports
+ * nothing from a domain module (§4.14, it is a sink), and a template's copy is
+ * content rather than a computation. The pairing is asserted by
+ * `password-reset.spec.ts`, so the two cannot drift silently.
+ */
+const PASSWORD_RESET_EXPIRY_COPY = '1 hour';
 
 /**
  * What actually happened to a message — the return value F-10 exists to
@@ -51,6 +63,16 @@ export interface EmailVerificationNotification {
   readonly recipientEmail: string;
   readonly recipientName: string;
   /** The raw single-use token. Never logged — it is a bearer credential. */
+  readonly rawToken: string;
+}
+
+export interface PasswordResetNotification {
+  readonly recipientEmail: string;
+  readonly recipientName: string;
+  /**
+   * The raw single-use token. Never logged, and a stronger credential than a
+   * verification token: holding it is enough to take the account.
+   */
   readonly rawToken: string;
 }
 
@@ -140,6 +162,42 @@ export class NotificationsService {
       // No idempotency key: a resend is a DELIBERATE second send of a
       // deliberately different token, and de-duplicating it would break the
       // recovery path above.
+    });
+  }
+
+  /**
+   * The email that lets someone back into an account they are locked out of.
+   *
+   * The raw token appears in exactly one place — the URL in the body — and in
+   * no log line. OBSERVABILITY.md §4 puts tokens on the mandatory redaction
+   * list, and this one is the strongest in the system: holding it is enough to
+   * take the account.
+   *
+   * NO IDEMPOTENCY KEY, and for the same reason verification has none: asking
+   * again is a deliberate second send of a deliberately different token, and
+   * de-duplicating it would break the only recovery path a customer has when
+   * the first mail does not arrive.
+   *
+   * The URL points at `/forgot-password/reset`, a page that does not exist yet
+   * — the storefront half of this is Phase 5b. The API is complete and testable
+   * without it, and a link to a 404 is better than a link that silently points
+   * at the wrong route once the page lands.
+   */
+  async sendPasswordReset(input: PasswordResetNotification): Promise<EmailDispatchResult> {
+    const data: PasswordResetData = {
+      customerName: input.recipientName,
+      resetUrl:
+        `${this.app.siteUrl}/forgot-password/reset?token=` +
+        encodeURIComponent(input.rawToken),
+      expiresIn: PASSWORD_RESET_EXPIRY_COPY,
+    };
+
+    return this.dispatch({
+      templateId: 'auth/password-reset',
+      data,
+      to: [{ email: input.recipientEmail, name: input.recipientName }],
+      tags: { type: 'password_reset' },
+      context: 'password reset',
     });
   }
 

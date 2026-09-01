@@ -5,6 +5,7 @@ import { UsersService } from './application/users.service';
 import { UserRepository } from './infrastructure/repositories/user.repository';
 import { User, UserSchema } from './infrastructure/schemas/user.schema';
 import { AddressesController } from './presentation/addresses.controller';
+import { UsersController } from './presentation/users.controller';
 
 /**
  * Identity, profile and the address book.
@@ -25,13 +26,19 @@ import { AddressesController } from './presentation/addresses.controller';
  * the repository: an address may only be reached through the rules that decide
  * what happens when it is not yours.
  *
- * Still deliberately absent: profile update, change-password, the admin customer
- * list and role management. Each brings its own DTOs, invariants and
- * authorization tests, and none is reachable from the address surface.
+ * `UsersController` carries `PATCH /users/me` — the profile edit `/account/profile`
+ * needs (PLAN §9). It is here rather than beside `GET /auth/me` because the
+ * `users` collection is owned here; auth reads a profile through `UsersService`,
+ * and reversing that would make UsersModule depend on AuthModule and close a
+ * cycle.
+ *
+ * Still deliberately absent: change-password, the admin customer list and role
+ * management. Each brings its own DTOs, invariants and authorization tests, and
+ * none is reachable from the current surface.
  */
 @Module({
   imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
-  controllers: [AddressesController],
+  controllers: [AddressesController, UsersController],
   providers: [UsersService, AddressesService, UserRepository],
   exports: [UsersService, AddressesService, MongooseModule],
 })

@@ -4,7 +4,18 @@ import { ClientSession, Model, Types } from 'mongoose';
 import { RefreshToken, type RefreshTokenLean } from '../schemas/refresh-token.schema';
 
 /** Why a token was revoked. Diagnostic only — never returned to a client. */
-export type RevocationReason = 'ROTATED' | 'LOGOUT' | 'LOGOUT_ALL' | 'REPLAY_DETECTED';
+export type RevocationReason =
+  | 'ROTATED'
+  | 'LOGOUT'
+  | 'LOGOUT_ALL'
+  | 'REPLAY_DETECTED'
+  /**
+   * A password reset revoked every session. Distinct from `LOGOUT_ALL` even
+   * though the effect is identical: someone reading `revokedReason` after an
+   * account takeover needs to see that the sessions ended because the password
+   * changed, not because the owner pressed a button.
+   */
+  | 'PASSWORD_RESET';
 
 export interface IssueRefreshTokenInput {
   readonly tokenHash: string;
@@ -93,12 +104,26 @@ export class RefreshTokenRepository {
     return result.modifiedCount;
   }
 
-  /** `logout-all`: every live session for one user. */
-  async revokeAllForUser(userId: Types.ObjectId, reason: RevocationReason): Promise<number> {
+  /**
+   * `logout-all`, and password reset: every live session for one user.
+   *
+   * `session` is optional because the two callers need different guarantees.
+   * `logout-all` is one write and stands alone. A password reset must revoke
+   * IN THE SAME TRANSACTION as the credential change — a reset that set the new
+   * password and then failed to revoke would leave an attacker's refresh token
+   * able to mint access tokens under the new password, which is the one outcome
+   * a reset exists to prevent.
+   */
+  async revokeAllForUser(
+    userId: Types.ObjectId,
+    reason: RevocationReason,
+    session?: ClientSession,
+  ): Promise<number> {
     const result = await this.model
       .updateMany(
         { userId, revokedAt: null },
         { $set: { revokedAt: new Date(), revokedReason: reason } },
+        session === undefined ? {} : { session },
       )
       .exec();
 

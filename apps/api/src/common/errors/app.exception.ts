@@ -283,6 +283,23 @@ export class AppException extends HttpException {
     );
   }
 
+  /**
+   * The subject of an authenticated request no longer exists.
+   *
+   * 404 rather than 401: the token is genuine and correctly signed, so telling
+   * the caller they are unauthenticated would send them to sign in again with
+   * credentials that are also gone. Reachable with a perfectly valid token —
+   * access tokens live 15 minutes and are not revocable, so an account
+   * soft-deleted a minute ago still presents one.
+   */
+  static resourceNotFound(): AppException {
+    return new AppException(
+      ErrorCode.RESOURCE_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      'The requested resource was not found.',
+    );
+  }
+
   static orderNotFound(): AppException {
     return new AppException(
       ErrorCode.ORDER_NOT_FOUND,

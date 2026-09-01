@@ -11,12 +11,16 @@
  * `.txt.hbs` file, so a renamed file fails CI instead of production.
  *
  * SCOPE. The frozen inventory is 14 templates covering the full order
- * lifecycle and auth surface (TEMPLATE-ARCHITECTURE.md §3). Two exist here,
- * because two business events currently dispatch mail. Adding the rest is one
+ * lifecycle and auth surface (TEMPLATE-ARCHITECTURE.md §3). Three exist here,
+ * because three business events currently dispatch mail. Adding the rest is one
  * union member, two files and one service method each — the pipeline does not
  * change. Listing ids for templates nothing sends would produce exactly the
  * dead configuration this codebase keeps removing.
  */
-export const TEMPLATE_IDS = ['auth/verify-email', 'orders/order-placed'] as const;
+export const TEMPLATE_IDS = [
+  'auth/verify-email',
+  'auth/password-reset',
+  'orders/order-placed',
+] as const;
 
 export type TemplateId = (typeof TEMPLATE_IDS)[number];

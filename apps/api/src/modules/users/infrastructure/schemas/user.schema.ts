@@ -45,6 +45,39 @@ export class EmailVerification {
 const EmailVerificationSchema = SchemaFactory.createForClass(EmailVerification);
 
 /**
+ * An outstanding password-reset challenge.
+ *
+ * Authority: docs/architecture/AUTHORIZATION-MODEL.md §2.8 — single-use token,
+ * hashed at rest, 1-hour TTL.
+ *
+ * Deliberately a SECOND field rather than a shared "pending token" slot next to
+ * `emailVerification`. The two have different lifetimes and, more importantly,
+ * different powers: a verification token activates an account, a reset token
+ * changes its password. Storing both in one slot would mean a token minted for
+ * one purpose could be presented to the other endpoint, which is the classic
+ * token-confusion bug — and the type system would not notice, because both are
+ * a hash and a date.
+ *
+ * ## Why an hour, when verification gets a day
+ *
+ * A verification link is a convenience the account owner asked for and may
+ * open tomorrow. A reset link is a live credential that replaces a password, is
+ * often forwarded through a mailbox the owner does not control alone, and has
+ * no legitimate reason to be opened a day later. §2.8 fixes it at one hour;
+ * this records why the two numbers differ rather than looking like an
+ * oversight.
+ */
+@Schema({ _id: false, strict: 'throw' })
+export class PasswordReset {
+  @Prop({ type: String, required: true })
+  tokenHash!: string;
+
+  @Prop({ type: Date, required: true })
+  expiresAt!: Date;
+}
+const PasswordResetSchema = SchemaFactory.createForClass(PasswordReset);
+
+/**
  * ONE saved delivery address in the customer's address book.
  *
  * Authority: docs/architecture/MONGODB-DESIGN.md §3 and §12.3 — addresses are
@@ -153,7 +186,8 @@ export const MAX_ADDRESSES_PER_USER = 10;
  * `full_name` to the user's email address. Merging deletes the trigger, the
  * orphan risk and a join.
  *
- * `passwordHash`, `emailVerifiedAt`, `tokenVersion` and `emailVerification` are
+ * `passwordHash`, `emailVerifiedAt`, `tokenVersion`, `emailVerification` and
+ * `passwordReset` are
  * CREDENTIAL fields. They are owned by AuthModule through a dedicated
  * repository, and no other module imports it (AUTHORIZATION-MODEL.md §10).
  *
@@ -184,6 +218,17 @@ export class User {
 
   @Prop({ type: EmailVerificationSchema, default: null })
   emailVerification!: EmailVerification | null;
+
+  /**
+   * The outstanding password-reset challenge, or `null`.
+   *
+   * Cleared by a successful reset, which is what makes the token single-use —
+   * the same mechanism `emailVerification` uses, and for the same reason: a
+   * reset token that still works after the password changed is a second key
+   * left under the mat.
+   */
+  @Prop({ type: PasswordResetSchema, default: null })
+  passwordReset!: PasswordReset | null;
 
   /**
    * Incremented to invalidate every outstanding access token at once.

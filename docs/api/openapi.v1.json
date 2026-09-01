@@ -507,6 +507,84 @@
         ]
       }
     },
+    "/api/v1/users/me": {
+      "patch": {
+        "description": "Partial update of the signed-in customer. Returns the whole profile as it now stands.\n\n**Omitting a key leaves that field unchanged.** For `phone`, `null` is a different\ninstruction from omission: it removes the number.\n\n`email`, `role` and verification state are **not** editable here. Sending any of them\nreturns `400 UNKNOWN_FIELD` — changing a login identifier requires proving the new\naddress, and role is server-owned.",
+        "operationId": "UsersController_updateProfile_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR, or UNKNOWN_FIELD for a field that is not editable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED, TOKEN_EXPIRED or TOKEN_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — a profile belongs to a CUSTOMER account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND — the account was deleted while the token was still valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update my profile",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "description": "Creates a `CUSTOMER` account and issues an email-verification challenge.\n\n**No session is returned.** The account must be verified before it can sign in, so the\nclient should show a \"check your email\" state rather than navigating to a guarded route.\n\nThe `role` field does not exist on this DTO. Sending one returns `400 UNKNOWN_FIELD`.\n\nRate limited to 3 requests per hour per IP.",
@@ -926,6 +1004,112 @@
           }
         },
         "summary": "Resend the verification email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password-reset/request": {
+      "post": {
+        "description": "**Always returns 200**, with the same body, whether or not the address has an account.\nAnything else would make this a password-free account-existence oracle — an attacker with\na list of addresses would learn which ones are registered here.\n\nThe token is 32 random bytes, stored only as a SHA-256 digest, single-use, and valid for\none hour. Requesting again invalidates the previous link.\n\nRate limited to 3 requests per hour, per IP **and** email — the same limit as registration,\nbecause this endpoint also causes an email to be sent to an address the caller names.",
+        "operationId": "AuthController_requestPasswordReset_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMIT_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Request a password-reset link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password-reset/confirm": {
+      "post": {
+        "description": "Consumes the single-use token and sets the new password. Unknown, expired and\nalready-used tokens are reported identically.\n\nOn success this **signs the account out everywhere**: `tokenVersion` is incremented,\nwhich invalidates every outstanding access token, and every refresh token is revoked.\nBoth happen in one transaction with the credential change — a reset that left an\nattacker's session alive would not have reset anything.\n\nThe new password must satisfy the full server-side policy, including not containing the\naccount's own email address.",
+        "operationId": "AuthController_confirmPasswordReset_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetConfirmDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — token invalid or expired, or the password is refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMIT_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Complete a password reset",
         "tags": [
           "auth"
         ]
@@ -3813,6 +3997,96 @@
           }
         }
       },
+      "UpdateProfileDto": {
+        "type": "object",
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "example": "Nadia Hassan",
+            "minLength": 2,
+            "maxLength": 120,
+            "description": "Display name. Trimmed. Cannot be cleared — every account has one."
+          },
+          "phone": {
+            "type": "string",
+            "example": "01012345678",
+            "nullable": true,
+            "description": "Egyptian mobile number, or `null` to remove it. Omit the key to leave it unchanged — `null` and absent are different instructions."
+          }
+        }
+      },
+      "UserProfileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d",
+            "description": "24-character ObjectId hex."
+          },
+          "email": {
+            "type": "string",
+            "example": "maker@example.com",
+            "format": "email",
+            "description": "The login identifier. **Read-only here** — changing it needs re-verification."
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Nadia Hassan"
+          },
+          "phone": {
+            "type": "string",
+            "example": "01012345678",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "ADMIN",
+              "SUPER_ADMIN"
+            ],
+            "example": "CUSTOMER",
+            "description": "Authorization role. Set by the server; never accepted from a client."
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "example": true,
+            "description": "Whether the email address has been verified."
+          },
+          "lastLoginAt": {
+            "type": "string",
+            "example": "2026-08-30T14:22:31.000Z",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-08-30T14:22:31.000Z",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "fullName",
+          "phone",
+          "role",
+          "emailVerified",
+          "lastLoginAt",
+          "createdAt"
+        ]
+      },
+      "UserProfileResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/UserProfileDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "RegisterDto": {
         "type": "object",
         "properties": {
@@ -4144,6 +4418,37 @@
         },
         "required": [
           "email"
+        ]
+      },
+      "PasswordResetRequestDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "maker@example.com",
+            "format": "email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "PasswordResetConfirmDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The single-use token from the password-reset email."
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 10,
+            "format": "password"
+          }
+        },
+        "required": [
+          "token",
+          "newPassword"
         ]
       },
       "CategoryRefDto": {

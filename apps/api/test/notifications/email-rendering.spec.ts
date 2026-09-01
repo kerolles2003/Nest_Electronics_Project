@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 import { HandlebarsTemplateRenderer } from '../../src/modules/notifications/infrastructure/handlebars-template.renderer';
 import { TEMPLATE_IDS } from '../../src/modules/notifications/application/templates/template-id';
 import type { OrderPlacedData } from '../../src/modules/notifications/application/templates/order-placed.data';
+import type { PasswordResetData } from '../../src/modules/notifications/application/templates/password-reset.data';
 import type { VerifyEmailData } from '../../src/modules/notifications/application/templates/verify-email.data';
 
 /**
@@ -120,6 +121,12 @@ const VERIFY: VerifyEmailData = {
   expiresIn: '24 hours',
 };
 
+const RESET: PasswordResetData = {
+  customerName: 'Mina Kerolles',
+  resetUrl: 'https://shop.example.test/forgot-password/reset?token=xyz789',
+  expiresIn: '1 hour',
+};
+
 const ORDER: OrderPlacedData = {
   customerName: 'Mina Kerolles',
   orderNumber: 'NE-20260831-0007',
@@ -175,6 +182,7 @@ describe('template inventory', () => {
     // and no fixture — it would still have to render.
     const fixtures: Record<string, object> = {
       'auth/verify-email': VERIFY,
+      'auth/password-reset': RESET,
       'orders/order-placed': ORDER,
     };
 
@@ -187,6 +195,70 @@ describe('template inventory', () => {
       expect(rendered.html.length).toBeGreaterThan(0);
       expect(rendered.text.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('auth/password-reset', () => {
+  it('puts the reset URL in both the HTML and the plain text', async () => {
+    /*
+     * BOTH, because a mail client picks one and the customer never sees the
+     * other. A link present only in the HTML part is a dead email for anyone
+     * reading in plain text, and that is exactly the reader who cannot work
+     * around it.
+     */
+    const rendered = await renderer.render('auth/password-reset', RESET, 'en');
+
+    // `decodeEntities` because Handlebars escapes `=` to `&#x3D;` in the HTML
+    // part — the link is still navigable, and the plain-text part is compiled
+    // with `noEscape` so it carries the URL verbatim.
+    expect(decodeEntities(rendered.html)).toContain(RESET.resetUrl);
+    expect(rendered.text).toContain(RESET.resetUrl);
+  });
+
+  it('states the ONE-HOUR expiry, not the verification email\'s day', async () => {
+    // The two templates are deliberately similar and were written by copying.
+    // This is the assertion that notices if the copy kept "24 hours".
+    const rendered = await renderer.render('auth/password-reset', RESET, 'en');
+
+    expect(rendered.text).toContain('1 hour');
+    expect(rendered.text).not.toContain('24 hours');
+  });
+
+  it('tells the reader the reset signs them out everywhere', async () => {
+    /*
+     * Not decoration. The confirm endpoint revokes every session, so a customer
+     * who resets on their phone is signed out on their laptop — and an email
+     * that did not say so turns a security feature into a support ticket.
+     */
+    const rendered = await renderer.render('auth/password-reset', RESET, 'en');
+
+    expect(rendered.text).toContain('signs you out everywhere');
+  });
+
+  it('warns a recipient who did not ask for it', async () => {
+    // The single most useful sentence in a reset email: it is read by whoever
+    // holds the mailbox, who may not be the person who asked.
+    const rendered = await renderer.render('auth/password-reset', RESET, 'en');
+
+    expect(rendered.text).toContain('If you did not ask for this');
+    expect(rendered.html).toContain('If you did not ask for this');
+  });
+
+  it('carries a subject that says what it is', async () => {
+    const rendered = await renderer.render('auth/password-reset', RESET, 'en');
+
+    expect(rendered.subject).toBe('Reset your Nest Electronics password');
+  });
+
+  it('refuses to render with the URL missing', async () => {
+    /*
+     * Strict variable resolution, and the case that makes it worth having: a
+     * reset email whose link silently rendered as an empty string would be
+     * delivered, look plausible, and strand the customer.
+     */
+    await expect(
+      renderer.render('auth/password-reset', without(RESET, 'resetUrl'), 'en'),
+    ).rejects.toThrow();
   });
 });
 

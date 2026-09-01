@@ -179,6 +179,87 @@ export class CredentialRepository {
       .exec();
   }
 
+  /**
+   * Replaces any outstanding reset challenge, so requesting a second link
+   * invalidates the first.
+   *
+   * That is not only tidiness. Without it, every "I didn't get the email" click
+   * would leave another live key to the account sitting in a mailbox, and the
+   * oldest of them would still work an hour later.
+   */
+  async setPasswordResetChallenge(
+    userId: Types.ObjectId,
+    tokenHash: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.model
+      .updateOne({ _id: userId }, { $set: { passwordReset: { tokenHash, expiresAt } } })
+      .exec();
+  }
+
+  /**
+   * The account holding a live reset challenge, or `null`.
+   *
+   * Expiry is compared IN THE QUERY rather than in code, so an expired
+   * challenge simply does not match and the caller cannot forget to check it —
+   * the same shape as `findByVerificationTokenHash`, for the same reason.
+   *
+   * It looks at `passwordReset` and never at `emailVerification`. A token minted
+   * to confirm an address must not be presentable here: one activates an
+   * account, the other replaces its password, and both are a hash and a date.
+   */
+  async findByPasswordResetTokenHash(tokenHash: string): Promise<UserCredentials | null> {
+    return this.model
+      .findOne({
+        'passwordReset.tokenHash': tokenHash,
+        'passwordReset.expiresAt': { $gt: new Date() },
+      })
+      .select(CREDENTIAL_PROJECTION)
+      .lean<UserCredentials>()
+      .exec();
+  }
+
+  /**
+   * Completes a reset: new hash, challenge discarded, `tokenVersion` bumped.
+   *
+   * ONE update, and the three parts must not be separable.
+   *
+   *   the new hash        the reset itself
+   *   `passwordReset: null`  makes the token single-use
+   *   `$inc tokenVersion`    invalidates every outstanding ACCESS token
+   *
+   * Splitting them would leave states worth naming: a password changed while
+   * the old token still works, or a password changed while an attacker's
+   * fifteen-minute access token keeps working. `AUTHORIZATION-MODEL.md` §2.8
+   * requires all three.
+   *
+   * Refresh tokens are revoked by the caller in the SAME transaction, because
+   * they outlive access tokens by thirty days and this update cannot reach them.
+   *
+   * The filter re-checks the challenge, so two confirmations racing on one
+   * token cannot both succeed: the loser matches nothing and gets
+   * `modifiedCount: 0`, which the caller reads as "already used".
+   */
+  async completePasswordReset(
+    userId: Types.ObjectId,
+    tokenHash: string,
+    passwordHash: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const result = await this.model
+      .updateOne(
+        { _id: userId, 'passwordReset.tokenHash': tokenHash },
+        {
+          $set: { passwordHash, passwordReset: null },
+          $inc: { tokenVersion: 1 },
+        },
+        session === undefined ? {} : { session },
+      )
+      .exec();
+
+    return result.modifiedCount === 1;
+  }
+
   async recordLogin(userId: Types.ObjectId): Promise<void> {
     await this.model.updateOne({ _id: userId }, { $set: { lastLoginAt: new Date() } }).exec();
   }

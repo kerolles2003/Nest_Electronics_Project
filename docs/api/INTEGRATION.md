@@ -19,6 +19,8 @@ running server's `/docs-json`, which is whatever happens to be deployed at that 
 | Catalogue | products (list, detail, search, suggestions, related), categories (list, tree, detail), brands |
 | Identity | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
 | Verification | `POST /auth/verify-email`, `/auth/resend-verification` |
+| Password reset | `POST /auth/password-reset/request`, `/auth/password-reset/confirm` |
+| Profile | `PATCH /users/me` — `fullName` and `phone` only |
 | Cart | the signed-in cart; re-priced on every read |
 | Addresses | the address book, including the single-default invariant |
 | Checkout | `POST /checkout/quote` — no side effects, no reservation |
@@ -81,7 +83,7 @@ is the field that tells them apart:
 | `shippingPriced` | Meaning | Show |
 |---|---|---|
 | `true` | the fee is what the customer owes — **including when it is `0`** because a free-shipping threshold was met | the amount, or "Free" |
-| `false` | no delivery rate has been supplied yet; the `0` is a placeholder | "Delivery not yet calculated" |
+| `false` | **no address has been chosen yet**, so there is nothing to price; the `0` is a placeholder | "Delivery not yet calculated" |
 
 Today `shippingPriced` is `false` for every order. When real per-governorate rates land it
 becomes `true` **without any other field changing**. A client that branches on the amount
@@ -99,9 +101,9 @@ entering this document and the drift gate as they land.
 
 | Coming | Phase | What changes for you |
 |---|---|---|
-| Real shipping fee **values** | 5 | `shippingFee.amount` becomes non-zero and `shippingPriced` becomes `true`. **The shape is already final** — if you read `shippingPriced` today, nothing in your code changes. |
-| Password reset (`request` / `confirm`) | 5 | new endpoints |
-| Profile update (`PATCH /users/me`) | 5 | new endpoint |
+| ~~Real shipping fee **values**~~ | ~~5~~ | **LANDED.** `shippingFee.amount` is now non-zero and `shippingPriced` is `true` once an address is chosen. Nothing changed shape. If you read `shippingPriced` rather than testing `amount === 0`, your code needed no edit — which was the point of shipping the field first. |
+| ~~Password reset~~ | ~~5~~ | **LANDED.** See the SAFE table and the flow below. |
+| ~~Profile update~~ | ~~5~~ | **LANDED.** `PATCH /users/me`. |
 | ~~Media upload~~ | ~~4~~ | **LANDED, and not for you.** `POST /admin/media` is staff-only and needs an ADMIN or SUPER_ADMIN token; a customer app has no use for it. What it changes for you is downstream: product images will start appearing in `primaryImage` / `images`, as `{publicId, version, format, width, height, alt}`. **Build the delivery URL yourself** — `https://res.cloudinary.com/<cloud>/image/upload/<transformation>/v<version>/<publicId>` — because the API deliberately returns no URL (a stored URL makes a CDN change a data migration). Use `width`/`height` to reserve space before the image loads. **No product has an image yet**, so every one of those fields is `null` or empty today. |
 | Coupons | 8 | `discountTotal` starts being non-zero; the field already exists |
 | Reviews, wishlist, blog | 8 | new endpoints |
@@ -244,3 +246,89 @@ the probe can never disagree with the command it tells you to run.
   Cloudinary outage would then take the whole storefront down because a dependency that only
   *admin image upload* needs was unavailable. A dependency belongs in readiness only if the
   instance genuinely cannot serve without it.
+
+---
+
+## Password reset, end to end
+
+```
+POST /api/v1/auth/password-reset/request   { "email" }
+    -> ALWAYS 200, with the same body, whether or not the address has an account
+POST /api/v1/auth/password-reset/confirm   { "token", "newPassword" }
+    -> 200, and the account is signed out on EVERY device
+```
+
+### The request endpoint tells you nothing, on purpose
+
+It answers identically for an address that has an account, one that does not,
+one that is unverified and one that is disabled. **Do not build a "no account
+with that address" message from this response** — there is nothing in it to
+build one from, and that is deliberate: anything else would make an
+unauthenticated endpoint an account-existence oracle.
+
+Your UI should say *"if that address has an account, a link is on its way"* and
+mean it.
+
+### The confirm endpoint ends every session
+
+On success the API increments `tokenVersion` (invalidating every outstanding
+access token) and revokes every refresh token, in one transaction with the
+credential change. **The client that called it is signed out too** — including
+the one the customer is looking at.
+
+So: after a `200`, discard your tokens and send the customer to sign in with the
+new password. Calling `POST /auth/refresh` afterwards returns `401`, and a
+client that treats that as a session bug rather than the expected outcome will
+show a confusing error at the worst moment.
+
+### Failure is one shape
+
+Unknown, expired and already-used tokens all return `400 VALIDATION_ERROR` with
+the same message. There is no way to tell them apart, and no code should try:
+the only useful UI is "that link is no longer valid, request another".
+
+A **refused password** is also `400 VALIDATION_ERROR`, distinguishable by
+`error.details[0].field` being `newPassword` rather than `token`. The token
+survives a refused password, so the customer can try again on the same link
+rather than starting over. The policy is server-side and includes rules a client
+cannot check — it refuses a password containing the account's own email address.
+
+### Timing
+
+The token is 32 random bytes, single-use, and valid for **one hour** — a
+twenty-fourth of the verification token's life, because a reset link is a live
+credential that replaces a password rather than a convenience that can wait
+until tomorrow. Requesting a second link invalidates the first.
+
+Both endpoints are throttled at 3 requests per hour per IP **and** per email
+(request) and 10 per hour (confirm).
+
+> **Path note.** `AUTHORIZATION-MODEL.md` §2.8 sketches these as
+> `POST /auth/forgot-password` and `POST /auth/reset-password`. The paths built
+> are the ones `PLAN.md` §9 names, which is what the implementation brief
+> specified. **The behaviour is §2.8's, exactly** — neutral responses, hashed at
+> rest, single-use, 1-hour TTL, `tokenVersion` bump and full revocation. Only the
+> two URLs differ, and this document is the authority on the URL.
+
+---
+
+## `PATCH /users/me`
+
+```jsonc
+// every field optional; an omitted key is left unchanged
+{ "fullName": "Nadia Hassan", "phone": "01012345678" }
+```
+
+Returns the whole profile, in the same shape as `GET /auth/me`.
+
+- **`phone: null` clears the number.** Omitting the key and sending `null` are
+  different instructions, and only the second one removes it.
+- **`email` and `role` are refused** with `400 UNKNOWN_FIELD`, not ignored.
+  Changing a login identifier needs the new address proven; role is server-owned.
+- **CUSTOMER only.** A staff token gets `403`.
+- `404 RESOURCE_NOT_FOUND` means the account was disabled while your access token
+  was still valid — the token is genuine, the subject is gone. Sign the customer
+  out rather than retrying.
+
+There is no `GET /users/me`: `GET /auth/me` already returns this and is what
+every client already calls.

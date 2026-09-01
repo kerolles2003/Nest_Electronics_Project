@@ -1521,3 +1521,107 @@ One is worth naming: the pricing-identity test asserted
 `grandTotal === subtotal − discount + shipping` while shipping was always 0, so
 the equation held whether or not the code added the term. It now runs against a
 non-zero fee.
+
+## 3 — password reset and profile endpoints
+
+`POST /auth/password-reset/request`, `POST /auth/password-reset/confirm`,
+`PATCH /users/me`. 35 tests, all at the HTTP boundary.
+
+### A path conflict, resolved and flagged
+
+`AUTHORIZATION-MODEL.md` §2.8 — a **frozen** document — sketches these as
+`POST /auth/forgot-password` and `POST /auth/reset-password`. `PLAN.md` §9 and
+the 5a brief both name `/auth/password-reset/request` and `/confirm`.
+
+Built the briefed paths, because the brief is explicit and the most recent
+instruction. **Everything §2.8 actually specifies is honoured exactly** — neutral
+responses, hashed at rest, single-use, 1-hour TTL, `tokenVersion` bump, full
+refresh-token revocation. Only the two URLs differ. Recorded in `PLAN.md` §9 and
+`docs/api/INTEGRATION.md`, both of which now say plainly which document is the
+authority on the URL. **Cheap to change while nothing consumes them; that stops
+being true in 5b.**
+
+### The security properties, and why each is tested
+
+| Property | What breaks without it |
+|---|---|
+| identical response for known / unknown / unverified / deleted | an unauthenticated account-existence oracle |
+| **no email** for an unknown address | a way to send mail to arbitrary addresses |
+| token hashed at rest | database read access becomes account takeover |
+| single-use | a link seen once still works after the password changed |
+| requesting again invalidates the previous link | every "didn't get it" click leaves another live key in a mailbox |
+| unknown / expired / used are one error | a stolen token reveals whether it was ever valid |
+| a **verification** token is refused here, and vice versa | an email-verification link becomes a password-reset link |
+
+That last one is the one worth naming. Both tokens are 32 random bytes stored as
+a SHA-256 digest with an expiry — **nothing in the type system tells them
+apart**. Only the separate field and the separate lookup do. So they get separate
+fields, separate lookups, and a test in both directions.
+
+### The transaction, and why it is one
+
+A reset does three things to the credential and one to sessions:
+
+```
+$set passwordHash          the reset itself
+$set passwordReset: null   makes the token single-use
+$inc tokenVersion          kills outstanding ACCESS tokens (15 min)
+revoke all refresh tokens  kills the 30-day tokens the bump cannot reach
+```
+
+The first three are one update. The fourth is a different collection, so it runs
+in the **same transaction** — the split state is the one that defeats the whole
+feature: password changed, attacker's refresh token still alive, still minting
+access tokens for thirty days, now under the new password.
+
+`revokedReason` is `PASSWORD_RESET`, not `LOGOUT_ALL`. Someone reading that field
+after a takeover needs to see the sessions ended because the password changed,
+not because the owner pressed a button.
+
+The update's filter re-checks the token hash, so two confirmations racing on one
+token cannot both win — the loser matches nothing and is reported as an
+already-used token, which is what it is.
+
+### Two ordering decisions
+
+- **Password policy runs AFTER the token is resolved**, because it refuses a
+  password containing the account's email and needs to know whose token this is.
+  The side effect is worth having: the weak-password error is only reachable by
+  someone who already holds a valid token.
+- **A refused password does not burn the token.** Otherwise a customer who typed
+  something too short has to start the entire flow again, from the email.
+
+### `PATCH /users/me`
+
+`fullName` and `phone` only. `email`, `role`, `passwordHash`, `emailVerifiedAt`,
+`tokenVersion`, `_id`, `createdAt` and `addresses` all return `400 UNKNOWN_FIELD`
+— refused, not ignored — and the service builds its `$set` from named fields
+rather than spreading the DTO, so the guarantee does not rest on the validation
+pipe alone.
+
+`phone: null` clears the number and is distinct from omitting the key. Building
+the update from `!== undefined` rather than truthiness is what keeps them
+distinct; a truthiness check would silently ignore a deliberate `null` and leave
+the old number for a courier to ring.
+
+An empty patch is a no-op rather than an empty `$set`, which MongoDB rejects.
+
+There is deliberately **no `GET /users/me`** — `GET /auth/me` already returns
+this shape and is what every client calls. A test asserts the two return the
+same body, because the shape is described by two DTO classes: moving one across
+modules would close a dependency cycle, and deleting one is a breaking contract
+change. Duplication that cannot drift is the cheaper mistake.
+
+### The template inventory guard earned its keep
+
+Registering `auth/password-reset` in the id union failed
+`email-rendering.spec.ts` immediately: a template id with files but **no
+rendering fixture**. Exactly the hole it was written for. Six rendering tests
+followed, including one asserting the email says "1 hour" and *not* "24 hours" —
+the two templates are deliberately similar and the second was written by copying
+the first.
+
+### Contract
+
+Additive: 2 new paths, 1 new operation on an existing path, 5 new schemas. The
+gate confirmed additive before the artifact was regenerated.

@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { AuthService } from './application/auth.service';
 import { EmailVerificationService } from './application/email-verification.service';
+import { PasswordResetService } from './application/password-reset.service';
 import { PasswordService } from './application/password.service';
 import { TokenService } from './application/token.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -65,6 +66,7 @@ import { AuthController } from './presentation/auth.controller';
     TokenService,
     PasswordService,
     EmailVerificationService,
+    PasswordResetService,
     CredentialRepository,
     RefreshTokenRepository,
     JwtAuthGuard,

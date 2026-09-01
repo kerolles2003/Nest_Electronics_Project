@@ -117,3 +117,49 @@ export class ResendVerificationDto {
   @MaxLength(254)
   email!: string;
 }
+
+/**
+ * `POST /auth/password-reset/request`.
+ *
+ * One field, and deliberately no others. A "redirect back to" or "client id"
+ * parameter here would be an open-redirect handed to an unauthenticated caller,
+ * with the resulting link mailed to a real customer by us.
+ */
+export class PasswordResetRequestDto {
+  @ApiProperty({ example: 'maker@example.com', format: 'email' })
+  @Transform(normaliseEmailInput)
+  @IsEmail({}, { message: 'email must be a valid email address' })
+  @MaxLength(254)
+  email!: string;
+}
+
+/**
+ * `POST /auth/password-reset/confirm`.
+ *
+ * The password is checked against the full server-side policy in the SERVICE,
+ * not here, because the policy also refuses a password containing the account's
+ * email address and this DTO cannot know it. What the decorators do is bound
+ * the input before it reaches bcrypt.
+ */
+export class PasswordResetConfirmDto {
+  @ApiProperty({ description: 'The single-use token from the password-reset email.' })
+  @IsString()
+  @MinLength(20, { message: 'token is not a valid token' })
+  @MaxLength(512)
+  token!: string;
+
+  @ApiProperty({ minLength: MIN_PASSWORD_LENGTH, format: 'password' })
+  @IsString()
+  /*
+   * The bcrypt ceiling, enforced before hashing rather than after.
+   *
+   * bcrypt silently truncates at 72 BYTES, so without this a 200-character
+   * password and its first 72 bytes are the same credential — and the customer
+   * believes they chose the longer one.
+   */
+  @MaxLength(MAX_PASSWORD_BYTES)
+  @MinLength(MIN_PASSWORD_LENGTH, {
+    message: `password must be at least ${String(MIN_PASSWORD_LENGTH)} characters`,
+  })
+  newPassword!: string;
+}
