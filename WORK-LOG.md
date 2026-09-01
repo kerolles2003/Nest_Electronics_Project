@@ -2242,3 +2242,41 @@ the suite: the index is present, `unique: true`, and **refuses a real duplicate
 insert** — checked by inserting one rather than by reading `listIndexes`.
 
 jest **813 passed, 15 skipped** (828). Drift gate green.
+
+## SESSION 5 — final state
+
+| | Before | After |
+|---|---|---|
+| jest | 800 passed, 15 skipped (815) | **813 passed, 15 skipped** (828), 34 suites |
+| Playwright | 44 | **44** |
+| Cloudinary integration | 15, opt-in | 15, opt-in — unchanged |
+| build / type-check / lint / drift gate | green | green |
+
+Net +13 jest tests: 3 secret-hygiene, 12 index-invariant, and 2 net from the
+fulfilment reshaping.
+
+**Secret audit re-run after every commit of this session**: the five real
+credentials are still clean across all commits and all local files. The
+`MONGODB_URI` match is the passwordless localhost URI, documented on purpose.
+
+### Commits
+
+| | |
+|---|---|
+| `5c0c27d` | fail the suite if a credential value reaches a tracked file |
+| `57910e5` | password reset adopts the frozen §2.8 paths (**breaking**, accepted) |
+| `31e2065` | withdraw the per-row free-shipping threshold |
+| `55db245` | verify all 15 skipped tests are the opt-in Cloudinary suite |
+| `845e858` | name the unique index as the concurrency control at every catch site |
+
+### Needs owner, after this session
+
+1. **The Cloudinary account is shared** with an unrelated application (108
+   assets). Unchanged from session 4 — worth deciding whether this shop gets its
+   own account before it holds real photographs.
+2. **The blank 404 body** still needs the existence check in `proxy.ts`, which
+   is 5b's.
+3. **Five doc-vs-implementation disagreements** are now listed in PLAN §9.1,
+   including one where two frozen documents contradict each other about the cart
+   item parameter. Listed, not fixed.
+4. **Nothing catches a stray `.only`.** Reported in item 4, not built.
