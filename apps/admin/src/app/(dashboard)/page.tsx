@@ -174,12 +174,12 @@ export default async function AdminPage() {
     },
   ];
 
-  const colorMap: Record<string, { bg: string; icon: string; border: string }> = {
-    success: { bg: 'bg-success/10', icon: 'text-success', border: 'border-success/20' },
-    primary: { bg: 'bg-primary/10', icon: 'text-primary', border: 'border-primary/20' },
-    purple: { bg: 'bg-purple/10', icon: 'text-purple', border: 'border-purple/20' },
-    warning: { bg: 'bg-warning/10', icon: 'text-warning', border: 'border-warning/20' },
-    destructive: { bg: 'bg-destructive/10', icon: 'text-destructive', border: 'border-destructive/20' },
+  const colorMap: Record<string, { bg: string; icon: string; border: string; glow: string; hoverBorder: string }> = {
+    success: { bg: 'bg-success/10', icon: 'text-success', border: 'border-success/20', glow: 'bg-success/20', hoverBorder: 'hover:border-success/50' },
+    primary: { bg: 'bg-primary/10', icon: 'text-primary', border: 'border-primary/20', glow: 'bg-primary/20', hoverBorder: 'hover:border-primary/50' },
+    purple: { bg: 'bg-purple/10', icon: 'text-purple', border: 'border-purple/20', glow: 'bg-purple/20', hoverBorder: 'hover:border-purple/50' },
+    warning: { bg: 'bg-warning/10', icon: 'text-warning', border: 'border-warning/20', glow: 'bg-warning/20', hoverBorder: 'hover:border-warning/50' },
+    destructive: { bg: 'bg-destructive/10', icon: 'text-destructive', border: 'border-destructive/20', glow: 'bg-destructive/20', hoverBorder: 'hover:border-destructive/50' },
   };
 
   return (
@@ -204,16 +204,21 @@ export default async function AdminPage() {
           const colors = colorMap[stat.color];
           const displayValue = stat.format === 'currency' ? formatCurrency(stat.value) : formatNumber(stat.value);
           return (
-            <div key={stat.label} className={`rounded-lg border ${colors.border} bg-card p-4 transition-all duration-150 hover:border-border-strong hover:shadow-subtle`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className={`rounded-md p-1.5 ${colors.bg}`}>
-                  <Icon className={`h-4 w-4 ${colors.icon}`} />
+            <div key={stat.label} className={`group relative overflow-hidden rounded-xl border ${colors.border} bg-card/40 backdrop-blur-md p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevated ${colors.hoverBorder}`}>
+              {/* Glow effect */}
+              <div className={`absolute -right-6 -top-6 h-24 w-24 rounded-full ${colors.glow} blur-2xl transition-all duration-500 group-hover:scale-150 group-hover:opacity-100 opacity-40`} />
+              
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-3">
+                  <div className={`rounded-xl p-2 ${colors.bg} ring-1 ring-inset ${colors.border}`}>
+                    <Icon className={`h-4 w-4 ${colors.icon}`} />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{stat.label}</p>
-                <p className="text-xl font-bold tracking-tight text-foreground mt-0.5 font-heading">{displayValue}</p>
-                <p className="text-[10px] text-foreground-subtle mt-0.5 truncate">{stat.sub}</p>
+                <div>
+                  <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
+                  <p className="text-2xl font-bold tracking-tight text-foreground mt-1 font-heading">{displayValue}</p>
+                  <p className="text-[11px] text-foreground-subtle mt-1 truncate font-medium">{stat.sub}</p>
+                </div>
               </div>
             </div>
           );

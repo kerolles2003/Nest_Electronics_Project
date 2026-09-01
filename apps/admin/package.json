@@ -19,7 +19,7 @@
     "@nest/config": "workspace:*",
     "@nest/services": "workspace:*",
     "@nest/providers": "workspace:*",
-    "@supabase/ssr": "^0.5.1",
+    "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.45.4",
     "zod": "^3.23.8"
   },

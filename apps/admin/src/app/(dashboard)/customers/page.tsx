@@ -46,7 +46,7 @@ export default async function CustomersPage(props: {
 
   /* Order stats for current page customers */
   const userIds = customers.map(c => c.id);
-  let orderMap: Record<string, { count: number; total: number }> = {};
+  const orderMap: Record<string, { count: number; total: number }> = {};
   if (userIds.length > 0) {
     const { data: orders } = await supabase
       .from('orders')

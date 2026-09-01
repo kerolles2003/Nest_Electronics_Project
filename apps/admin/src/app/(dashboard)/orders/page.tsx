@@ -72,8 +72,6 @@ export default async function OrdersPage(props: {
   const datePreset = (sp.date as string) || '';
   const limit = 20;
 
-  const stats = await getOrderStats();
-
   let dbQuery = supabase
     .from('orders')
     .select(
@@ -97,13 +95,22 @@ export default async function OrdersPage(props: {
     if (to) dbQuery = dbQuery.lte('created_at', to);
   }
 
-  const { data, count, error } = await dbQuery.range((page - 1) * limit, page * limit - 1);
+  const [stats, { data, count, error }] = await Promise.all([
+    getOrderStats(),
+    dbQuery.range((page - 1) * limit, page * limit - 1)
+  ]);
 
   if (error) {
     console.error('Orders query error:', error);
   }
 
-  let orders = (data ?? []) as Order[];
+  /*
+   * The query above PROJECTS a subset of the order columns (no user_id,
+   * subtotal, discount, shipping_fee or tax), so this is a narrowing the
+   * compiler cannot verify and must go through `unknown`. Only the selected
+   * fields are read below and by OrdersTable.
+   */
+  let orders = (data ?? []) as unknown as Order[];
 
   // Client-side search for order number / customer name / phone (Supabase text search on JSON is limited)
   if (search) {

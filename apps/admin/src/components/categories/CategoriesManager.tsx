@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { Plus, Pencil, Trash2, Loader2, X, FolderTree, CheckCircle2, XCircle, Layers, GitBranch, FolderOpen, Search } from 'lucide-react'
 import { useToast, StatusBadge } from '@nest/ui'
 import type { Category } from '@nest/types'
@@ -453,8 +454,8 @@ export function CategoriesManager({ initialCategories, stats, activeIds }: Props
                           )}
                           <div className="flex items-center gap-2">
                             {cat.image_url ? (
-                              <div className="h-8 w-8 rounded-lg border border-border overflow-hidden shrink-0 bg-muted">
-                                <img src={cat.image_url} alt="" className="h-full w-full object-cover" />
+                              <div className="relative h-8 w-8 rounded-lg border border-border overflow-hidden shrink-0 bg-muted">
+                                <Image src={cat.image_url} alt="" fill sizes="32px" className="object-cover" />
                               </div>
                             ) : (
                               <div className="h-8 w-8 rounded-lg border border-border bg-muted flex items-center justify-center shrink-0">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import { X, Upload, Image as ImageIcon, Star, GripVertical, Loader2 } from 'lucide-react';
 import { Button } from '@nest/ui';
@@ -62,12 +62,14 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
 
   const totalCount = items.length;
 
-  const syncFilesToParent = useCallback((nextItems: ImageItem[]) => {
-    const newFiles = nextItems
+  useEffect(() => {
+    const newFiles = items
       .filter((i): i is ImageItem & { type: 'new' } => i.type === 'new')
       .map((i) => i.file);
     onImagesChange?.(newFiles);
-  }, [onImagesChange]);
+  }, [items, onImagesChange]);
+
+
 
   const addFiles = useCallback((files: FileList | null) => {
     if (!files) return;
@@ -97,16 +99,14 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
         });
         currentCount++;
       }
-      const next = [...prev, ...newItems];
-      syncFilesToParent(next);
-      return next;
+      return [...prev, ...newItems];
     });
 
     if (errors.length > 0) {
       setValidationError(errors.join(', '));
       setTimeout(() => setValidationError(null), 4000);
     }
-  }, [syncFilesToParent]);
+  }, []);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     addFiles(e.target.files);
@@ -166,7 +166,6 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
       if (item.isPrimary && next.length > 0 && !next.some((i) => i.isPrimary)) {
         next[0] = { ...next[0], isPrimary: true };
       }
-      syncFilesToParent(next);
       return next;
     });
   };
@@ -176,11 +175,7 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
     if (!item || item.isPrimary) return;
 
     // Optimistic update
-    setItems((prev) => {
-      const next = prev.map((i) => ({ ...i, isPrimary: i.uid === uid }));
-      syncFilesToParent(next);
-      return next;
-    });
+    setItems((prev) => prev.map((i) => ({ ...i, isPrimary: i.uid === uid })));
 
     if (item.type === 'existing' && productId) {
       await setPrimaryImageAction(productId, item.id);
@@ -213,7 +208,6 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
       const next = [...prev];
       const [moved] = next.splice(dragIndex, 1);
       next.splice(dropIndex, 0, moved);
-      syncFilesToParent(next);
       return next;
     });
 

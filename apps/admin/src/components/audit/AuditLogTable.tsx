@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Image from "next/image";
 import { 
   History, 
   Search, 
@@ -114,9 +115,9 @@ export function AuditLogTable({ initialLogs }: AuditLogTableProps) {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden border">
+                        <div className="relative h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden border">
                           {log.admin?.avatar_url ? (
-                            <img src={log.admin.avatar_url} alt="" className="w-full h-full object-cover" />
+                              <Image src={log.admin.avatar_url} alt="" fill sizes="32px" className="object-cover" />
                           ) : (
                             <UserIcon className="h-4 w-4 text-primary" />
                           )}

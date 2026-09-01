@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { createAdminClient } from './lib/supabase'
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname
@@ -64,8 +65,7 @@ export async function proxy(request: NextRequest) {
   /* ------------------------------------------------------------------ */
   /*  2. Verify admin role — lightweight indexed lookup                  */
   /* ------------------------------------------------------------------ */
-  const { createAdminClient } = await import('./lib/supabase')
-  const adminClient = await createAdminClient()
+  const adminClient = createAdminClient()
   const { data: profile, error: profileError } = await adminClient
     .from('profiles')
     .select('role')

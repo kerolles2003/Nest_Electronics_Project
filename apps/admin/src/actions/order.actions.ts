@@ -1,11 +1,36 @@
 'use server'
 
+import { z } from 'zod'
 import { createClient } from '@/lib/supabase'
 import { OrderStatus, PaymentStatus, FulfillmentStatus } from '@nest/types'
 import { requireAdmin } from '@/lib/services'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { logger } from '@/lib/logger'
 import { revalidatePath } from 'next/cache'
+
+const orderStatusValues = Object.values(OrderStatus) as [string, ...string[]]
+const paymentStatusValues = Object.values(PaymentStatus) as [string, ...string[]]
+const fulfillmentStatusValues = Object.values(FulfillmentStatus) as [string, ...string[]]
+
+const orderIdSchema = z.object({
+  orderId: z.string().uuid(),
+})
+
+const updateOrderStatusSchema = orderIdSchema.extend({
+  status: z.enum(orderStatusValues),
+  notes: z.string().max(1000).optional(),
+})
+
+const updatePaymentStatusSchema = orderIdSchema.extend({
+  status: z.enum(paymentStatusValues),
+  notes: z.string().max(1000).optional(),
+})
+
+const updateFulfillmentStatusSchema = orderIdSchema.extend({
+  status: z.enum(fulfillmentStatusValues),
+  trackingNumber: z.string().max(200).optional(),
+  notes: z.string().max(1000).optional(),
+})
 
 const VALID_ORDER_TRANSITIONS: Record<string, string[]> = {
   [OrderStatus.PENDING_PAYMENT]: [OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.FAILED],
@@ -27,6 +52,9 @@ const VALID_FULFILLMENT_TRANSITIONS: Record<string, string[]> = {
 
 export async function updateOrderStatusAction(orderId: string, status: string, notes?: string) {
   const { user } = await requireAdmin()
+
+  const parsed = updateOrderStatusSchema.safeParse({ orderId, status, notes })
+  if (!parsed.success) return { success: false, error: parsed.error.errors[0].message }
 
   try {
     const client = await createClient() as any
@@ -79,6 +107,9 @@ export async function updateOrderStatusAction(orderId: string, status: string, n
 export async function updatePaymentStatusAction(orderId: string, status: string, notes?: string) {
   const { user } = await requireAdmin()
 
+  const parsed = updatePaymentStatusSchema.safeParse({ orderId, status, notes })
+  if (!parsed.success) return { success: false, error: parsed.error.errors[0].message }
+
   try {
     const client = await createClient() as any
 
@@ -127,6 +158,9 @@ export async function updatePaymentStatusAction(orderId: string, status: string,
 
 export async function updateFulfillmentStatusAction(orderId: string, status: string, trackingNumber?: string, notes?: string) {
   const { user } = await requireAdmin()
+
+  const parsed = updateFulfillmentStatusSchema.safeParse({ orderId, status, trackingNumber, notes })
+  if (!parsed.success) return { success: false, error: parsed.error.errors[0].message }
 
   try {
     const client = await createClient() as any

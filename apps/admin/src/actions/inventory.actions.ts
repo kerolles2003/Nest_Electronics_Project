@@ -30,7 +30,20 @@ export async function adjustStockAction(formData: FormData) {
   }
 
   try {
-    const { data, error: rpcError } = await supabase.rpc('adjust_stock_v2', {
+    /*
+     * `adjust_stock_v2` exists in the database but NOT in the committed
+     * generated types: packages/types/src/database.ts declares only
+     * generate_order_number, is_admin, release_expired_reservations and
+     * search_products. Until those types are regenerated from the live
+     * schema, this one call site is typed loosely rather than weakening the
+     * client for every other query.
+     */
+    const rpc = supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+    const { data, error: rpcError } = await rpc('adjust_stock_v2', {
       p_product_id: parsed.data.productId,
       p_quantity: parsed.data.quantity,
       p_reason: parsed.data.reason,
