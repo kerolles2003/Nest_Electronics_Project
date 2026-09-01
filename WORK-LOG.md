@@ -1297,3 +1297,25 @@ it cost nothing.
 Each is recorded in the spec that has it: a hover-revealed menu asserted without
 hovering; a 404 status Next documents as 200 for streamed responses; and a
 product count that double-counted because every card links to its product twice.
+
+---
+
+## SESSION 3 — final state
+
+| | Session start | Session end |
+|---|---|---|
+| jest suites | 22 | **26** |
+| jest tests | 563 declared, **19 failing** (missing indexes) | **697, all green** |
+| Playwright | 4 | **37, all green** |
+| root build / type-check / lint | build green | **all green** |
+| OpenAPI drift gate | green | **green** (artifact regenerated for the media endpoints, additive) |
+| Supabase reads in T1 routes | 9 files | **0** |
+
+The 19 failures at the start were environmental, not a regression: every
+application index had vanished from the development database and
+`pnpm --filter api indexes:sync` restored them. `autoIndex` is off by design, so
+that is a silent state — the API starts and serves traffic, and only the tests
+notice.
+
+**16 commits**, all on `phase-1-2-overnight`, nothing pushed, no history
+rewritten, nothing reverted.
