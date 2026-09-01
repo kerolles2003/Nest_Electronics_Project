@@ -49,6 +49,20 @@ import { test as base, expect, type Page } from '@playwright/test';
  */
 const DEV_SERVER_NOISE: readonly RegExp[] = [/_next\/webpack-hmr/];
 
+/**
+ * The attachment the summary reporter reads.
+ *
+ * A name rather than a shared import so the reporter, which runs in the main
+ * process, never has to load this module and its Playwright fixtures.
+ */
+export const SUPPRESSION_ATTACHMENT = 'browser-health-suppressed';
+
+/** How many problems each ignore rule swallowed, by rule. */
+export interface SuppressionCounts {
+  /** Keyed by the rule's source text, so a new entry names itself in the log. */
+  readonly [rule: string]: number;
+}
+
 /** One recorded problem, with enough context to act on it. */
 interface HealthProblem {
   readonly kind: 'pageerror' | 'unhandledrejection' | 'console.error' | 'server-error';
@@ -67,6 +81,8 @@ export interface BrowserHealth {
   allowServerError(pattern: RegExp): void;
   /** Everything recorded so far — for a test that wants to assert positively. */
   problems(): readonly HealthProblem[];
+  /** How many problems each ignore rule swallowed during this test. */
+  suppressions(): SuppressionCounts;
 }
 
 /**
@@ -105,6 +121,21 @@ async function install(page: Page): Promise<BrowserHealth> {
   const allowedConsole: RegExp[] = [];
   const allowedServer: RegExp[] = [];
 
+  /**
+   * Everything the ignore rules swallowed, counted by rule.
+   *
+   * An ignore list nobody looks at stops being a health check: it grows one
+   * "just this one" at a time, and the suite goes quiet without anyone deciding
+   * that it should. Counting is the cheapest thing that makes the growth
+   * visible — the rule's own source text is the key, so a new entry announces
+   * itself in the summary the first time it fires.
+   */
+  const suppressed = new Map<string, number>();
+
+  const suppress = (rule: RegExp): void => {
+    suppressed.set(rule.source, (suppressed.get(rule.source) ?? 0) + 1);
+  };
+
   const record = (kind: HealthProblem['kind'], detail: string): void => {
     problems.push({ kind, detail, at: page.url() });
   };
@@ -119,8 +150,18 @@ async function install(page: Page): Promise<BrowserHealth> {
     if (message.type() !== 'error') return;
 
     const text = message.text();
-    if (DEV_SERVER_NOISE.some((pattern) => pattern.test(text))) return;
-    if (allowedConsole.some((pattern) => pattern.test(text))) return;
+
+    const noise = DEV_SERVER_NOISE.find((pattern) => pattern.test(text));
+    if (noise !== undefined) {
+      suppress(noise);
+      return;
+    }
+
+    const allowed = allowedConsole.find((pattern) => pattern.test(text));
+    if (allowed !== undefined) {
+      suppress(allowed);
+      return;
+    }
 
     // The in-page reporter above routes rejections through console.error;
     // relabel them so the report names the real kind.
@@ -132,7 +173,12 @@ async function install(page: Page): Promise<BrowserHealth> {
     if (response.status() < 500) return;
 
     const url = response.url();
-    if (allowedServer.some((pattern) => pattern.test(url))) return;
+
+    const allowed = allowedServer.find((pattern) => pattern.test(url));
+    if (allowed !== undefined) {
+      suppress(allowed);
+      return;
+    }
 
     record('server-error', `${String(response.status())} ${response.request().method()} ${url}`);
   });
@@ -146,6 +192,9 @@ async function install(page: Page): Promise<BrowserHealth> {
     },
     problems() {
       return problems;
+    },
+    suppressions() {
+      return Object.fromEntries(suppressed);
     },
   };
 }
@@ -162,6 +211,22 @@ export const test = base.extend<{ health: BrowserHealth }>({
       await use(health);
 
       const problems = health.problems();
+      const suppressions = health.suppressions();
+
+      /*
+       * Attached on EVERY test, including passing ones.
+       *
+       * The point is visibility of what was ignored, and a suppression that
+       * only surfaces on failure is invisible in exactly the runs where the
+       * list is quietly growing. The summary reporter aggregates these and
+       * prints one line per rule at the end of the run.
+       */
+      if (Object.keys(suppressions).length > 0) {
+        await testInfo.attach(SUPPRESSION_ATTACHMENT, {
+          body: JSON.stringify(suppressions),
+          contentType: 'application/json',
+        });
+      }
 
       if (problems.length > 0) {
         // Attached before the assertion so the artifact exists even though the

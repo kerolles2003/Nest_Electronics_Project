@@ -795,3 +795,34 @@ was writing to a shared cloud database.
   always" in the variable table.
 
 Verified the API still seeds against the local URI after the change (5 seed lines).
+
+### B2 — the health fixture's ignore list is now counted and printed
+
+The scoping was correct and is unchanged (`_next/webpack-hmr` only). What was missing was
+visibility: nothing recorded how much the rule was swallowing, so growth would have been
+silent.
+
+- The fixture counts every suppression **keyed by the rule's own `RegExp.source`**, so a new
+  rule names itself in the output the first time it fires. Counting covers the dev-server
+  noise list *and* per-test `allowConsoleError` / `allowServerError` declarations.
+- Counts are attached on **every test, passing ones included** — a suppression that only
+  surfaces on failure is invisible in exactly the runs where the list is quietly growing.
+- A small reporter (`e2e/reporters/health-summary.ts`) aggregates and prints once at the end
+  of the run. A reporter rather than a `console.log` in the fixture, because the useful
+  question ("is the ignore list growing?") only exists at run level, and the fixture runs in
+  a worker process interleaved with test output.
+- **It never fails a run.** Deciding a number is too high is a person's judgement; a reporter
+  that failed builds on a threshold nobody agreed would just become another thing to
+  suppress.
+
+Live output from the run:
+
+```
+  4 passed (49.6s)
+browser-health: ignored 20 browser problem(s) across 4 test(s), by rule:
+     20  /_next\/webpack-hmr/
+Each line is something the health check did NOT check. If a rule you do not
+recognise appears here, or a count grows, that is the signal to look.
+```
+
+20 suppressions across 4 tests — previously invisible.

@@ -58,7 +58,12 @@ export default defineConfig({
   // noise without masking a real regression.
   retries: process.env['CI'] === undefined ? 0 : 1,
 
-  reporter: [['list']],
+  /**
+   * `list` for the run itself, plus a summary of everything the browser-health
+   * fixture chose to IGNORE. An ignore list nobody watches stops being a health
+   * check, so the counts are printed on every run, pass or fail.
+   */
+  reporter: [['list'], ['./e2e/reporters/health-summary.ts']],
 
   use: {
     baseURL: BASE_URL,
