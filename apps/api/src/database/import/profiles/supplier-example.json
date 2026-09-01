@@ -1,0 +1,57 @@
+{
+  "name": "supplier-example",
+  "description": "A DELIBERATELY DIFFERENT layout, to prove a new supplier costs a profile and not a code change. Semicolon-separated, German headings, prices with a comma decimal separator, yes/no written as Ja/Nein, and no cost or weight column at all.",
+  "delimiter": ";",
+  "upsertKey": "sku",
+  "fields": {
+    "sku": {
+      "column": "Artikelnummer",
+      "type": "string",
+      "required": true
+    },
+    "name": {
+      "column": "Bezeichnung",
+      "type": "string",
+      "required": true
+    },
+    "shortDescription": {
+      "column": "Kurztext",
+      "type": "string"
+    },
+    "categorySlug": {
+      "column": "Warengruppe",
+      "type": "string",
+      "required": true
+    },
+    "brandSlug": {
+      "column": "Hersteller",
+      "type": "string"
+    },
+    "basePrice": {
+      "column": "Listenpreis",
+      "type": "minorUnits",
+      "required": true
+    },
+    "salePrice": {
+      "column": "Aktionspreis",
+      "type": "minorUnits"
+    },
+    "onHand": {
+      "column": "Lagerbestand",
+      "type": "integer",
+      "required": true
+    },
+    "isFeatured": {
+      "column": "Empfehlung",
+      "type": "boolean",
+      "default": false,
+      "trueValues": [
+        "Ja",
+        "J"
+      ],
+      "falseValues": [
+        "Nein"
+      ]
+    }
+  }
+}

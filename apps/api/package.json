@@ -11,6 +11,7 @@
     "test": "jest",
     "indexes:sync": "nest build && node dist/database/sync-indexes.js",
     "seed": "nest build && node dist/database/seed/seed.js",
+    "catalogue:import": "nest build && node dist/database/import/catalogue-import.js",
     "openapi:export": "nest build && node dist/openapi/export-openapi.js",
     "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js"
   },
@@ -27,6 +28,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cloudinary": "^2.11.0",
+    "csv-parse": "^7.0.2",
     "handlebars": "^4.7.9",
     "helmet": "^8.3.0",
     "mongoose": "8.24.4",

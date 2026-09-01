@@ -1,0 +1,21 @@
+{
+  "name": "nest-standard",
+  "description": "Our own column names. Use this one if you are building the spreadsheet yourself rather than receiving it from a supplier.",
+  "upsertKey": "sku",
+  "fields": {
+    "sku":               { "column": "sku",               "type": "string",     "required": true },
+    "slug":              { "column": "slug",              "type": "string" },
+    "name":              { "column": "name",              "type": "string",     "required": true },
+    "shortDescription":  { "column": "short_description", "type": "string" },
+    "description":       { "column": "description",       "type": "string" },
+    "categorySlug":      { "column": "category",          "type": "string",     "required": true },
+    "brandSlug":         { "column": "brand",             "type": "string" },
+    "basePrice":         { "column": "price",             "type": "minorUnits", "required": true },
+    "salePrice":         { "column": "sale_price",        "type": "minorUnits" },
+    "costPrice":         { "column": "cost_price",        "type": "minorUnits" },
+    "onHand":            { "column": "stock",             "type": "integer",    "required": true },
+    "lowStockThreshold": { "column": "low_stock_at",      "type": "integer",    "default": 5 },
+    "isFeatured":        { "column": "featured",          "type": "boolean",    "default": false },
+    "weight":            { "column": "weight_grams",      "type": "integer" }
+  }
+}
