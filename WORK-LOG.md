@@ -772,3 +772,26 @@ since the failure it guards against is a future `quote()` body that a single cas
 miss). **Behaviour today is unchanged** — every current path already satisfies it. This
 closes the gap before Phase 5 introduces a `shippingRates` lookup that could violate it on a
 miss. Classified as hardening, not a live bug.
+
+---
+
+## PART B
+
+### B1 — development defaults to local Mongo
+
+`apps/api/.env` had `MONGODB_URI` pointing at a live Atlas cluster with an embedded
+credential. The jest suite creates and deletes users, carts and orders, so an unattended run
+was writing to a shared cloud database.
+
+- **`apps/api/.env`** (gitignored, not committed) — now the local replica set
+  `mongodb://127.0.0.1:27017/nest_electronics_dev`. The Atlas URI is **kept, commented and
+  untouched**, labelled for deliberate staging/production use only. Nothing was deleted.
+- **`apps/api/.env.example`** — the local URI was already the default; the *reasoning* was
+  not. It now states plainly that Atlas is for staging and production **by explicit choice**
+  and never the development default, and shows the one-off form
+  `MONGODB_URI=<uri> pnpm --filter api <task>` so a staging task cannot leak into the next
+  test run by way of an edited file.
+- **`docs/api/SANDBOX.md`** — the same warning as a callout, plus "the development default,
+  always" in the variable table.
+
+Verified the API still seeds against the local URI after the change (5 seed lines).

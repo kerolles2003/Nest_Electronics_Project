@@ -60,11 +60,19 @@ The defaults in `.env.example` are already the sandbox ones. In particular:
 
 | Variable | Sandbox value | Why |
 |---|---|---|
-| `MONGODB_URI` | `mongodb://127.0.0.1:27017/nest_electronics_dev` | the container above |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017/nest_electronics_dev` | the container above — **the development default, always** |
 | `EMAIL_PROVIDER` | `console` | prints mail instead of sending it — see §4 |
 | `EMAIL_FROM_ADDRESS` | `no-reply@nest-electronics.invalid` | RFC 2606 reserved; can never deliver |
 | `AUTH_REQUIRE_EMAIL_VERIFICATION` | `true` | matches production; see §5 to relax it |
 | `SITE_URL` | `http://localhost:3000` | the host in the verification links you will click |
+
+> **Never point `MONGODB_URI` at a shared or cloud database for development.**
+> The test suite creates and deletes users, carts and orders. Against a shared
+> cluster that risks other people's data, and an interrupted run leaves debris
+> somebody else has to find. A managed cluster (Atlas) is for **staging and
+> production only**. If you genuinely need it for a one-off task, set it for
+> that command — `MONGODB_URI=<uri> pnpm --filter api <task>` — rather than
+> editing `.env`, so it cannot leak into your next test run.
 
 You do **not** need `BREVO_API_KEY` or `RESEND_API_KEY`. With `EMAIL_PROVIDER=console` no
 vendor adapter is constructed at all, so no key is read.
