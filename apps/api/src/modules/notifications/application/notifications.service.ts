@@ -24,6 +24,29 @@ const SEND_TIMEOUT_MS = 10_000;
 /** Matches the 24-hour TTL in `EmailVerificationService`. Display copy only. */
 const VERIFICATION_EXPIRY_COPY = '24 hours';
 
+/**
+ * What actually happened to a message — the return value F-10 exists to
+ * provide.
+ *
+ * `NotificationsService` never throws: a provider outage must not fail a
+ * registration whose account row is already committed. The cost of that
+ * contract used to be that a caller could not tell success from failure, so
+ * `EmailVerificationService.deliver()` logged "dispatched" unconditionally —
+ * including immediately after a 401 from the provider. The log said the
+ * opposite of what had happened, which is worse than saying nothing.
+ *
+ * A returned outcome fixes that without weakening the no-throw contract: a
+ * caller with something truthful to report can report it, and a caller with no
+ * action available can keep ignoring it.
+ *
+ * `accepted` means the TRANSPORT took the message, matching `EmailSendResult`'s
+ * `acceptedAt` — it is not proof of delivery to an inbox, and nothing here
+ * should ever be logged as if it were.
+ */
+export type EmailDispatchResult =
+  | { readonly accepted: true; readonly providerMessageId: string }
+  | { readonly accepted: false };
+
 export interface EmailVerificationNotification {
   readonly recipientEmail: string;
   readonly recipientName: string;
@@ -101,14 +124,14 @@ export class NotificationsService {
    * challenge and is reachable from the sign-in screen. That self-service path
    * is why a failure here is survivable rather than account-destroying.
    */
-  async sendEmailVerification(input: EmailVerificationNotification): Promise<void> {
+  async sendEmailVerification(input: EmailVerificationNotification): Promise<EmailDispatchResult> {
     const data: VerifyEmailData = {
       customerName: input.recipientName,
       verifyUrl: `${this.app.siteUrl}/shop/verify-email?token=${encodeURIComponent(input.rawToken)}`,
       expiresIn: VERIFICATION_EXPIRY_COPY,
     };
 
-    await this.dispatch({
+    return this.dispatch({
       templateId: 'auth/verify-email',
       data,
       to: [{ email: input.recipientEmail, name: input.recipientName }],
@@ -132,11 +155,20 @@ export class NotificationsService {
    * `idempotencyKey` is the ORDER id — stable, unique, and already the thing
    * that makes placement itself replay-safe — so a provider that honours the
    * header cannot double-send even if this method were somehow reached twice.
+   *
+   * ## Why this still returns `void` when `sendEmailVerification` does not
+   *
+   * Its only caller is `CheckoutService`, post-commit, where the order already
+   * exists and no branch on the mail outcome is available or wanted — the
+   * customer has bought something either way. Returning a result a caller
+   * cannot act on would invite exactly the wrong reaction: failing or retrying
+   * a placement because an email did not go out. The transport-level outcome is
+   * already logged by `dispatch`/`report`.
    */
   async sendOrderConfirmation(order: PlacedOrder, locale: Locale = DEFAULT_LOCALE): Promise<void> {
     const orderId = order._id.toHexString();
 
-    await this.dispatch({
+    void (await this.dispatch({
       templateId: 'orders/order-placed',
       data: NotificationsService.toOrderPlacedData(order, locale, this.app.siteUrl),
       to: [{ email: order.customer.email, name: order.customer.fullName }],
@@ -144,7 +176,7 @@ export class NotificationsService {
       idempotencyKey: `order-placed:${orderId}`,
       context: `order ${order.orderNumber}`,
       locale,
-    });
+    }));
   }
 
   /**
@@ -164,7 +196,7 @@ export class NotificationsService {
     context: string;
     idempotencyKey?: string;
     locale?: Locale;
-  }): Promise<void> {
+  }): Promise<EmailDispatchResult> {
     try {
       const rendered = await this.renderer.render(
         request.templateId,
@@ -195,8 +227,15 @@ export class NotificationsService {
         `email accepted  template=${request.templateId}  ${request.context}  ` +
           `messageId=${result.providerMessageId}`,
       );
+
+      return { accepted: true, providerMessageId: result.providerMessageId };
     } catch (error) {
       this.report(error, request.templateId, request.context);
+
+      // Reported, not rethrown — the class contract is unchanged. The outcome
+      // is RETURNED so a caller that has something truthful to say about it can
+      // say it (F-10), instead of every caller assuming success.
+      return { accepted: false };
     }
   }
 

@@ -303,13 +303,31 @@ describe('failure policy (never throws)', () => {
   it('swallows a verification failure too, leaving resend as the recovery path', async () => {
     sender.failWith(new EmailTransportError('down'));
 
-    await expect(
-      service.sendEmailVerification({
-        recipientEmail: 'a@b.test',
-        recipientName: 'A',
-        rawToken: 't',
-      }),
-    ).resolves.toBeUndefined();
+    // Still does not throw — the account row is already committed and a
+    // provider outage must not fail registration. What changed with F-10 is
+    // that the failure is now REPORTED to the caller instead of being
+    // indistinguishable from success, so `EmailVerificationService.deliver()`
+    // can log what happened rather than always logging "dispatched".
+    const outcome = await service.sendEmailVerification({
+      recipientEmail: 'a@b.test',
+      recipientName: 'A',
+      rawToken: 't',
+    });
+
+    expect(outcome).toEqual({ accepted: false });
+  });
+
+  it('reports acceptance, with the provider message id, on a successful verification send', async () => {
+    const outcome = await service.sendEmailVerification({
+      recipientEmail: 'a@b.test',
+      recipientName: 'A',
+      rawToken: 't',
+    });
+
+    expect(outcome).toEqual({
+      accepted: true,
+      providerMessageId: expect.any(String),
+    });
   });
 
   it('swallows an unexpected non-email error as an error-level failure', async () => {

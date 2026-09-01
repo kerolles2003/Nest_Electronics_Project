@@ -283,3 +283,29 @@ Changes:
 factual description of what Resend offers, not as configuration. Left alone.
 
 537/537 green, `tsc --noEmit` clean.
+
+### Item 3 — F-10 outcome-based logging
+
+`NotificationsService.dispatch()` catches every delivery failure, logs `email NOT sent`, and
+returned `void` — so `deliver()` had no way to know and logged
+`email verification challenge dispatched` unconditionally, **including straight after a
+`401 Key not found`**. The log stated the opposite of what happened, which is worse than
+silence: it is what an operator reads when a customer says the mail never arrived, and it
+pointed them away from the mail provider.
+
+- Added an exported `EmailDispatchResult` = `{accepted: true, providerMessageId}` |
+  `{accepted: false}`. `dispatch()` now returns it; the **no-throw contract is unchanged**.
+- `sendEmailVerification` surfaces it. `deliver()` logs `accepted` (with the provider message
+  id) or **`NOT sent`** at `warn` — warn rather than error because the account exists, the
+  challenge is stored, and "resend" recovers it.
+- Used the transport's own word, `accepted`, not "sent" or "delivered": it means the provider
+  took the message, which is all this process ever learns.
+- **`sendOrderConfirmation` deliberately still returns `void`** — documented in place. Its
+  only caller is `CheckoutService` post-commit, where no branch on the mail outcome exists or
+  is wanted; handing it a result would invite failing or retrying a *placement* because an
+  email did not go out.
+
+One existing assertion (`sendEmailVerification` … `resolves.toBeUndefined()`) encoded the old
+return type. Its intent — "does not throw" — is preserved and now stated directly
+(`expect(outcome).toEqual({accepted: false})`), plus a new test for the success branch.
+**538/538 green**, tsc and eslint clean.

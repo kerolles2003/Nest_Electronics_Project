@@ -70,8 +70,23 @@ export class EmailVerificationService {
    * email is already taken — a strictly worse outcome than an account that
    * exists and needs one click on "resend".
    *
-   * The log line records that delivery was attempted, and deliberately carries
-   * the user id rather than the token or the address.
+   * The log line records the OUTCOME, not the attempt (F-10), and deliberately
+   * carries the user id rather than the token or the address.
+   *
+   * It previously logged "dispatched" unconditionally — including straight
+   * after a `401 Key not found` from the provider — because
+   * `NotificationsService` swallows delivery failures and returned nothing to
+   * distinguish them. A log line that states the opposite of what happened is
+   * worse than no log line: it is what an operator consults when a customer
+   * says the email never arrived, and it sent them looking anywhere but at the
+   * mail provider. `sendEmailVerification` now reports what it did, and this
+   * method says that.
+   *
+   * The failure branch is `warn`, not `error`: the account exists, the
+   * challenge is persisted, and "resend" recovers it — degraded, not broken.
+   * The transport-level cause is logged separately by `NotificationsService`
+   * with the template and error kind; this line adds the user id, which that
+   * one deliberately does not carry.
    */
   async deliver(recipient: {
     userId: Types.ObjectId;
@@ -79,14 +94,28 @@ export class EmailVerificationService {
     fullName: string;
     rawToken: string;
   }): Promise<void> {
-    await this.notifications.sendEmailVerification({
+    const outcome = await this.notifications.sendEmailVerification({
       recipientEmail: recipient.email,
       recipientName: recipient.fullName,
       rawToken: recipient.rawToken,
     });
 
-    this.logger.log(
-      `email verification challenge dispatched for user ${recipient.userId.toHexString()}`,
+    const userId = recipient.userId.toHexString();
+
+    if (outcome.accepted) {
+      // "accepted" is the transport's word, and it is the honest one: the
+      // provider took the message. Whether an inbox ever shows it is a later,
+      // separate fact this process never learns.
+      this.logger.log(
+        `email verification challenge accepted for user ${userId}  ` +
+          `messageId=${outcome.providerMessageId}`,
+      );
+      return;
+    }
+
+    this.logger.warn(
+      `email verification challenge NOT sent for user ${userId} — ` +
+        'the account exists and the challenge is stored; recovery is "resend"',
     );
   }
 
