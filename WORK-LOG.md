@@ -867,3 +867,27 @@ applied before matching.
 
 Artifact regenerated; drift gate green. `INTEGRATION.md` documents the enum and tells clients
 to build their picker **from the artifact** rather than hardcoding a list.
+
+---
+
+## SESSION 2 — final state
+
+| | Before | After |
+|---|---|---|
+| jest suites | 20 | **22** |
+| jest tests | 541 | **563**, all green |
+| Playwright | 4/4 green | **4/4 green** + suppression summary |
+| root type-check / lint / build | green | green |
+| OpenAPI drift gate | green | green (artifact regenerated for the enum) |
+
+### One limitation of the drift gate, found by using it
+
+Narrowing `governorate` from an unconstrained string to a 27-value enum was classified by the
+gate as **additive**, not breaking. That is correct by its own stated rule — no path,
+operation, schema or property was removed, retyped or newly required — but it is a **domain**
+narrowing: a client that was sending "cairo" and succeeding now gets a 400.
+
+The gate protects *shape*, not *domain*. That is the same blind spot the `shippingPriced` work
+existed to route around, and it is worth the owner knowing that "additive" from this gate
+means "shape-compatible", not "no client can break". Recorded, not worked around — tightening
+it to compare enum members is a judgement call about how noisy the gate should be.

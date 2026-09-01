@@ -263,4 +263,59 @@ brand-new database.
    Then, when you are happy: `git push origin main --tags` and push the branch. **I pushed
    nothing.**
 
+---
+
+# ADDENDUM — session 2 (adversarial verification of `a7009c1` + three corrections)
+
+Branch `phase-1-2-overnight`, 8 further commits. Still **nothing pushed**.
+Tests: **541 → 563 jest** (20 → 22 suites), **4/4 Playwright**, root pipeline green.
+
+## Verification verdict on `a7009c1`
+
+The core of the change is **sound**: only two production call sites, both destructuring
+`.fee`/`.priced` immediately, no spread/interpolation/object-leak path; money integer and the
+`items − discount + shipping` formula holding across quote, placement, detail, history **and**
+the persisted document, proven live in all three shipping states; the persisted snapshot
+correctly wins over a changed configuration; and a pre-change document (field `$unset` in
+Mongo) reads back as a plain `false`.
+
+**But it was incomplete, and one of my own tests was fake.** Five findings:
+
+| # | Severity | Finding | Fixed |
+|---|---|---|---|
+| 1 | **high** | `/shop/orders/[id]` printed `shippingFee.formatted` unconditionally → every order today rendered "Delivery 0.00 EGP", i.e. *free*, when it was never priced. A **third** consumer the commit missed. | ✅ `7343c38` |
+| 2 | medium | The order email had no "Free" state → a priced zero emailed "0.00 EGP" while checkout said "Free". | ✅ `9360368` |
+| 5 | medium | **My own previous test was vacuous**: `expect(text).toContain('0.00 EGP')` always passed, because the total renders "650.00 EGP" which *contains* that substring. It tested nothing. | ✅ `9360368` |
+| 3 | medium | `shippingPriced` was asserted **nowhere** at the HTTP boundary, and integration suites only ever saw `false`. A boolean observed in one state is untested. | ✅ `34ce853` |
+| 4 | low | The documented invariant "`priced:false` always carries `fee:0`" was never asserted, contrary to MONEY-MODEL §7.1. | ✅ `7c420d3` |
+
+**Reported, not fixed** (judgement calls): `CheckoutForm`'s `amount === 0` is *guarded by*
+`shippingPriced` and selects "Free" vs the amount — not a semantic inference, kept. Legacy
+Supabase `shipping_fee` paths are a different data source scheduled for deletion (D-6).
+
+## Corrections
+
+- **B1 `0d66bad`** — dev now defaults to the local Mongo replica set. The Atlas URI is kept,
+  commented, and labelled staging/production-only. `.env.example` and `SANDBOX.md` say why.
+- **B2 `7590bf3`** — the health fixture counts every suppression by rule and a reporter prints
+  the total at the end of each run. First run: **"ignored 20 browser problem(s) across 4
+  test(s) — 20 `/_next\/webpack-hmr/`"**, previously invisible.
+- **B3 `48985c8`** — governorate is a closed list. The API accepted **free text**; the `/shop`
+  address form was a **free-text input**. Both fixed; the legacy page was already correct and
+  admin has no address form. `apps/api` keeps its own copy of the list (it has zero workspace
+  dependencies, worth preserving) with a test that reads `packages/config` as text and fails
+  on any drift.
+
+## New for the owner
+
+1. **The drift gate reports "additive" for a domain narrowing.** Constraining `governorate`
+   to an enum is shape-compatible, so the gate passed it — but a client sending `"cairo"` now
+   gets a 400. "Additive" from this gate means *shape-compatible*, not *no client breaks*.
+   Tightening it is a judgement about how noisy it should be.
+2. **The `shippingRates` default-rate ratification is still open** and still blocks Phase 5
+   (§4 item 1 above). B3 was the input validation that makes the no-fallback design *safe*;
+   it does not decide it.
+
+---
+
 Full narrative, with the measurements behind every claim, is in **`WORK-LOG.md`**.
