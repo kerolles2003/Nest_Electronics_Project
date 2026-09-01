@@ -891,3 +891,173 @@ The gate protects *shape*, not *domain*. That is the same blind spot the `shippi
 existed to route around, and it is worth the owner knowing that "additive" from this gate
 means "shape-compatible", not "no client can break". Recorded, not worked around — tightening
 it to compare enum members is a judgement call about how noisy the gate should be.
+
+---
+
+# SESSION 3 — housekeeping, then Phase 4
+
+Branch `phase-1-2-overnight`, continuing from `fdc33d1`.
+
+## Baseline, and a real surprise before any work started
+
+The session-2 close reported 563/563 green. **The first run this session was 19 failed / 544
+passed.** Nothing in the tree had changed — `git status` was clean and HEAD was still
+`fdc33d1` — so the difference had to be environmental.
+
+```
+$ docker exec nest-electronics-mongo mongosh --quiet --eval \
+    'const d=db.getSiblingDB("nest_electronics_dev");
+     d.getCollectionNames().sort().forEach(c=>print(c+"  ->  "+d[c].getIndexes().map(i=>i.name).join(", ")))'
+brands  ->  _id_
+carts  ->  _id_
+categories  ->  _id_
+idempotencyKeys  ->  _id_
+inventoryEvents  ->  _id_
+orderCounters  ->  _id_
+orders  ->  _id_
+products  ->  _id_
+refreshTokens  ->  _id_
+users  ->  _id_
+```
+
+**Every application index was gone.** All 19 failures were index-dependent — the index-usage,
+idempotency, transaction-atomicity and concurrency suites, plus the two duplicate-email cases
+that rely on `user_email_unique`. `autoIndex` is off by deliberate design (index creation is a
+release step, not a side effect of booting), so an index-less database is a *silent* state:
+the API starts, serves traffic, and only the tests notice.
+
+`pnpm --filter api indexes:sync` restored them and the count went to **562/563** — the single
+remaining failure being one of my own new assertions, fixed below.
+
+**This is the F-15 finding proving itself a second time.** CI already runs `seed` +
+`indexes:sync` because of it; a developer's machine has no such step, and the failure mode is
+19 red tests with no obvious cause. Logged for the owner under "worth doing next".
+
+---
+
+## 1a — the vacuous-assertion sweep
+
+Treated as a class, per the brief. **172 assertion sites** across jest and Playwright
+(`toContain`, `toMatch`, `.includes(`, `toContainText`, `getByText`) were enumerated and
+triaged:
+
+| Category | Verdict |
+|---|---|
+| `toContain` on an **array** (element membership, not substring) | Safe by construction |
+| `not.toContain` (leak / absence checks) | Cannot pass vacuously — the failure direction is over-strict, never under-strict |
+| Positive substring **already scoped to a field** (`details[0].message`, `line.sku`, `error.message`) | Satisfies "scope it to a field" |
+| Anchored regex (`/^NE-\d{8}-\d{4,}$/`, `/^[0-9a-f]{64}$/`) | Exact by construction |
+| Playwright locator assertions under strict mode | Multiple matches fail rather than pass |
+| **Positive substring where the needle can collide** — **7 found** | **Weak — all seven fixed** |
+
+### The seven, with the evidence
+
+Occurrence counts taken by rendering the real templates and counting, not by reading them:
+
+```
+  3x  base.html   "735.50 EGP"   <- spec:187, aimed at the SUBTOTAL
+  1x  base.html   "650.00 EGP"   <- spec:184, lineTotal[0]
+  2x  base.html   "85.50 EGP"    <- spec:184, lineTotal[1]
+  1x  base.html   "Cairo"        <- spec:194
+  1x  free.html   "Free"         <- spec:259
+  2x  disc.html   "50.00 EGP"    <- spec:212, aimed at the DISCOUNT
+```
+
+1. **`email-rendering.spec.ts:212` — `toContain('50.00 EGP')` for the discount row.**
+   Two occurrences: the discount itself, and **inside the line total `650.00 EGP`**. The same
+   shape as the `'0.00 EGP'` / `'650.00 EGP'` defect found in session 2.
+2. **`:187` — `toContain('735.50 EGP')` for the subtotal.** Three occurrences: subtotal, grand
+   total, amount due. The assertion could not tell which one it had found.
+3. **`:184` — `toContain(item.lineTotal)`.** For the quantity-1 item, `85.50 EGP` is both the
+   unit price and the line total, so the Total column could vanish unnoticed.
+4. **`:259` / `:262` / `:277` — `Free` searched across the whole document.** One occurrence
+   today, but "Free" is exactly the generic status word the brief names; one "Free returns"
+   line in a footer would make it vacuous.
+5. **`cart.spec.ts:449` — `toContain('0 available')`.** The message is
+   `` `${sku} has ${n} available` ``, so this passes for `10 available`, `20 available` and
+   `100 available`. It also could not tell whether the SKU and the quantity referred to the
+   same line.
+6. **`admin-orders.spec.ts:1160 / :1176 / :1192` — index assertions against
+   `JSON.stringify(<whole explain output>)`**, which includes `queryPlanner.rejectedPlans`.
+   Its own sibling at `orders-read.spec.ts:867` scopes to `queryPlanner.winningPlan`; these did
+   not. A regression to a *different* index still passed, because `order_admin_queue` appeared
+   among the plans the planner threw away — precisely the regression the test exists to catch.
+7. **`email-integration.spec.ts:458` — `toContain('325.00 EGP')`, a hardcoded literal** in a
+   test whose every other assertion compares against the stored order. The fixture product
+   costs 32500, so that one string is simultaneously the unit price, the line total, the
+   subtotal, the grand total and the amount due.
+
+Also fixed, same class, in Playwright: **`purchase-journey.spec.ts:128` —
+`getByText(/EGP/).first()`**. Any cart line's price satisfied it, so the quote's own total
+could have rendered blank, an em dash, or `NaN EGP` and the step still passed. Now scoped to
+the `<dd>` beside "Total to pay" and matched against a complete money string.
+
+### Mutation proof — the fixes were verified by breaking the templates
+
+Not asserted; executed. Three mutations, each run against the OLD assertions and the NEW suite:
+
+```
+MUTATION: drop the Discount row entirely
+  PASSES  OLD email-rendering:212  html.toContain('50.00 EGP')   [discount]
+  PASSES  OLD email-rendering:187  html.toContain('735.50 EGP')  [subtotal]
+  PASSES  OLD email-rendering:184  html.toContain('85.50 EGP')   [lineTotal]
+  NEW suite -> Tests: 1 failed, 22 passed, 23 total
+
+MUTATION: drop the Subtotal row entirely
+  PASSES  OLD :212 / :187 / :184   (all three)
+  NEW suite -> Tests: 1 failed, 22 passed, 23 total
+
+MUTATION: drop the line-total column from every item row
+  PASSES  OLD :212 / :187 / :184   (all three)
+  NEW suite -> Tests: 1 failed, 22 passed, 23 total
+```
+
+**Deleting the Discount row, the Subtotal row, or every line total was invisible to all three
+old assertions**, and each is now caught by exactly one test. Templates restored and
+`git status` verified clean afterwards.
+
+### Two things found along the way
+
+- My first replacement, `toBe('CART-TEST-EMPTY has 0 available')`, **failed** — the fixture
+  SKU carries a per-run suffix (`CART-TEST-EMPTY-B890BB25`). Corrected to build the expected
+  string from `RUN_ID`. Recorded because the over-literal fix was caught by the suite, which
+  is the system working.
+- **Nine spec docstrings still said "the real Atlas development database"** — stale since B1
+  made local Mongo the dev default. Corrected; a comment that misdescribes what a suite runs
+  against is a small lie that costs somebody an hour later.
+
+---
+
+## 1b — D-8 ratification recorded
+
+Owner ratification applied to `PLAN.md` §3, D-8 (§25), Phase 5, Phase 7, and a new changelog
+entry **26e**; the superseded proposal in 26b now carries a forward pointer rather than
+standing as an open question. The corresponding blocking item is struck from `HANDOFF.md` §4.
+
+**No file under `docs/architecture/` was touched** — which is the point of the ratification:
+by rejecting the premise (that a fallback is needed) rather than the proposal (a `"*"`
+sentinel), the owner removed the need to amend a frozen document at all. The reasoning is
+recorded in 26e because it is not recoverable from the shape alone: 27 individually-priced
+rows are *more* of what D-8 asks for than two rules, and since B3 closed the governorate to a
+validated list, a lookup miss is bad data rather than an unpriced region — so failing loudly
+beats silently charging a made-up fee.
+
+Phase 5 is unblocked.
+
+---
+
+## 1c — the drift gate's blind spot, documented
+
+No semantic differ built, per the brief. Instead:
+
+- **`docs/api/INTEGRATION.md`** gains "What the gate does NOT catch" — a table of the four
+  classes (enum narrowing, tightened validation, changed meaning of an existing value,
+  newly-enforced constraints) with why the gate is blind to each and what it does to a client.
+- **The governorate narrowing is the worked example**, stated concretely: the artifact gained
+  an `enum` array on an existing `string` property, the gate called it additive and the build
+  passed, while any client sending `"cairo"` went from `201` to `400`.
+- **A contract-policy checklist item**: any PR touching an enum, a validator, or the meaning of
+  an existing field must state the client impact in its description, because the gate cannot
+  see it. "The drift gate passed" is explicitly named as not an answer to that.
+- **`.github/workflows/ci.yml`** carries the same warning at the `openapi:check` step, so a
+  developer reading the gate finds the limitation without having to read the consumer docs.
