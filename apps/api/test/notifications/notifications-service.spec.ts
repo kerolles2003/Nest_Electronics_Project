@@ -234,6 +234,16 @@ describe('order confirmation content', () => {
   });
 
   /**
+   * The one line a customer reads for delivery, isolated from the rest of the
+   * body so an assertion cannot accidentally match a different figure.
+   */
+  const deliveryLineOf = (text: string | undefined): string =>
+    (text ?? '')
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .find((line) => line.startsWith('Delivery')) ?? '<no delivery line>';
+
+  /**
    * The 2c correctness fix, asserted where a customer would see it.
    *
    * The email used to derive "delivery not priced" from `shippingFee === 0`.
@@ -257,10 +267,10 @@ describe('order confirmation content', () => {
         } as Partial<PlacedOrder>),
       );
 
-      expect(sender.sent[0]?.text).toContain('Calculated before dispatch');
+      expect(deliveryLineOf(sender.sent[0]?.text)).toBe('Delivery          Calculated before dispatch');
     });
 
-    it('does NOT say that for a genuinely free delivery, despite the identical zero', async () => {
+    it('says Free for a genuinely free delivery, despite the identical zero', async () => {
       await service.sendOrderConfirmation(
         orderFixture({
           pricing: {
@@ -276,8 +286,17 @@ describe('order confirmation content', () => {
         } as Partial<PlacedOrder>),
       );
 
-      expect(sender.sent[0]?.text).not.toContain('Calculated before dispatch');
-      expect(sender.sent[0]?.text).toContain('0.00 EGP');
+      /*
+       * Asserted on the DELIVERY LINE, not on the whole body.
+       *
+       * The previous assertion here was `toContain('0.00 EGP')` against the
+       * entire text, and it was VACUOUS: the grand total renders as
+       * "650.00 EGP", which contains "0.00 EGP" as a substring. It passed no
+       * matter what the delivery line said — including when the line was
+       * wrong. Matching the line itself is the only way this test can fail for
+       * the reason it claims to.
+       */
+      expect(deliveryLineOf(sender.sent[0]?.text)).toBe('Delivery          Free');
     });
   });
 

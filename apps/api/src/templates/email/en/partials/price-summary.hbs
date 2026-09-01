@@ -1,13 +1,14 @@
 {{!--
   The totals block.
 
-  `hasDiscount` and `shippingUnpriced` are BOOLEANS computed by
+  `hasDiscount`, `shippingUnpriced` and `shippingFree` are BOOLEANS computed by
   NotificationsService, not conditions evaluated here. "Show the discount row
   when a discount applies" is a business rule, and business rules that live in
   templates are untestable — the reason a logic-less engine was chosen.
 
   Expects: itemsSubtotal, hasDiscount, discountTotal, shippingUnpriced,
-           shippingFee, grandTotal, paymentMethod, amountDueOnDelivery
+           shippingFree, shippingFee, grandTotal, paymentMethod,
+           amountDueOnDelivery
 --}}
 <table
   role="presentation"
@@ -32,7 +33,7 @@
   <tr>
     <td style="padding:3px 0;color:#52525b;">Delivery</td>
     <td align="right" style="padding:3px 0;color:#52525b;">
-      {{#if shippingUnpriced}}Calculated before dispatch{{else}}{{shippingFee}}{{/if}}
+      {{#if shippingUnpriced}}Calculated before dispatch{{else}}{{#if shippingFree}}Free{{else}}{{shippingFee}}{{/if}}{{/if}}
     </td>
   </tr>
 

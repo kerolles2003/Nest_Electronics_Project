@@ -332,18 +332,26 @@ export class NotificationsService {
       // is what forces it to live somewhere testable.
       hasDiscount: order.pricing.discountTotal > 0,
       shippingFee: money(order.pricing.shippingFee),
-      // A zero fee currently means "not priced yet" (OPEN-001: the real
-      // per-governorate table is unsupplied), and promising free delivery we
-      // have not decided on would be worse than saying so.
       /*
-       * Read from the order's own flag, never inferred from the amount.
+       * The delivery line has THREE outcomes, and both booleans are computed
+       * here rather than in the template.
        *
+       * Read from the order's own flag, never inferred from the amount.
        * `shippingFee === 0` was the old test, and it is wrong in both
        * directions: it calls a genuinely free delivery "Calculated before
        * dispatch", and once real rates exist it would call every zero a price.
        * The order records which one it was at placement time.
+       *
+       *   unpriced -> "Calculated before dispatch"
+       *   free     -> "Free"          (priced, and the price is zero)
+       *   priced   -> the amount
+       *
+       * `shippingFree` exists because without it the email printed "0.00 EGP"
+       * for an order the checkout page had just described as "Free" — the same
+       * fact, told two different ways to the same customer.
        */
       shippingUnpriced: !order.pricing.shippingPriced,
+      shippingFree: order.pricing.shippingPriced && order.pricing.shippingFee === 0,
       grandTotal: money(order.pricing.grandTotal),
 
       paymentMethod: NotificationsService.PAYMENT_COPY[order.payment.method] ?? order.payment.method,

@@ -14,7 +14,7 @@ WHAT YOU ORDERED
 
 Subtotal          {{itemsSubtotal}}
 {{#if hasDiscount}}Discount         -{{discountTotal}}
-{{/if}}Delivery          {{#if shippingUnpriced}}Calculated before dispatch{{else}}{{shippingFee}}{{/if}}
+{{/if}}Delivery          {{#if shippingUnpriced}}Calculated before dispatch{{else}}{{#if shippingFree}}Free{{else}}{{shippingFee}}{{/if}}{{/if}}
 Total             {{grandTotal}}
 
 {{paymentMethod}}

@@ -78,6 +78,7 @@ const ORDER: OrderPlacedData = {
   hasDiscount: false,
   shippingFee: '0.00 EGP',
   shippingUnpriced: true,
+  shippingFree: false,
   grandTotal: '735.50 EGP',
   paymentMethod: 'Cash on delivery',
   amountDueOnDelivery: '735.50 EGP',
@@ -223,12 +224,60 @@ describe('orders/order-placed', () => {
   it('prints the real fee once delivery is priced', async () => {
     const rendered = await renderer.render(
       'orders/order-placed',
-      { ...ORDER, shippingUnpriced: false, shippingFee: '45.00 EGP' },
+      { ...ORDER, shippingUnpriced: false, shippingFree: false, shippingFee: '45.00 EGP' },
       'en',
     );
 
     expect(rendered.html).toContain('45.00 EGP');
     expect(rendered.html).not.toContain('Calculated before dispatch');
+    expect(rendered.html).not.toContain('Free');
+  });
+
+  /**
+   * The third state, and the one the delivery line could not previously
+   * express.
+   *
+   * A met free-shipping threshold produces a PRICED zero. Before this, the
+   * template had two branches — unpriced, or the amount — so it printed
+   * "0.00 EGP" for an order the checkout page had just called "Free". Same
+   * fact, told two different ways to the same customer in the same minute.
+   *
+   * Asserted in BOTH renderings: the HTML partial and the plain-text template
+   * carry the delivery line separately, and fixing one and not the other is
+   * exactly the kind of miss a test should catch.
+   */
+  it('says Free for a PRICED zero, in both the HTML and the text body', async () => {
+    const free = {
+      ...ORDER,
+      shippingUnpriced: false,
+      shippingFree: true,
+      shippingFee: '0.00 EGP',
+    };
+
+    const rendered = await renderer.render('orders/order-placed', free, 'en');
+
+    expect(rendered.html).toContain('Free');
+    expect(rendered.html).not.toContain('Calculated before dispatch');
+
+    expect(rendered.text).toContain('Free');
+    expect(rendered.text).not.toContain('Calculated before dispatch');
+  });
+
+  it('never says both Free and not-calculated for one order', async () => {
+    // The two flags are mutually exclusive by construction in
+    // NotificationsService; this pins the template so a future edit cannot
+    // render both branches.
+    for (const variant of [
+      { shippingUnpriced: true, shippingFree: false },
+      { shippingUnpriced: false, shippingFree: true },
+      { shippingUnpriced: false, shippingFree: false },
+    ]) {
+      const rendered = await renderer.render('orders/order-placed', { ...ORDER, ...variant }, 'en');
+      const saysUnpriced = rendered.html.includes('Calculated before dispatch');
+      const saysFree = rendered.html.includes('Free');
+
+      expect(saysUnpriced && saysFree).toBe(false);
+    }
   });
 
   it('includes the postal code only when the address has one', async () => {

@@ -688,3 +688,41 @@ The commit updated two (checkout form, order email); the brief said "both consum
 `OrderDto` carries `shippingPriced` and this page was already receiving it and discarding it.
 
 **Fixed** — same three states as the checkout summary, reading the persisted flag.
+
+## FINDING 2 — the order email had no "Free" state
+
+`price-summary.hbs:35` and `order-placed.txt.hbs:17` had two branches only:
+`shippingUnpriced` → "Calculated before dispatch", otherwise the amount.
+
+**Failure scenario:** free-shipping threshold met → `priced:true, fee:0`. The checkout page
+says **"Free"**; the confirmation email for that same order says **"0.00 EGP"**. The same
+fact, told two different ways to the same customer minutes apart. Reachable as soon as
+`FREE_SHIPPING_THRESHOLD` is set — verified live in state B.
+
+**Fixed** with a third state. `shippingFree` is computed in `NotificationsService`
+(`shippingPriced && shippingFee === 0`), **not** in the template — the partial's own docstring
+says booleans are computed in the service because a logic-less engine is what keeps business
+rules testable, and `hasDiscount` already sets that precedent.
+
+**A miss this nearly became:** `order-placed.hbs` passes named arguments into the partial.
+Adding the branch without adding `shippingFree=shippingFree` to that call would have left the
+HTML email silently falling through to the amount while the text email said "Free". Caught by
+grep before committing, and now covered by a test that asserts **both** renderings.
+
+## FINDING 5 — a vacuous assertion in my own previous test
+
+`notifications-service.spec.ts` asserted `expect(text).toContain('0.00 EGP')` for the
+priced-zero case. **That assertion could never fail.** The grand total renders as
+`"650.00 EGP"`, and `'650.00 EGP'.includes('0.00 EGP') === true`:
+
+```
+grandTotal renders as: "650.00 EGP"
+does it contain '0.00 EGP'? -> true
+```
+
+So the test passed regardless of what the delivery line actually said — including when it was
+wrong. This is my own test from the previous session and it was weaker than I described it.
+
+**Fixed:** both delivery-line tests now extract the delivery line specifically and assert the
+whole line (`'Delivery          Free'` / `'Delivery          Calculated before dispatch'`),
+via a `deliveryLineOf()` helper, so they can only pass for the stated reason.

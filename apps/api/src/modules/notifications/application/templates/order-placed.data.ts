@@ -26,8 +26,21 @@ export interface OrderPlacedData {
   /** Null when no discount applies, so the template can omit the row entirely. */
   readonly hasDiscount: boolean;
   readonly shippingFee: string;
-  /** True when delivery has not been priced yet — the flat fee is still 0. */
+  /**
+   * True when no delivery rate has been supplied, so nothing has been
+   * calculated. Mutually exclusive with `shippingFree`.
+   */
   readonly shippingUnpriced: boolean;
+  /**
+   * True when delivery IS priced and that price is zero — a free-shipping
+   * threshold was met.
+   *
+   * A separate flag rather than a template comparison, for the same reason
+   * `hasDiscount` is: "a priced zero reads as Free" is a business rule, and the
+   * engine is logic-less precisely so rules cannot hide in a template.
+   * Without it the email prints "0.00 EGP" where the checkout page said "Free".
+   */
+  readonly shippingFree: boolean;
   readonly grandTotal: string;
 
   readonly paymentMethod: string;
