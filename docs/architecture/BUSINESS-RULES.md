@@ -18,13 +18,22 @@ Critical rules (§1–§3) are specified in full. Remaining domains use a compac
 
 ## 1. Orders — creation
 
+> **SUPERSEDED IN ONE DETAIL — 2026-09-02.** This document wrote the cart-item
+> path as `PATCH /cart/items/:id` in RULE-ORDER-001. The served endpoint is
+> **`PATCH /cart/items/:productId`**, which is what `CART-MODEL.md` §6 specifies,
+> what `docs/api/openapi.v1.json` freezes, and what the verified `/shop` slice
+> consumes. Two frozen documents disagreed; the one that owns the cart wins, and
+> the contract that shipped is authoritative over both. Corrected inline in RULE-ORDER-001 below.
+> **No rule changed** — only the parameter's name in a path.
+
+
 ### RULE-ORDER-001 — Quantity must be a positive integer within bounds
 
 | | |
 |---|---|
 | **Domain** | Orders · Cart |
 | **Rule** | Every line quantity is an integer where `1 ≤ quantity ≤ 99`. |
-| **Trigger** | `POST /cart/items`, `PATCH /cart/items/:id`, `POST /orders` |
+| **Trigger** | `POST /cart/items`, `PATCH /cart/items/:productId`, `POST /orders` |
 | **Validation** | `@IsInt() @Min(1) @Max(99)` in the DTO **and** re-asserted in the service before the stock update |
 | **Actors** | Customer |
 | **Outcome** | Quantity accepted |

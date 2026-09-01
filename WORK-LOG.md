@@ -2280,3 +2280,58 @@ credentials are still clean across all commits and all local files. The
    including one where two frozen documents contradict each other about the cart
    item parameter. Listed, not fixed.
 4. **Nothing catches a stray `.only`.** Reported in item 4, not built.
+
+---
+
+# SESSION 6 — Phase 5b
+
+Baseline: jest **813 passed, 15 skipped** (828), Playwright **44**.
+
+## Part 0 — §9 corrections
+
+### The four where a document described an older shape
+
+Resolved as **the served implementation is authoritative**, for the same reason
+each time: it is frozen in `openapi.v1.json` and consumed by the verified
+`/shop` slice. `GET /auth/me`, `POST /orders/{id}/cancel`, the seven
+`POST /admin/orders/{id}/<action>` endpoints, and `DELETE /admin/media?publicId=`.
+§9.1 now records each with the reasoning rather than listing it as an open
+disagreement. **No code changed.**
+
+**One thing worth flagging:** rows 1–4 originate in `AUTHORIZATION-MODEL.md`,
+`ORDER-LIFECYCLE.md` and `MEDIA-MODEL.md` — not in §9. §9 never named them; I
+found them by widening the audit. §9.1 now says the implementation wins, but
+those three frozen documents still describe the older shape and I have **not**
+annotated them: amending a frozen architecture document is an owner decision, and
+the brief asked for a supersession note on one document, not four. Recorded in
+§9.1 so it is not lost.
+
+### The one where two frozen documents contradicted each other
+
+**`BUSINESS-RULES.md` lost.**
+
+| | |
+|---|---|
+| `BUSINESS-RULES.md` RULE-ORDER-001 | `PATCH /cart/items/:id` |
+| `CART-MODEL.md` §6 | `PATCH /cart/items/:productId` |
+| **Served** (`cart.controller.ts:122`) | `@Patch('items/:productId')` |
+
+`CART-MODEL.md` owns the cart and matches the served path character for
+character. `BUSINESS-RULES.md` is corrected inline and carries a dated
+supersession note at the top of §1 explaining which document won and why. **No
+rule changed** — only a parameter's name inside a path, in a Trigger cell.
+
+### §9.2 — order idempotency was `[V]` by luck
+
+The Phase 0 audit marked order idempotency verified working, and it was. But the
+guarantee rested entirely on `idempotencyKeys.idempotency_key_unique`, which
+nothing was watching. `reserve()` returns `false` only because the insert is
+refused; with the index absent it returns `true` every time and **a retried
+checkout commits a second order**. No exception, no log line.
+
+`autoIndex` is off by design, so an index-less database is silent — and 5a found
+`mediaAssets.media_asset_public_id_unique` actually missing from the development
+database, the same failure with a cheaper consequence.
+
+Recorded in PLAN §9.2 and changelog **30**, because a `[V]` that holds only while
+an unmonitored precondition happens to be true is worth naming as what it was.

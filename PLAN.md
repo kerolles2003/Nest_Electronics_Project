@@ -213,26 +213,53 @@ The existing 40-endpoint surface `[V]` is sound and consumed by `/shop` (verifie
 | Rebuild domains (D-5 — required) | coupons (per the already-frozen `DISCOUNT-MODEL.md` spec `[V]`: model, redemptions collection, validation codes, checkout apply/remove), reviews (+ moderation endpoints), wishlist, blog | Phase 8; the discount envelope already exists in pricing (`discountTotal` `[V]`). |
 | Deferred | ~~Google OAuth~~ — **post-launch by D-3** | Recorded, not scheduled. |
 
-### 9.1 Where the implemented surface disagrees with a frozen document
+### 9.1 Where documents and the served surface disagreed — RESOLVED 2026-09-02
 
-Audited in Phase 5a cleanup: every endpoint path named in any frozen document,
-against the 49 operations the API actually serves. **These five are listed, not
-fixed** — each is a deliberate earlier decision or a conflict between two frozen
-documents, and changing any of them is a contract break that needs a reason
-better than tidiness.
+Audited in the Phase 5a cleanup, resolved before the 5b flip. **In every case the
+SERVED implementation is authoritative**, and the reason is the same each time:
+it is frozen in `docs/api/openapi.v1.json`, it is consumed by the verified
+`/shop` slice, and a document that describes it wrongly is a document to correct
+— not a contract to break. §9 is a planning document and has no standing against
+a shipped contract.
 
-| # | Frozen document says | Implemented as | Note |
+| # | A document said | Served, and authoritative | Resolution |
 |---|---|---|---|
-| 1 | `GET /users/me` — `AUTHORIZATION-MODEL.md` §12 RLS-mapping table | `GET /auth/me` | Same payload, different path. `docs/api/INTEGRATION.md` documents the deviation explicitly, so no client is misled. A second read endpoint would be a second thing to keep in step. |
-| 2 | `PATCH /api/v1/orders/:id/cancel` — `ORDER-LIFECYCLE.md` §6 | `POST /orders/{id}/cancel` | Method only. A cancellation is an action, not a partial update of a field the client names. |
-| 3 | `PATCH /api/v1/admin/orders/:id/status` — `ORDER-LIFECYCLE.md` §6 | seven `POST /admin/orders/{id}/<action>` endpoints (`confirm`, `ship`, `deliver`, `delivery-failed`, `retry-shipment`, `return`) | The largest of the five. One status-patch endpoint would let a client name any target status and rely on the server to refuse; separate action endpoints make the permitted edges the URL space itself. `OrdersService.transition()` is still the single enforcement point §6 requires. |
-| 4 | `DELETE /admin/products/:id/images/:publicId` — `MEDIA-MODEL.md` §7 | `DELETE /admin/media?publicId=…` | The media endpoint is entity-agnostic (products, categories, brands, blog), and a `publicId` contains slashes, so it cannot be a path segment. |
-| 5 | `PATCH /cart/items/:id` — `BUSINESS-RULES.md` vs `PATCH /cart/items/:product` — `CART-MODEL.md` | `PATCH /cart/items/{productId}` | **Two frozen documents disagree with each other.** The implementation follows `CART-MODEL.md`, which owns the cart. Worth reconciling in the documents rather than the code. |
+| 1 | `GET /users/me` | `GET /auth/me` | Same payload. A second read endpoint would be a second thing to keep in step; `docs/api/INTEGRATION.md` already states there is no `GET /users/me`. |
+| 2 | `PATCH /orders/:id/cancel` | `POST /orders/{id}/cancel` | Method only. A cancellation is an action, not a partial update of a field the client names. |
+| 3 | `PATCH /admin/orders/:id/status` | seven `POST /admin/orders/{id}/<action>` endpoints | Separate actions make the permitted edges the URL space itself, rather than letting a client name any target status and relying on the server to refuse. `OrdersService.transition()` remains the single enforcement point `ORDER-LIFECYCLE.md` §6 requires. |
+| 4 | `DELETE /admin/products/:id/images/:publicId` | `DELETE /admin/media?publicId=…` | The media endpoint is entity-agnostic — products, categories, brands, blog — and a `publicId` contains slashes, so it cannot be a path segment. |
+| 5 | **two frozen documents contradicting each other**: `BUSINESS-RULES.md` `PATCH /cart/items/:id` vs `CART-MODEL.md` `PATCH /cart/items/:productId` | `PATCH /cart/items/{productId}` | **`BUSINESS-RULES.md` lost.** `CART-MODEL.md` §6 owns the cart and matches the served path exactly. `BUSINESS-RULES.md` is corrected inline and carries a dated supersession note; no RULE changed, only a parameter name in a path. |
 
-Nothing else disagrees: every other doc-named path that is not served belongs to
-a later phase (coupons, reviews, wishlist, blog, audit logs, admin CRUD, guest
-order tracking, `POST /cart/merge`) or is deferred by decision (`/auth/google`,
-D-3).
+**Nothing else disagrees.** Every other doc-named path the API does not serve
+belongs to a later phase — coupons, reviews, wishlist, blog, audit logs, admin
+CRUD, guest order tracking, `POST /cart/merge` — or is deferred by decision
+(`/auth/google`, D-3).
+
+> **Note for whoever maintains the frozen set.** Rows 1–4 originate in
+> `AUTHORIZATION-MODEL.md`, `ORDER-LIFECYCLE.md` and `MEDIA-MODEL.md`, not in
+> §9. This table records that the implementation wins; those three documents
+> still describe the older shape and have **not** been annotated, because
+> amending a frozen architecture document is an owner decision rather than a
+> cleanup. Row 5 was annotated because it was explicitly asked for.
+
+### 9.2 Order idempotency was `[V]` by luck, and is now structural
+
+The Phase 0 audit marked order idempotency **verified working** `[V]`, and it
+was — but the guarantee rested entirely on a unique index nothing was watching.
+`IdempotencyRepository.reserve()` returns `false` only because the insert is
+refused by `idempotencyKeys.idempotency_key_unique`; with that index absent it
+returns `true` every time, **a retried checkout commits a second order, and the
+customer is charged twice.** No exception, no log line, nothing to notice.
+
+`autoIndex` is off by design, so an index-less database is a silent state — and
+Phase 5a found `mediaAssets.media_asset_public_id_unique` genuinely missing from
+the development database, which is the same failure with a cheaper consequence.
+
+**`GET /health/ready` now refuses traffic when any declared index is missing**,
+so a deployment in that state cannot serve. Eight invariants depend on an index
+this way; `test/infrastructure/index-health.spec.ts` names each with the call
+site that delegates to it. A `[V]` that holds only while an unmonitored
+precondition happens to be true is worth recording as what it was.
 
 Rules for all additions: additive within `/api/v1`, same envelope, DTO validation with unknown-field rejection, OpenAPI annotations, tests at the HTTP boundary, and idempotency where a retry could duplicate money/stock effects — **coupon redemption explicitly included** (D-5 classifies it money-touching; `DISCOUNT-MODEL.md`’s unique `{couponId, orderId}` index is the structural guard `[V]`).
 
@@ -715,6 +742,21 @@ Phase 7 to **Phase 4**. It **ships empty and is exercised only by tests** — no
 no images are loaded, because the real catalogue does not exist yet. **The admin upload UI
 stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
 on Phase 7 is now satisfied earlier** and is recorded as such.
+
+**30 — §9's endpoint disagreements resolved; the served contract wins.**
+The five disagreements §9.1 listed are resolved: in every case the SERVED
+implementation is authoritative, because it is frozen in `openapi.v1.json` and
+consumed by the verified `/shop` slice. Four were documents describing an older
+shape. The fifth was **two frozen documents contradicting each other** about the
+cart-item parameter — `BUSINESS-RULES.md` lost to `CART-MODEL.md`, which owns
+the cart and matches the served path exactly; it is corrected inline with a dated
+supersession note, and no rule changed.
+
+Added **§9.2**: order idempotency was audited `[V]` and was working, but the
+guarantee rested on an unmonitored unique index — absent, a retried checkout
+would have charged the customer twice with nothing raising. The readiness probe
+makes it structural. Recorded because a `[V]` that holds only while an
+unmonitored precondition happens to be true is worth naming.
 
 **29 — The per-row free-shipping threshold is withdrawn.**
 Phase 5a gave `shippingRates` a `freeShippingThreshold` column and a precedence
