@@ -833,7 +833,24 @@ describe('email verification', () => {
     expect(verified?.emailVerification).toBeNull();
 
     // Replaying the token does nothing — the challenge is gone.
-    await http().post('/api/v1/auth/verify-email').send({ token: raw }).expect(400);
+    const replay = await http()
+      .post('/api/v1/auth/verify-email')
+      .send({ token: raw })
+      .expect(400);
+
+    /*
+     * F-11 — the storefront's `customerMessage()` now shows `details[0].message`
+     * for a validation failure, because the top-level `message` is only the
+     * category ("Validation failed.") and told a customer nothing about a dead
+     * link. That fix is only correct while the API keeps putting the specific,
+     * customer-safe reason in the first detail, so the contract is asserted here
+     * rather than assumed by a client in another package.
+     */
+    expect(replay.body.error.message).toBe('Validation failed.');
+    expect(replay.body.error.details?.[0]).toMatchObject({
+      field: 'token',
+      message: 'verification token is invalid or has expired',
+    });
   });
 
   it('rejects an expired verification token', async () => {

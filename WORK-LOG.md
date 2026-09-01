@@ -309,3 +309,35 @@ One existing assertion (`sendEmailVerification` … `resolves.toBeUndefined()`) 
 return type. Its intent — "does not throw" — is preserved and now stated directly
 (`expect(outcome).toEqual({accepted: false})`), plus a new test for the success branch.
 **538/538 green**, tsc and eslint clean.
+
+### Item 4 — F-11 validation-detail message
+
+`AppException.validation()` sets the top-level message to the **category**,
+`'Validation failed.'` `[V]`, and puts the actionable sentence in `details`. The storefront's
+`customerMessage()` fell through to `error.message` for validation errors, so a replayed or
+expired verification link told the customer "Validation failed." while the server had
+supplied `details: [{ field: 'token', message: 'verification token is invalid or has
+expired' }]` — the one fact that would have pointed them at "resend".
+
+- `customerMessage()` gains an explicit `case 'validation'` returning
+  `error.details[0]?.message ?? error.message`. The fallback means an envelope without
+  details can never render empty.
+- First detail on purpose: screens needing per-field errors already use `fieldError(field)`
+  and render them beside their inputs; this function produces the single summary line, and
+  for the failures it is used on the first detail is the whole story.
+
+**Cross-package contract now asserted.** The storefront fix is only correct while the API
+keeps the specific reason in the first detail, so I strengthened the existing replay test in
+`auth-flow.spec.ts` to assert both halves — top-level `'Validation failed.'` *and*
+`details[0] == {field:'token', message:'verification token is invalid or has expired'}`.
+Previously it only asserted `400`.
+
+**Not done, and why:** no unit test for `customerMessage()` itself — the storefront has **no
+unit-test runner** (Playwright only), and adding jest/vitest to it is well outside Phase 1.
+The browser-level half of the acceptance criterion belongs to the existing verify-email
+Playwright error-path spec (§20 item 4).
+**Deliberate non-change:** I did not capitalise or otherwise rewrite the server's message.
+Server copy is authored customer-safe, and silently transforming it in the client is the kind
+of hidden rewrite that surprises people later.
+
+538/538 green; storefront `tsc` clean, eslint 0 errors (57 pre-existing warnings unchanged).

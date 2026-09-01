@@ -199,6 +199,28 @@ export function customerMessage(error: ApiError): string {
       return 'Please sign in to continue.';
     case 'server':
       return 'Something went wrong on our side. Please try again in a moment.';
+    /**
+     * F-11 — for a validation failure the useful sentence is in `details`, not
+     * in `message`.
+     *
+     * A validation envelope's top-level `message` is the CATEGORY ("Validation
+     * failed."); the specific, actionable reason is the field error the server
+     * took the trouble to name. A replayed or expired verification link is the
+     * case that made this visible: the API answers
+     * `details: [{ field: 'token', message: 'verification token is invalid or
+     * has expired' }]`, and the customer was shown "Validation failed." — a
+     * sentence that tells them nothing and hides the one fact that would have
+     * told them to click "resend".
+     *
+     * The FIRST detail is used deliberately. A screen that needs every field
+     * error already has `fieldError(field)` and renders them beside their
+     * inputs; this function's job is the single summary line, and for the
+     * single-detail failures it is used on (token, and one-field forms) the
+     * first detail is the whole story. Falls back to `message` when the server
+     * sent no details, so nothing can render an empty error.
+     */
+    case 'validation':
+      return error.details[0]?.message ?? error.message;
     default:
       return error.message;
   }
