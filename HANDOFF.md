@@ -1,0 +1,266 @@
+# HANDOFF — overnight session, 2026-09-01 → 02
+
+**Short version:** the interrupted Phase 0 run had actually finished all of its commits and
+committed **no secrets**. I verified that, tagged the baseline, and then completed Tasks 2–5
+on a branch. Everything is committed and **nothing is pushed**.
+
+- `main` → **`6d0673a`**, tagged **`baseline-phase-0`**. Phase 0 only.
+- `phase-1-2-overnight` → **`0908721`**, 10 commits. Tasks 2, 3, 4 and 5.
+- Working tree clean. 22 commits unpushed. **No history was rewritten. Nothing was reverted.**
+
+Tests: **541/541 jest** (was 527), **4/4 Playwright** (was 2, and neither checked the browser
+for errors). Root `install --frozen-lockfile` / `type-check` / `lint` / `build`: green.
+
+---
+
+## 1. What happened to the interrupted Phase 0 run
+
+**It got further than the brief assumed.** I found a clean working tree, no stash, no
+branches, no partial index, and **every commit Phase 0 set out to make already in history** —
+11 of them, in coherent conventional-commit form, with junk removal correctly isolated in its
+own commit (`d3fba04`).
+
+What it had **not** done: the verification pipeline, and the tag.
+
+**Secret scan — clean, checked on contents, not filenames.** I diffed all 11 commits (81,825
+lines) against patterns for Brevo/Resend/SendGrid/Stripe/AWS/GitHub/Google keys, JWTs, private
+keys and credential-bearing Mongo/Postgres URIs. Two hits, both placeholders (a commented
+`YOUR_USER:YOUR_PASSWORD` line in `.env.example`, and a docs table describing an
+env-validation test case). `git log --all --diff-filter=A` confirms **no `.env` file has ever
+been added on any ref**. Every real `.env` is gitignored; only `.env.example` files are
+tracked, and their contents are placeholders.
+
+**One correction to the brief, and the previous run got it right.** The brief lists
+`/auth/callback` as orphaned junk to delete. It is **not orphaned** — I verified independently
+that `apps/storefront/src/app/auth/callback/route.ts` is the Supabase OAuth `redirectTo` for
+three live callers (`login/form.tsx:69`, `register/form.tsx:66`,
+`forgot-password/form.tsx:34`). Deleting it would break Google sign-in. Kept.
+
+---
+
+## 2. What is done
+
+### Task 1 — Phase 0 finished ✅
+
+| | |
+|---|---|
+| `6d0673a` | `docs(work-log)` — state recovery + verification recorded |
+| tag `baseline-phase-0` | on `6d0673a` |
+
+All four pipeline steps green at the baseline; no code fix was needed.
+
+### Task 2 — PLAN.md corrections ✅ (one commit, docs only)
+
+**`36f20e4`** — all four, plus a new §26 changelog (old one renumbered to §27, every moved
+cross-reference repaired). Every edit was applied by an assertion-checked script requiring
+exactly one match, so nothing was half-applied.
+
+- **2a media → Phase 4**, build only, ships empty, admin UI stays in Phase 7, Phase 8's
+  blog-cover dependency noted as satisfied earlier. (§12, §13, Phases 4/7/8)
+- **2b shipping → the frozen shape wins.** Adopted `shippingRates[].fee` /
+  `{governorate:1}` unique from `MONEY-MODEL.md` §6 + `MONGODB-DESIGN.md` §11; the plan's
+  `shippingRules {governorates[], fee, isDefault}` sketch is **withdrawn**. Consequence
+  recorded: the D-8 rule is **27 rows, not two**. (§3, §9, §12, §20, Phase 5, Phase 7, D-8)
+- **2c `shippingFee === 0` → decided in Phase 2**, before the Phase 3 freeze.
+  (§19, §20, Phases 2/3/5, F-13, open question 2)
+- **2d catalogue timing** — import tool stays in Phase 4, "may be pulled forward" removed,
+  spec changed to a declarative column-mapping profile, **§25 risk 3 escalated to risk 1**,
+  §23 item 11 made unambiguous. (§23, §25, Phase 4)
+
+**No file under `docs/architecture/` was edited.**
+
+### Task 3 — Phase 1, email correctness ✅ (one commit per item)
+
+| Commit | Item |
+|---|---|
+| `f0da7e1` | **F-07** — every suite isolated from live vendors |
+| `62dbbca` | **F-02** — Resend-sandbox sender default replaced + production guard |
+| `08788f8` | **F-10** — outcome-based logging |
+| `d3cb8e8` | **F-11** — validation detail shown instead of the category |
+
+**Acceptance met:** full jest run green with **zero vendor calls** (the guard never tripped;
+run time also fell 214s → ~102s, consistent with ~225 eliminated network round-trips); a
+failed send logs `NOT sent`; a replayed token produces the token-specific message, and the API
+contract that guarantees it is now asserted in `auth-flow.spec.ts`.
+
+**Nothing from Phase E was touched** — no Brevo key, no DNS, no sender domain.
+
+### Task 4 — Phase 2, crash class + CI truthfulness ✅ (one commit per item)
+
+| Commit | Item |
+|---|---|
+| `322f0ea` | **F-05** — proxy never redirects a `Next-Action` POST; both trigger sites hardened |
+| `b22359d` | **F-15 / F-16** — CI seed **+ indexes:sync**; explicit `API_BASE_URL` |
+| `a14f50e` | **F-14** — browser-health fixture + new guest-cart→login spec |
+| `a7009c1` | **2c** — `shippingPriced` implemented end to end |
+
+**Curl probe passes**, with controls proving the guard was narrowed rather than removed:
+
+| Case | Result |
+|---|---|
+| `GET /checkout`, no session | 307 → `/login` ✅ guard intact |
+| `POST /checkout`, no `Next-Action` | 307 → `/login` ✅ guard intact |
+| `POST /checkout` **with** `Next-Action` | **404 action-not-found — no redirect** ✅ |
+
+### Task 5 — Phase 3, contract freeze ✅
+
+**`0908721`** — `docs/api/openapi.v1.json` (37 paths, 43 operations, 84 schemas), a separate
+CI `contract-gate` job, `docs/api/SANDBOX.md`, `docs/api/INTEGRATION.md`.
+
+I ran the gate against four deliberately corrupted artifacts and confirmed each outcome:
+clean → exit 0; removed path → BREAKING; newly-required property → BREAKING; purely additive
+→ "artifact is stale" with the regenerate command. Restored → exit 0.
+
+---
+
+## 3. What is NOT done
+
+- **Phase E** — untouched by instruction. No Brevo key, no sender domain, no DNS, no
+  deliverability testing. Still the long-lead item that blocks go-live.
+- **Phases 4–11** — not started. Out of scope for tonight.
+- **The `shippingRates` collection itself** — Task 2b was a *documentation* correction. No
+  collection, no seed, no `FulfilmentService` lookup was built; that is Phase 5 work, and it
+  is additionally blocked on the ratification in §4 below.
+- **No unit test for `customerMessage()` (F-11).** The storefront has **no unit-test runner**
+  at all — Playwright only — and adding jest/vitest to it is well outside Phase 1. The API
+  half of that contract *is* asserted. The browser half belongs to the existing verify-email
+  Playwright spec.
+- **`AUTH_REQUIRE_EMAIL_VERIFICATION=false` in the e2e config** is unchanged. It is a known
+  gap (§20 item 4, "real-verification e2e"), scheduled for Phase 10, and not tonight's task.
+- **Playwright is still not part of `pnpm test`** and is not in CI. That was already true and
+  is deliberate (it needs three moving parts); I did not change it. The new specs must be run
+  manually — see §7.
+
+---
+
+## 4. Needs owner — decisions I would not make for you
+
+1. **⚠️ Ratify the shipping default-rate extension (blocks Phase 5).**
+   The frozen `shippingRates` shape — one row per governorate under a unique `governorate`
+   key — **cannot express the default fallback D-8 asks for.** There is no slot for "the fee
+   for a governorate with no row".
+   I proposed the minimal extension in PLAN.md Phase 5: a reserved `governorate: "*"` sentinel
+   row — **no new field, no schema change, no index change**. The alternative (`isDefault`
+   boolean + partial unique index) is self-describing but a larger amendment.
+   **I did not choose**, because either one amends a frozen document (`MONGODB-DESIGN.md`
+   §11). Until you ratify one, a lookup miss must raise rather than invent a fee.
+
+2. **`apps/api/.env` points `MONGODB_URI` at a live MongoDB Atlas cluster with an embedded
+   password.** The file is gitignored and has never been committed — I checked. But I
+   deliberately **did not run the 527-test suite against it**; a suite that creates and
+   deletes users, carts and orders should not run unattended against a shared cloud database.
+   Everything tonight ran against local Mongo, which is what CI does. **Consider whether that
+   Atlas URI should be the dev default at all.**
+
+3. **Confirm `no-reply@nest-electronics.invalid` as the placeholder sender.** I needed a
+   value that cannot possibly deliver and refused to invent a real domain. `.invalid` is
+   RFC 2606 reserved. Your real sender arrives with Phase E.
+
+4. **`SHIPPING_FLAT_FEE` no longer has a default.** Absent now means "no rate supplied"
+   (unpriced); an explicit `0` means "delivery is free". **Customer-visible amounts are
+   unchanged** — an unset value still charges nothing. Flagging it because it is a config
+   semantics change, and any deployment relying on the old implicit `0` should set it
+   explicitly.
+
+5. **Cloudinary credentials are now needed one phase earlier** (Phase 4, not 7), because 2a
+   moved the upload API forward. Without them the endpoint can be written and unit-tested but
+   not integration-proven.
+
+6. **A sample supplier catalogue file** is the single most useful thing you can produce early
+   (now §25 risk 1). Not the whole catalogue — one representative file, so the Phase 4 import
+   tool is built against a real column layout instead of an assumed one.
+
+---
+
+## 5. Things I broke, changed, or want you to double-check
+
+**Nothing was reverted and nothing is known-broken.** Full disclosure of everything else:
+
+- **I fixed a bug in my own F-07 guard, mid-task.** My first version also deleted
+  `BREVO_API_KEY`/`RESEND_API_KEY` and asserted they stayed deleted. My own bootstrap test
+  caught that this is false: `@nestjs/config`'s `forRoot()` runs at *import* time and reloads
+  `.env`, restoring them. I removed the deletes rather than weakening the assertion — a
+  `delete` that reads as protection while providing none is worse than none — and documented
+  the measured reason. Isolation now rests only on the two guarantees `.env` cannot undo.
+
+- **The browser-health fixture ignores one thing globally:** the Next dev-server HMR
+  WebSocket error (`_next/webpack-hmr`). On its first run it failed all four specs on **24
+  problems that were every one that same error, and not one application error**. That channel
+  does not exist in a production build. Scoped to the HMR URL, not to WebSocket errors
+  generally. **Worth a second opinion** — an ignore list is how a health check quietly stops
+  checking things.
+
+- **I changed a contract other packages read**: `FulfilmentService.quote()` returns
+  `{fee, priced}` instead of a number, `OrderPricing` gained `shippingPriced`, and it is
+  persisted on the order snapshot. Type-checked, and the invariant assertions still hold, but
+  this is the highest-blast-radius change of the night.
+
+- **Existing orders have no `shippingPriced`.** The schema defaults it to `false` and the DTO
+  coerces `?? false`. That is the truthful reading (no rate had been supplied then), but it
+  means old orders report "not priced" — correct, and worth knowing.
+
+- **I did not kill your `next dev` on port 3000.** Next 16 refuses a second dev server for
+  the same directory, so I pointed Playwright at yours via `E2E_PORT=3000`. It is still
+  running. **I did restart the API on 3002 twice** (Playwright starts it; it holds an
+  in-memory rate limiter — see below).
+
+- **One intermediate Playwright run failed and it was not a regression.** The journey stalled
+  at sign-in. I checked instead of assuming: `register` is capped at **3/hour per IP** and the
+  throttler is in-memory, so my repeated runs had exhausted it. Restarting the API reset it
+  and all 4 passed. **You will hit this too** — it is documented in `SANDBOX.md`.
+
+- **I started Docker Desktop** (it was not running) and left the `nest-electronics-mongo`
+  container up. Test databases created and left behind: `nest_electronics_baseline`,
+  `nest_ci_proof_*`, `nest_final_*`. All local and disposable;
+  `docker compose -f docker-compose.dev.yml down -v` clears everything.
+
+- **I edited your gitignored local env files** (not committed): `apps/api/.env` →
+  `EMAIL_PROVIDER=console` + placeholder sender (your `BREVO_API_KEY` left in place for
+  Phase E); `apps/storefront/.env.local` → added `API_BASE_URL`.
+
+---
+
+## 6. Test state
+
+| | Before | After |
+|---|---|---|
+| jest suites | 19 | **20** |
+| jest tests | 527 | **541**, all green |
+| Live vendor calls per run | **225** | **0** (asserted, not assumed) |
+| jest run time | 214s | ~102s |
+| Playwright specs | 2 | **4**, all green |
+| Playwright error checking | **none** | fails on pageerror / unhandled rejection / console.error / unexpected 5xx |
+| root type-check / lint / build | green | green (lint: 0 errors, 57 pre-existing warnings) |
+| OpenAPI drift gate | did not exist | green |
+
+**The 527 baseline was not free.** From a fresh database the suite is **333 failed / 194
+passed**; after `seed` it is still **19 failed / 508 passed**; only after `indexes:sync` is it
+green. **This is a real correction to F-15** — the planned CI fix was seed-only and would have
+left CI red. CI now runs seed **and** `indexes:sync`, and I proved the full sequence against a
+brand-new database.
+
+---
+
+## 7. Suggested first three things in the morning
+
+1. **Read §4 item 1 and decide the shipping default-rate representation.** It is the only
+   thing in this handoff that blocks the next phase, it takes about five minutes, and Phase 5
+   cannot start honestly without it.
+
+2. **Review `a7009c1` (the `shippingPriced` change) before anything else builds on it.** It is
+   the widest-reaching change of the night — a service signature, the persisted order
+   snapshot, and three API response DTOs. It is also now frozen into the v1 contract, so this
+   is the cheap moment to disagree with it.
+
+3. **Run the suite yourself and read `docs/api/INTEGRATION.md` as if you were the Flutter
+   developer:**
+   ```bash
+   docker compose -f docker-compose.dev.yml up -d --wait
+   pnpm --filter api seed && pnpm --filter api indexes:sync
+   MONGODB_URI="mongodb://127.0.0.1:27017/nest_electronics_dev" pnpm --filter api test
+   cd apps/storefront && E2E_PORT=3000 npx playwright test
+   ```
+   Then, when you are happy: `git push origin main --tags` and push the branch. **I pushed
+   nothing.**
+
+Full narrative, with the measurements behind every claim, is in **`WORK-LOG.md`**.

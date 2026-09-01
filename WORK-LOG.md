@@ -561,3 +561,23 @@ amount keeps compiling and starts lying.
 PLAN.md Phase 3 "Current state" updated to DONE with the evidence.
 
 **Verification after this task:** 541/541 jest; root `type-check`, `lint`, `build` all green.
+
+---
+
+## FINAL STATE
+
+Final verification, run on a brand-new database using the exact CI sequence:
+seed → `indexes:sync` → jest → drift gate.
+
+- **jest: 20 suites / 541 tests, all green** (~102s)
+- **drift gate: OK**
+- **Playwright: 4/4 green** under the browser-health fixture
+- root `type-check` / `lint` / `build`: green
+
+Git, as required:
+- `main` = `6d0673a`, tagged `baseline-phase-0` — Phase 0 only
+- `phase-1-2-overnight` = `0908721`, 10 commits — Tasks 2–5
+- working tree clean; **22 commits unpushed; nothing pushed; no history rewritten; nothing reverted**
+
+`HANDOFF.md` written. Six items are recorded under "Needs owner", of which one — ratifying
+the shipping default-rate extension — is the only thing blocking the next phase.
