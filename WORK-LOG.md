@@ -1894,3 +1894,98 @@ rewritten, no stash, no `.bak` files, no probe routes left behind.
 
 4. **The blank 404 body needs `proxy.ts`**, which is 5b's. Status is fixed;
    body is not, and cannot be from inside a page.
+
+---
+
+# SESSION 5 — cleanup before Phase 5b
+
+Baseline before any change: jest **800 passed, 15 skipped** (815), Playwright
+**44**.
+
+## 1 — secret audit
+
+**Nothing reached git. No credential needs rotating.**
+
+### What was searched, and how
+
+Every blob of every commit on **all 54 commits across all refs**, for the literal
+VALUE of each of six variables — not filenames, not patterns. `git grep -F` over
+`git rev-list --all`, so a value that appeared in one commit and was removed in
+the next is still found.
+
+| Variable | Result |
+|---|---|
+| `CLOUDINARY_API_KEY` | clean across all commits |
+| `CLOUDINARY_API_SECRET` | clean across all commits |
+| `CLOUDINARY_CLOUD_NAME` | clean across all commits |
+| `JWT_SECRET` | clean across all commits |
+| `BREVO_API_KEY` | clean across all commits |
+| `MONGODB_URI` | **matches — and is not a secret**, see below |
+
+`WORK-LOG.md`, `HANDOFF.md`, `docs/`, `docs/api/openapi.v1.json`, every fixture
+and every test file are all tracked, so all of them were covered.
+
+### The one match, and why it is not a finding
+
+`MONGODB_URI` is `mongodb://127.0.0.1:27017/…` — **localhost, no username, no
+password**. It appears in `apps/api/.env.example` and `docs/api/SANDBOX.md`
+deliberately, as the documented development connection string. The audit checks
+for an embedded password separately and found none.
+
+Reporting it as an exposure would be worse than useless: it would train whoever
+reads the next audit to wave the result through.
+
+### The working tree and local logs
+
+Clean, outside the `.env` files themselves — which are gitignored (`.gitignore:18`
+for `apps/api/.env`; `apps/{storefront,admin}/.gitignore:35` for `.env.local`).
+
+Scanned every file including gitignored ones: `.next/`, `dist/`, Playwright
+`test-results/`, the Next dev log, and this session's own scratch scripts. All
+clean. **Removed anyway**, per the brief: eight `next dev` logs, the Playwright
+results tree, the Next development log, and the scratch files from session 4.
+
+### Why the result is trustworthy
+
+Both search mechanisms were **proved to detect before being believed**:
+
+- the local scanner found a planted canary containing the real cloud name and
+  API key, and reported it;
+- the history search found a string known to be in history.
+
+A scanner that reports "clean" and has never been shown to detect anything is
+not evidence.
+
+### Root cause
+
+The offending assertion was already removed in session 4. Swept the whole suite
+again: **exactly one test reads a credential**, `cloudinary-integration.spec.ts`,
+and it does it correctly — the values are passed to the adapter and nowhere
+else, and its error message names the VARIABLES rather than what they contain.
+The rule is now written at that site, with the incident that taught it.
+
+### The guard
+
+`test/infrastructure/secret-hygiene.spec.ts` fails if any credential value
+appears in any git-tracked file.
+
+- **Pattern-based, not a list**: any variable whose name contains `SECRET`,
+  `API_KEY`, `PASSWORD`, `TOKEN`, `CREDENTIAL` or `PRIVATE_KEY`, so a
+  `STRIPE_SECRET_KEY` added next year is covered the day it is added.
+- **Reads `.env` AND `process.env`**, because a developer has the file and CI
+  has the variables; reading one would pass vacuously in the place it matters.
+- **Never prints a value.** A failure names the variable, the file and the line
+  number — a guard that echoed what it found would put the credential into the
+  CI log it exists to keep clean.
+- **Carries its own canary**, because this test reports "clean" on every
+  ordinary run and would otherwise never be exercised.
+- **Says so when it has nothing to check**, so a green run on a fresh checkout
+  cannot be mistaken for a verified one.
+
+Proven in both directions: appending a real API key to `WORK-LOG.md` produced
+`CLOUDINARY_API_KEY appears in: WORK-LOG.md:1898` — the variable and the line,
+and no value. `WORK-LOG.md` was restored to zero diff afterwards.
+
+**It deliberately does not** parse test sources for risky-looking expressions.
+The original defect asserted `toBeUndefined()`, which looks entirely harmless;
+checking the outcome rather than the shape is the check that cannot be fooled.

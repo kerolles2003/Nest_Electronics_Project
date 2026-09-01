@@ -112,6 +112,20 @@ function upload(
  * Absence is a hard failure rather than a skip: the suite was invoked
  * deliberately, so silently passing with nothing exercised would be the worst
  * possible answer.
+ *
+ * ## The rule this file follows, and why it is written here
+ *
+ * **A credential value never enters an assertion, an error message, a snapshot
+ * or a log line.** Presence is checked; the value is passed to the adapter and
+ * nowhere else, and the message below names the VARIABLES rather than what they
+ * contain.
+ *
+ * This is the only place in the test suite that touches a credential at all,
+ * which is why the rule is recorded here. It was learned the expensive way: a
+ * test once asserted `expect(process.env['CLOUDINARY_API_KEY']).toBeUndefined()`
+ * — an assertion that looks harmless, and printed the key into the failure
+ * output the day the account arrived. `test/infrastructure/secret-hygiene.spec.ts`
+ * now fails if any credential value reaches a tracked file.
  */
 function credentials(): { cloudName: string; apiKey: string; apiSecret: string } {
   const cloudName = process.env['CLOUDINARY_CLOUD_NAME'];
