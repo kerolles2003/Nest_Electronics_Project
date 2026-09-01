@@ -11,6 +11,7 @@
     "test": "jest",
     "indexes:sync": "nest build && node dist/database/sync-indexes.js",
     "seed": "nest build && node dist/database/seed/seed.js",
+    "shipping:seed": "nest build && node dist/database/seed/shipping-seed.js",
     "catalogue:import": "nest build && node dist/database/import/catalogue-import.js",
     "openapi:export": "nest build && node dist/openapi/export-openapi.js",
     "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js"

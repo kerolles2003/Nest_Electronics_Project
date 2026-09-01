@@ -268,6 +268,21 @@ export class AppException extends HttpException {
     );
   }
 
+  /**
+   * The rate table has no row for a governorate in use.
+   *
+   * Deliberately indistinguishable from any other internal fault to the client:
+   * a customer can do nothing about it, and naming the governorate would tell an
+   * unauthenticated caller which parts of the table are incomplete.
+   */
+  static shippingRateMissing(): AppException {
+    return new AppException(
+      ErrorCode.SHIPPING_RATE_MISSING,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      'An unexpected error occurred.',
+    );
+  }
+
   static orderNotFound(): AppException {
     return new AppException(
       ErrorCode.ORDER_NOT_FOUND,

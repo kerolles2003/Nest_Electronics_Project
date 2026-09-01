@@ -7,6 +7,7 @@ import { getStorageToken, type ThrottlerStorage } from '@nestjs/throttler';
 import { Connection, Model, Types } from 'mongoose';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { SEED_SHIPPING_RATES } from '../../src/database/seed/shipping.seed-data';
 import { validationExceptionFactory } from '../../src/common/pipes/validation-exception.factory';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { Cart, type CartLean } from '../../src/modules/cart/infrastructure/schemas/cart.schema';
@@ -53,6 +54,16 @@ const ADDRESS = {
   city: 'Downtown',
   governorate: 'Cairo',
 };
+
+/**
+ * What the seeded table says Cairo costs, not a number typed twice.
+ *
+ * D-8 ratified 5 000 pt for Cairo and Giza. Reading it from the seed rather
+ * than repeating it means this suite fails if checkout ever charges something
+ * the ratified table does not say — which is the only failure worth catching
+ * here.
+ */
+const CAIRO_FEE = SEED_SHIPPING_RATES.find((rate) => rate.governorate === 'Cairo')?.fee ?? -1;
 
 let app: INestApplication;
 let users: Model<User>;
@@ -425,16 +436,19 @@ describe('quote', () => {
     expect(data.pricing.itemsSubtotal.formatted).toBe('1,550.00 EGP');
     expect(data.pricing.discountTotal.amount).toBe(0);
     expect(data.pricing.shippingFee.amount).toBe(0);
+
     /*
      * The zero above is NOT a price, and the response has to say so.
      *
-     * `shippingPriced` is part of the frozen v1 contract, and until now nothing
-     * asserted it at the HTTP boundary: the DTO could have stopped serialising
-     * it, or hardcoded `true`, and every test still passed. A mobile client
-     * that trusts this field deserves a test that fails when it is wrong.
+     * `quote()` here sends no `addressId`, so there is no governorate to look
+     * up — the customer has not chosen where this is going yet. That is
+     * "unpriced", and it is a different thing from a rate being missing, which
+     * raises. The rates themselves exist now (D-8); this case is about the step
+     * of checkout that happens before one can be applied.
      *
-     * `false` is correct under the deployed configuration, where
-     * `SHIPPING_FLAT_FEE` is unset (OPEN-001).
+     * `shippingPriced` is part of the frozen v1 contract, and the DTO could
+     * stop serialising it, or hardcode a value, and most tests would still
+     * pass. A mobile client that trusts this field deserves one that fails.
      */
     expect(data.pricing.shippingPriced).toBe(false);
     expect(typeof data.pricing.shippingPriced).toBe('boolean');
@@ -709,10 +723,15 @@ describe('placement — the happy path', () => {
     expect(order.pricing.itemsSubtotal.amount).toBe(subtotal);
     expect(order.pricing.itemsSubtotal.amount).toBe(2 * 32500 + 3 * 30000);
     expect(order.pricing.discountTotal.amount).toBe(0);
-    expect(order.pricing.shippingFee.amount).toBe(0);
+
+    // The SAME fee the quote stated, from the same one authority. A quote and a
+    // placement that disagree about delivery is the defect `FulfilmentService`
+    // exists to make impossible.
+    expect(order.pricing.shippingFee.amount).toBe(CAIRO_FEE);
+
     // The PERSISTED snapshot carries the flag too, not just the quote — the
     // order email is rendered from this document long after placement.
-    expect(order.pricing.shippingPriced).toBe(false);
+    expect(order.pricing.shippingPriced).toBe(true);
     expect(order.pricing.grandTotal.amount).toBe(
       order.pricing.itemsSubtotal.amount - order.pricing.discountTotal.amount + order.pricing.shippingFee.amount,
     );

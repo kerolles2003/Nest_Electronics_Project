@@ -3585,6 +3585,7 @@
               "INVALID_UPLOAD",
               "MEDIA_ASSET_NOT_FOUND",
               "MEDIA_ASSET_IN_USE",
+              "SHIPPING_RATE_MISSING",
               "RATE_LIMIT_EXCEEDED",
               "INTERNAL_ERROR",
               "SERVICE_UNAVAILABLE",

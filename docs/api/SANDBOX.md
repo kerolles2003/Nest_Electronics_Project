@@ -83,10 +83,26 @@ vendor adapter is constructed at all, so no key is read.
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter api seed           # 12 categories, 6 brands, 26 products
-pnpm --filter api indexes:sync   # REQUIRED — see the note below
+pnpm --filter api seed            # 13 categories, 7 brands, 34 products (DEV ONLY)
+pnpm --filter api indexes:sync    # REQUIRED — see the note below
+pnpm --filter api shipping:seed   # REQUIRED — 27 governorate rates
 pnpm --filter api dev
 ```
+
+The three are not the same kind of command:
+
+| | Class | If you skip it |
+|---|---|---|
+| `seed` | development fixtures (D-6) — **never run in production** | the catalogue is empty |
+| `indexes:sync` | release step | `/health/ready` returns `503` and names what is missing |
+| `shipping:seed` | release step — **business data, run it everywhere** | every checkout raises `SHIPPING_RATE_MISSING` |
+
+`shipping:seed` installs one row per governorate (Cairo and Giza 50.00 EGP, the
+other 25 governorates 100.00 EGP). There is **no default row and no fallback**, so
+a governorate with no row has no price and the lookup raises rather than
+inventing a fee — which is only safe because the governorate is closed to a
+validated list on both sides. Re-running adds missing rows and **never overwrites
+an existing one**, so it cannot silently undo a rate somebody adjusted.
 
 **Both `seed` and `indexes:sync` are required, and skipping the second is the classic
 mistake.** `autoIndex` is off deliberately (index creation is a release step, not a side
@@ -219,6 +235,8 @@ pnpm --filter api seed && pnpm --filter api indexes:sync
 | Queries behave oddly; index assertions fail | seeded but no indexes | `pnpm --filter api indexes:sync` |
 | `/health/ready` returns `503` with `checks.indexes.status: "down"` | indexes never created, or a schema changed | run the `remedy` in the response body |
 | `/health/ready` is `503` but `checks.mongo` is `down` too | the database, not the indexes | §1 — `indexes` reads `not checked` in this case |
+| Checkout 500s with `SHIPPING_RATE_MISSING` | `shippingRates` has no row for that governorate | `pnpm --filter api shipping:seed` |
+| Delivery shows as "not calculated" in a quote | no address chosen yet — that is `shippingPriced: false`, not an error | choose an address |
 | Boot fails listing env keys | a required variable is missing or malformed | read the list; values are never echoed for secrets |
 | `429` on register/login | the real rate limits (§4) | wait, or restart the API |
 | No verification link in the terminal | `EMAIL_PROVIDER` is not `console` | set it; no key needed |

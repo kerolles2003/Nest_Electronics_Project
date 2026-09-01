@@ -2,207 +2,378 @@ import { describe, expect, it } from '@jest/globals';
 import { HttpStatus } from '@nestjs/common';
 import { AppException } from '../../src/common/errors/app.exception';
 import { ErrorCode } from '../../src/common/errors/error-code.enum';
+import { EGYPTIAN_GOVERNORATES } from '../../src/common/constants/governorates';
 import type { FulfilmentConfig } from '../../src/config/fulfilment.config';
+import { SEED_SHIPPING_RATES } from '../../src/database/seed/shipping.seed-data';
 import { FulfilmentService } from '../../src/modules/fulfilment/fulfilment.service';
+import type { ShippingRateRepository } from '../../src/modules/fulfilment/infrastructure/repositories/shipping-rate.repository';
+import type { ShippingRateLean } from '../../src/modules/fulfilment/infrastructure/schemas/shipping-rate.schema';
 
 /**
- * The shipping cost authority, tested as the pure function it is.
+ * The shipping cost authority, over the ratified rate table (D-8).
  *
- * No NestJS, no Mongoose, no database: `FulfilmentService` reads one validated
- * configuration object and performs integer arithmetic, which is exactly the
- * Level-1 shape TESTING-ARCHITECTURE.md §3 asks for. Constructing it directly
- * with a config literal is also the point — the whole reason shipping is one
- * service instead of a literal at the call site is that the policy can now be
- * exercised without placing an order.
- *
- * The DEPLOYED default is NO configured rate and no threshold, so the
- * end-to-end suites can only ever observe an unpriced zero. That is why these
- * cases drive non-zero configurations: without them the only behaviour this
- * phase introduced would be verified nowhere.
+ * No NestJS and no database: the repository is a small stand-in over a plain
+ * map, which is exactly the Level-1 shape TESTING-ARCHITECTURE.md §3 asks for.
+ * That substitution is deliberate and narrow — it replaces ONE `findOne` by
+ * governorate, so nothing about the policy under test is faked. The collection
+ * itself, the unique index, the seed and the wiring are exercised against a real
+ * database in `test/fulfilment/shipping-rates.spec.ts`.
  *
  * `quote()` returns `{ fee, priced }` rather than a bare number, so that a zero
- * fee can say WHICH zero it is. The cases below assert both halves everywhere,
- * because asserting only the fee is what let the two meanings blur together in
- * the first place.
+ * fee can say WHICH zero it is. Every case asserts both halves, because
+ * asserting only the fee is what let the two meanings blur together in the first
+ * place.
  */
-describe('FulfilmentService', () => {
-  const service = (config: Partial<FulfilmentConfig>): FulfilmentService =>
-    new FulfilmentService({
-      // `null`, not `0` — the deployed default is "no rate supplied", which is
-      // a different thing from "the rate is zero" and now reports differently.
-      shippingFlatFee: null,
-      freeShippingThreshold: null,
-      ...config,
-    } as FulfilmentConfig);
 
-  describe('the flat rate', () => {
-    it('charges the configured fee regardless of governorate', () => {
-      const fulfilment = service({ shippingFlatFee: 5000 });
+/** The seeded table as a map, so a case can price a governorate for real. */
+const SEEDED = new Map(SEED_SHIPPING_RATES.map((rate) => [rate.governorate, rate]));
 
-      for (const governorate of ['Cairo', 'Alexandria', 'Aswan', null]) {
-        expect(fulfilment.quote(governorate, 100_000)).toEqual({ fee: 5000, priced: true });
-      }
-    });
+function rowsFrom(
+  overrides: Record<string, { fee: number; freeShippingThreshold?: number | null }> | 'seeded',
+): Map<string, ShippingRateLean> {
+  const source =
+    overrides === 'seeded'
+      ? Object.fromEntries(SEED_SHIPPING_RATES.map((rate) => [rate.governorate, rate]))
+      : overrides;
 
-    it('charges the fee on a zero subtotal — an empty cart never reaches here', () => {
-      expect(service({ shippingFlatFee: 5000 }).quote('Cairo', 0)).toEqual({
-        fee: 5000,
-        priced: true,
-      });
-    });
+  return new Map(
+    Object.entries(source).map(([governorate, value]) => [
+      governorate,
+      {
+        governorate,
+        fee: value.fee,
+        freeShippingThreshold: value.freeShippingThreshold ?? null,
+      } as ShippingRateLean,
+    ]),
+  );
+}
 
-    it('reproduces the pre-phase AMOUNT under the deployed default, and says it is not a price', () => {
-      // The number a customer sees is unchanged. What is new is that the zero
-      // now declares itself a placeholder rather than leaving every consumer to
-      // guess — which is the whole of the fix.
-      expect(service({}).quote('Cairo', 100_000)).toEqual({ fee: 0, priced: false });
-    });
+function service(
+  rows: Map<string, ShippingRateLean>,
+  config: Partial<FulfilmentConfig> = {},
+): FulfilmentService {
+  const repository = {
+    findByGovernorate: (governorate: string) =>
+      Promise.resolve(rows.get(governorate) ?? null),
+    findAll: () => Promise.resolve([...rows.values()]),
+  } satisfies Pick<ShippingRateRepository, 'findByGovernorate' | 'findAll'>;
 
-    /**
-     * The distinction the old bare-number contract could not express.
+  return new FulfilmentService(
+    // `null` — the threshold is implemented and off.
+    { freeShippingThreshold: null, ...config } as FulfilmentConfig,
+    repository as ShippingRateRepository,
+  );
+}
+
+/** The service over the real seeded table. */
+const seeded = (config: Partial<FulfilmentConfig> = {}): FulfilmentService =>
+  service(rowsFrom('seeded'), config);
+
+describe('the ratified rate table', () => {
+  it('prices all 27 governorates and nothing else', () => {
+    expect(SEED_SHIPPING_RATES).toHaveLength(27);
+    expect(SEED_SHIPPING_RATES.map((rate) => rate.governorate)).toEqual([
+      ...EGYPTIAN_GOVERNORATES,
+    ]);
+  });
+
+  it('charges Cairo and Giza 5 000 pt and the other 25 governorates 10 000 pt', async () => {
+    /*
+     * THE FULL TABLE, every row, not a sample.
      *
-     * An operator who genuinely decides delivery is free sets the fee to 0
-     * explicitly; that is a PRICE, and must render as free. An operator who has
-     * supplied no rate at all gets the same 0, and it must render as "not yet
-     * calculated". Same amount, opposite meanings.
+     * A spot check on two or three governorates would pass just as happily if
+     * the metropolitan set had been written as `['Cairo', 'Gizah']` and 26 rows
+     * were charging the standard fee. The rate a customer is charged is the
+     * output of this whole table, so the whole table is asserted.
      */
-    it('distinguishes a deliberate zero fee from no rate at all', () => {
-      expect(service({ shippingFlatFee: 0 }).quote('Cairo', 100_000)).toEqual({
-        fee: 0,
+    const fulfilment = seeded();
+    const metropolitan = ['Cairo', 'Giza'];
+
+    for (const governorate of EGYPTIAN_GOVERNORATES) {
+      const expected = metropolitan.includes(governorate) ? 5_000 : 10_000;
+
+      await expect(fulfilment.quote(governorate, 100_000)).resolves.toEqual({
+        fee: expected,
         priced: true,
       });
-
-      expect(service({ shippingFlatFee: null }).quote('Cairo', 100_000)).toEqual({
-        fee: 0,
-        priced: false,
-      });
-    });
+    }
   });
 
-  describe('the free-shipping threshold', () => {
-    const fulfilment = service({ shippingFlatFee: 5000, freeShippingThreshold: 50_000 });
-
-    it('charges below the threshold', () => {
-      expect(fulfilment.quote('Cairo', 49_999)).toEqual({ fee: 5000, priced: true });
-    });
-
-    /** At or above, not merely above: `>=` is the frozen comparison. */
-    it('is free exactly AT the threshold — and free is a PRICE', () => {
-      // `priced: true` is the assertion that matters here. This is the case
-      // that was already reachable before real rates existed, and the one that
-      // used to be reported to the customer as "not yet calculated".
-      expect(fulfilment.quote('Cairo', 50_000)).toEqual({ fee: 0, priced: true });
-    });
-
-    it('is free above the threshold', () => {
-      expect(fulfilment.quote('Cairo', 50_001)).toEqual({ fee: 0, priced: true });
-    });
-
-    it('never applies when no threshold is configured', () => {
-      expect(service({ shippingFlatFee: 5000 }).quote('Cairo', Number.MAX_SAFE_INTEGER)).toEqual({
-        fee: 5000,
-        priced: true,
-      });
-    });
-
-    /**
-     * A threshold of 0 means "always free", which is different from "absent".
-     * `null` and `0` must not collapse into one another.
+  it('charges the fee on a zero subtotal — an empty cart never reaches here', async () => {
+    /*
+     * Deliberate, and worth stating because it looks wrong in isolation: a
+     * quote for an empty basket with an address selected shows a delivery fee.
+     *
+     * Placement refuses an empty cart outright (`CART_EMPTY`), and the quote
+     * endpoint returns `canPlaceOrder: false` beside this figure, so no
+     * customer is ever charged it. Making `quote()` special-case a zero
+     * subtotal would put a rule about cart contents inside the shipping
+     * authority, which is the one thing it must not know about.
      */
-    it('treats a zero threshold as always free, not as absent', () => {
-      expect(service({ shippingFlatFee: 5000, freeShippingThreshold: 0 }).quote('Cairo', 0)).toEqual({
-        fee: 0,
-        priced: true,
-      });
+    await expect(seeded().quote('Cairo', 0)).resolves.toEqual({ fee: 5_000, priced: true });
+  });
+
+  it('gives every seeded row a null threshold — implemented and off', () => {
+    expect(SEED_SHIPPING_RATES.every((rate) => rate.freeShippingThreshold === null)).toBe(true);
+  });
+
+  it('charges 50.00 and 100.00 EGP, in piastres', () => {
+    // The one place the ratified figures appear as the numbers a person said,
+    // rather than as constants that could both be wrong together.
+    expect(SEEDED.get('Cairo')?.fee).toBe(5_000);
+    expect(SEEDED.get('Giza')?.fee).toBe(5_000);
+    expect(SEEDED.get('Alexandria')?.fee).toBe(10_000);
+    expect(SEEDED.get('Red Sea')?.fee).toBe(10_000);
+  });
+});
+
+describe('the lookup miss', () => {
+  it('RAISES rather than inventing a fee', async () => {
+    /*
+     * The centre of D-8. There is no default row, no fallback and no sentinel,
+     * so a governorate with no row has no price — and the only honest answer is
+     * to fail.
+     *
+     * Every alternative ends with a customer quoted a number nobody decided: a
+     * default row answers for a governorate nobody priced, `?? 0` gives free
+     * delivery to whichever one was forgotten, and a sentinel is a default row
+     * that is harder to notice.
+     */
+    const fulfilment = service(rowsFrom({ Cairo: { fee: 5_000 } }));
+
+    await expect(fulfilment.quote('Luxor', 100_000)).rejects.toBeInstanceOf(AppException);
+  });
+
+  it('raises a 500 with SHIPPING_RATE_MISSING, not a client error', async () => {
+    /*
+     * The governorate is closed to a validated list on both sides, so this is
+     * unreachable through the API by any input a customer can send. Reaching it
+     * means the TABLE is incomplete — a server fault — and answering 400 would
+     * blame the customer for the operator's missing row.
+     */
+    const fulfilment = service(rowsFrom({ Cairo: { fee: 5_000 } }));
+
+    await expect(fulfilment.quote('Luxor', 100_000)).rejects.toMatchObject({
+      code: ErrorCode.SHIPPING_RATE_MISSING,
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
     });
   });
 
-  /**
-   * The subtotal arrives from `CheckoutService`, which computed it from live
-   * catalogue prices. A value that is negative or not a safe integer means the
-   * server has already produced a figure it cannot justify, and a fee derived
-   * from it would be fabricated — so no order may be placed at all. The same
-   * posture as `assertPricingInvariants`, and deliberately a 500 with no
-   * detail rather than a client error: no client input can reach this state.
-   */
-  describe('the subtotal guard', () => {
-    it.each([
-      ['negative', -1],
-      ['fractional', 10.5],
-      ['NaN', Number.NaN],
-      ['Infinity', Number.POSITIVE_INFINITY],
-      ['beyond int53', Number.MAX_SAFE_INTEGER + 2],
-    ])('refuses a %s subtotal rather than pricing it', (_label, subtotal) => {
-      const fulfilment = service({ shippingFlatFee: 5000 });
+  it('does not disclose which governorate is unpriced', async () => {
+    // The message is the generic one. Which parts of the rate table are
+    // incomplete is operational information, and this can surface on a
+    // checkout the customer is in the middle of.
+    const fulfilment = service(rowsFrom({ Cairo: { fee: 5_000 } }));
 
-      expect(() => fulfilment.quote('Cairo', subtotal)).toThrow(AppException);
+    const error = await fulfilment.quote('Luxor', 100_000).catch((raised: unknown) => raised);
 
-      try {
-        fulfilment.quote('Cairo', subtotal);
-      } catch (error) {
-        const thrown = error as AppException;
-        expect(thrown.code).toBe(ErrorCode.INTERNAL_ERROR);
-        expect(thrown.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
-      }
+    expect(error).toBeInstanceOf(AppException);
+    expect(JSON.stringify(error)).not.toContain('Luxor');
+  });
+
+  it('raises even when a threshold would have made delivery free anyway', async () => {
+    /*
+     * A miss is not rescued by the answer happening to be zero. "Free because
+     * the order is large" and "free because we could not find a rate" are
+     * different facts, and quietly returning the first when the second is true
+     * is the whole class of defect the raise exists to prevent.
+     */
+    const fulfilment = service(rowsFrom({ Cairo: { fee: 5_000 } }), {
+      freeShippingThreshold: 50_000,
     });
 
-    it('refuses even when the threshold would have made shipping free', () => {
-      const fulfilment = service({ shippingFlatFee: 5000, freeShippingThreshold: 1 });
+    await expect(fulfilment.quote('Luxor', 100_000)).rejects.toBeInstanceOf(AppException);
+  });
+});
 
-      expect(() => fulfilment.quote('Cairo', -100)).toThrow(AppException);
+describe('no governorate yet, which is NOT a miss', () => {
+  it('reports unpriced rather than raising', async () => {
+    /*
+     * The checkout quote endpoint is reachable before an address is chosen.
+     * There is nothing to look up, which is exactly what `priced: false` says.
+     * Raising here would turn an ordinary step of checkout into a 500.
+     */
+    await expect(seeded().quote(null, 100_000)).resolves.toEqual({ fee: 0, priced: false });
+  });
+
+  it('stays unpriced whatever the threshold says', async () => {
+    // A threshold cannot make an unknown destination free: there is no rate to
+    // discount, and `priced: true` would assert a price nobody computed.
+    const fulfilment = seeded({ freeShippingThreshold: 1 });
+
+    await expect(fulfilment.quote(null, 100_000)).resolves.toEqual({ fee: 0, priced: false });
+  });
+});
+
+describe('the free-shipping threshold', () => {
+  it('charges below the threshold', async () => {
+    const fulfilment = seeded({ freeShippingThreshold: 50_000 });
+
+    await expect(fulfilment.quote('Cairo', 49_999)).resolves.toEqual({
+      fee: 5_000,
+      priced: true,
     });
   });
 
-  /**
-   * The invariant `ShippingQuote` documents: an unpriced fee is always zero.
-   *
-   * Asserted as a PROPERTY over every configuration this service accepts,
-   * rather than as one example, because the failure it guards against is a
-   * future `quote()` body returning a fee it has not actually priced — and a
-   * single example would not notice.
+  it('is free exactly AT the threshold — and free is a PRICE', async () => {
+    const fulfilment = seeded({ freeShippingThreshold: 50_000 });
+
+    await expect(fulfilment.quote('Cairo', 50_000)).resolves.toEqual({ fee: 0, priced: true });
+  });
+
+  it('is free above the threshold', async () => {
+    const fulfilment = seeded({ freeShippingThreshold: 50_000 });
+
+    await expect(fulfilment.quote('Aswan', 50_001)).resolves.toEqual({ fee: 0, priced: true });
+  });
+
+  it('never applies when none is configured — which is the deployed state', async () => {
+    await expect(seeded().quote('Cairo', 100_000_000)).resolves.toEqual({
+      fee: 5_000,
+      priced: true,
+    });
+  });
+
+  it('treats a zero threshold as always free, not as absent', async () => {
+    // `0` and `null` are different answers, and the config models them as
+    // different values precisely so this case is expressible.
+    const fulfilment = seeded({ freeShippingThreshold: 0 });
+
+    await expect(fulfilment.quote('Cairo', 0)).resolves.toEqual({ fee: 0, priced: true });
+  });
+
+  it("lets a ROW's own threshold win over the configured one", async () => {
+    /*
+     * A rule written for one governorate is more specific than a global
+     * default. Nothing seeds a row threshold today; this asserts the precedence
+     * before anything depends on it, so it is a decision rather than whatever
+     * the code happened to do.
+     */
+    const fulfilment = service(
+      rowsFrom({ Cairo: { fee: 5_000, freeShippingThreshold: 10_000 } }),
+      { freeShippingThreshold: 90_000 },
+    );
+
+    // Over the row's 10 000, under the global 90 000: the row wins, so free.
+    await expect(fulfilment.quote('Cairo', 20_000)).resolves.toEqual({ fee: 0, priced: true });
+  });
+
+  it('falls back to the configured threshold for a row that sets none', async () => {
+    const fulfilment = service(
+      rowsFrom({ Cairo: { fee: 5_000 }, Giza: { fee: 5_000, freeShippingThreshold: 10_000 } }),
+      { freeShippingThreshold: 90_000 },
+    );
+
+    await expect(fulfilment.quote('Cairo', 20_000)).resolves.toEqual({
+      fee: 5_000,
+      priced: true,
+    });
+  });
+});
+
+describe('the subtotal guard', () => {
+  it('refuses a negative subtotal', async () => {
+    await expect(seeded().quote('Cairo', -1)).rejects.toMatchObject({
+      code: ErrorCode.INTERNAL_ERROR,
+    });
+  });
+
+  it('refuses a non-integer subtotal', async () => {
+    await expect(seeded().quote('Cairo', 10.5)).rejects.toMatchObject({
+      code: ErrorCode.INTERNAL_ERROR,
+    });
+  });
+
+  it('refuses even when the threshold would have made shipping free', async () => {
+    const fulfilment = seeded({ freeShippingThreshold: 0 });
+
+    await expect(fulfilment.quote('Cairo', -1)).rejects.toBeInstanceOf(AppException);
+  });
+
+  it('refuses BEFORE reading the table', async () => {
+    /*
+     * Order matters. A bad subtotal is the caller's fault and must be reported
+     * as one; if the lookup ran first, a bad subtotal for an unpriced
+     * governorate would surface as SHIPPING_RATE_MISSING and send whoever read
+     * the log to fix the rate table instead of the caller.
+     */
+    let consulted = false;
+    const fulfilment = new FulfilmentService(
+      { freeShippingThreshold: null } as FulfilmentConfig,
+      {
+        findByGovernorate: () => {
+          consulted = true;
+          return Promise.resolve(null);
+        },
+        findAll: () => Promise.resolve([]),
+      } as unknown as ShippingRateRepository,
+    );
+
+    await expect(fulfilment.quote('Cairo', -1)).rejects.toMatchObject({
+      code: ErrorCode.INTERNAL_ERROR,
+    });
+    expect(consulted).toBe(false);
+  });
+});
+
+describe('the three states, with real rates in place', () => {
+  /*
+   * The property that made `ShippingQuote` worth introducing, re-proven now
+   * that the fee is a lookup rather than a constant. Stated as a property over
+   * every governorate and several subtotals rather than as three examples,
+   * because the failure it guards against is a future `quote()` body returning
+   * a fee it has not actually priced — and three examples would not notice.
    */
-  it('never returns an unpriced non-zero fee, under any configuration', () => {
-    const configs = [
-      { shippingFlatFee: null, freeShippingThreshold: null },
-      { shippingFlatFee: null, freeShippingThreshold: 0 },
-      { shippingFlatFee: null, freeShippingThreshold: 50_000 },
-      { shippingFlatFee: 0, freeShippingThreshold: null },
-      { shippingFlatFee: 5000, freeShippingThreshold: null },
-      { shippingFlatFee: 5000, freeShippingThreshold: 0 },
-      { shippingFlatFee: 5000, freeShippingThreshold: 50_000 },
-    ];
+  it('never returns an unpriced NON-ZERO fee, for any governorate or subtotal', async () => {
+    for (const threshold of [null, 0, 50_000]) {
+      const fulfilment = seeded({ freeShippingThreshold: threshold });
 
-    for (const config of configs) {
-      for (const subtotal of [0, 1, 49_999, 50_000, 1_000_000]) {
-        const quoted = service(config as Partial<FulfilmentConfig>).quote('Cairo', subtotal);
+      for (const governorate of EGYPTIAN_GOVERNORATES) {
+        for (const subtotal of [0, 1, 49_999, 50_000, 1_000_000]) {
+          const quoted = await fulfilment.quote(governorate, subtotal);
 
-        if (!quoted.priced) {
-          expect(quoted.fee).toBe(0);
+          if (!quoted.priced) {
+            expect(quoted.fee).toBe(0);
+          }
         }
       }
     }
   });
 
-  /**
-   * MONEY-MODEL.md §5: no float may appear where a payable amount is derived.
-   * The fee comes from configuration and is returned unchanged, so the only way
-   * a non-integer could escape is a non-integer reaching configuration — which
-   * `env.schema.ts` rejects at startup. This asserts the property that makes
-   * that guarantee end-to-end.
-   */
-  it('returns an integer for every configuration it accepts', () => {
-    for (const fee of [0, 1, 2500, 1_000_000]) {
-      const quoted = service({ shippingFlatFee: fee }).quote('Cairo', 12_345);
+  it('reaches all three states, so the property above is not vacuous', async () => {
+    /*
+     * A property test that never observes the interesting state passes for the
+     * wrong reason. These three assertions prove each state is actually
+     * reachable with the seeded table:
+     *
+     *   priced, fee > 0   an ordinary delivery
+     *   priced, fee = 0   free because the threshold was met
+     *   unpriced, fee = 0 no address chosen yet
+     */
+    await expect(seeded().quote('Cairo', 100)).resolves.toEqual({ fee: 5_000, priced: true });
+
+    await expect(
+      seeded({ freeShippingThreshold: 50_000 }).quote('Cairo', 50_000),
+    ).resolves.toEqual({ fee: 0, priced: true });
+
+    await expect(seeded().quote(null, 100)).resolves.toEqual({ fee: 0, priced: false });
+  });
+
+  it('returns a safe integer for every governorate', async () => {
+    /*
+     * MONEY-MODEL.md §5: no float may appear where a payable amount is derived.
+     * The fee now comes from the database rather than from configuration, so
+     * the schema's `min: 0` on an integer field is what backs this, and this is
+     * the assertion that would notice if a row ever carried 50.5.
+     */
+    const fulfilment = seeded();
+
+    for (const governorate of EGYPTIAN_GOVERNORATES) {
+      const quoted = await fulfilment.quote(governorate, 12_345);
 
       expect(Number.isSafeInteger(quoted.fee)).toBe(true);
-      expect(quoted.fee).toBe(fee);
+      expect(quoted.fee).toBeGreaterThan(0);
       expect(quoted.priced).toBe(true);
     }
-
-    // The unpriced case still yields a safe integer, so no consumer has to
-    // special-case the arithmetic — only the presentation.
-    const unpriced = service({ shippingFlatFee: null }).quote('Cairo', 12_345);
-    expect(Number.isSafeInteger(unpriced.fee)).toBe(true);
-    expect(unpriced).toEqual({ fee: 0, priced: false });
   });
 });

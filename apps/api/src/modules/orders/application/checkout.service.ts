@@ -390,7 +390,7 @@ export class CheckoutService {
     const pricing = computeOrderPricing(
       itemsSubtotal,
       discountTotal,
-      this.fulfilment.quote(address.governorate, itemsSubtotal - discountTotal),
+      await this.fulfilment.quote(address.governorate, itemsSubtotal - discountTotal),
     );
 
     const orderNumber = await this.counters.next(context.day, session);
@@ -679,12 +679,12 @@ export class CheckoutService {
    * function and `FulfilmentService` — so the only thing that can make the two
    * disagree is time passing, never a second implementation drifting.
    */
-  private toQuote(cart: CartView, governorate: string | null): CheckoutQuote {
+  private async toQuote(cart: CartView, governorate: string | null): Promise<CheckoutQuote> {
     const discountTotal = 0;
     const pricing = computeOrderPricing(
       cart.itemsSubtotal,
       discountTotal,
-      this.fulfilment.quote(governorate, cart.itemsSubtotal - discountTotal),
+      await this.fulfilment.quote(governorate, cart.itemsSubtotal - discountTotal),
     );
 
     return {

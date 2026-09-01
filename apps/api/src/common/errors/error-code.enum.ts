@@ -194,6 +194,18 @@ export enum ErrorCode {
    */
   MEDIA_ASSET_IN_USE = 'MEDIA_ASSET_IN_USE',
 
+  /**
+   * 500. No `shippingRates` row exists for a governorate an address carries.
+   *
+   * A SERVER fault, never the customer's: the governorate is closed to a
+   * validated list on both sides, so this cannot be reached by bad input. It
+   * means the rate table is incomplete, and D-8 is explicit that a miss raises
+   * rather than inventing a fee. Carries no detail; the governorate is logged
+   * against the requestId, because which governorate is unpriced is operational
+   * information and not the customer's business.
+   */
+  SHIPPING_RATE_MISSING = 'SHIPPING_RATE_MISSING',
+
   // ---- Rate limiting — 429 ----
   /** Too many requests. Accompanied by a `Retry-After` header in seconds. */
   RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',

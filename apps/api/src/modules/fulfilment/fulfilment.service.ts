@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { fulfilmentConfig, type FulfilmentConfig } from '../../config/fulfilment.config';
 import { AppException } from '../../common/errors/app.exception';
+import { ShippingRateRepository } from './infrastructure/repositories/shipping-rate.repository';
 
 /**
  * What delivery costs, AND whether that is a price at all.
@@ -59,42 +60,43 @@ export interface ShippingQuote {
  * has not changed; its authority has. There is now exactly one expression in the
  * system that decides what delivery costs.
  *
+ * ## Per-governorate rates, as ratified (D-8)
+ *
+ * The rate now comes from `shippingRates`: 27 rows, one per governorate, no
+ * default row, no fallback and no sentinel. `SHIPPING_FLAT_FEE` was OPEN-001's
+ * specified fallback while the real rates were unsupplied business input; they
+ * have been supplied, so it is gone.
+ *
+ * This landed the way the method was designed for. `governorate` was already a
+ * parameter — introduced before it was consulted, precisely so that adding the
+ * lookup would not change a single caller — and the frozen public API
+ * (NESTJS-MODULE-MAP.md §9) is still `quote(governorate, subtotal)`. What did
+ * change is that the method is now `async`, because the answer lives in the
+ * database rather than in a config object.
+ *
  * ## What this deliberately is NOT
  *
  * No carrier API, no rate shopping, no geocoder, no delivery-zone graph, no
- * strategy framework, no `shippingRates` collection and no `ShippingRatePort`.
- * OPEN-001 records the rate values as unsupplied business input; a lookup table
- * with nothing in it would let a MISS decide what every customer is charged.
- *
- * ## How the three deferred features land without touching checkout
- *
- * The signature already carries everything each of them needs, which is the
- * whole point of introducing it now:
- *
- *  - **Per-governorate rates** — `governorate` is already a parameter; replace
- *    the flat read with a lookup.
- *  - **Free-shipping threshold** — implemented, and driven by configuration.
- *  - **Delivery zones** — a zone is a function of `governorate`, resolved here.
- *
- * None of them changes `CheckoutService`, the order schema, any DTO or any
- * caller. They change the body of one method.
+ * strategy framework and no `ShippingRatePort`. A zone, if one is ever wanted,
+ * is a function of `governorate` and is resolved here.
  */
 @Injectable()
 export class FulfilmentService {
+  private readonly logger = new Logger(FulfilmentService.name);
+
   constructor(
     @Inject(fulfilmentConfig.KEY) private readonly config: FulfilmentConfig,
+    private readonly rates: ShippingRateRepository,
   ) {}
 
   /**
    * The delivery fee for one order, in integer minor units.
    *
-   * `governorate` is accepted and, today, not consulted — the configured rate is
-   * flat, and OPEN-001 records the per-governorate table as business input that
-   * has not been supplied. It is a PARAMETER rather than a future addition
-   * because adding it later would change every caller, and because the frozen
-   * public API (NESTJS-MODULE-MAP.md §9) is exactly this signature. `null` is
-   * accepted for the quote endpoint, where the customer has not yet chosen an
-   * address.
+   * `governorate` is looked up in `shippingRates`. `null` is accepted for the
+   * quote endpoint, where the customer has not yet chosen an address — that is
+   * "nothing to look up", which is `priced: false`, and it is NOT the same as a
+   * miss. A miss is a governorate that should have a row and does not, and it
+   * raises.
    *
    * `postDiscountSubtotal` drives the free-shipping threshold. It is the
    * post-discount figure by the frozen formula: a coupon must be able to carry
@@ -105,9 +107,7 @@ export class FulfilmentService {
    * Pure integer arithmetic — no division, no float, no rounding. The only
    * rounding point MONEY-MODEL.md §7.2 permits is a percentage discount.
    */
-  quote(governorate: string | null, postDiscountSubtotal: number): ShippingQuote {
-    void governorate;
-
+  async quote(governorate: string | null, postDiscountSubtotal: number): Promise<ShippingQuote> {
     if (!Number.isSafeInteger(postDiscountSubtotal) || postDiscountSubtotal < 0) {
       // The caller computed a subtotal it cannot justify. A fee derived from it
       // would be a fabricated amount, so no order may be placed at all — the
@@ -115,33 +115,62 @@ export class FulfilmentService {
       throw AppException.internal();
     }
 
-    const flatFee = this.config.shippingFlatFee;
-
     /*
-     * NO RATE HAS BEEN SUPPLIED (OPEN-001).
+     * NO GOVERNORATE YET, which is not a missing rate.
      *
-     * `fee: 0` here is not a price. It is the absence of one, and `priced:
-     * false` is the only thing that says so — which is the entire reason this
-     * method stopped returning a bare number.
+     * The checkout quote endpoint is reachable before an address is chosen.
+     * There is nothing to look up, so there is no fee to state — and `priced:
+     * false` is exactly the vocabulary for that. Raising here would turn a
+     * normal step of checkout into a 500.
      */
-    if (flatFee === null) {
+    if (governorate === null) {
       return { fee: 0, priced: false };
     }
 
-    const threshold = this.config.freeShippingThreshold;
+    const rate = await this.rates.findByGovernorate(governorate);
+
+    /*
+     * A MISS RAISES. It never invents a fee (D-8).
+     *
+     * This is unreachable through the API: `governorate` is closed to a
+     * validated list on both sides (`common/constants/governorates.ts` exists
+     * for this reason), and the seed derives its 27 rows from that same list. So
+     * reaching here means the table is incomplete — bad data, not bad input.
+     *
+     * Failing loudly beats silently charging a made-up amount. The alternative
+     * designs all end with a customer being quoted a number nobody decided: a
+     * default row answers for a governorate nobody priced, a `?? 0` gives free
+     * delivery to whichever one was forgotten, and a sentinel is a default row
+     * that is harder to notice.
+     */
+    if (rate === null) {
+      this.logger.error(
+        `no shippingRates row for "${governorate}". Run: pnpm --filter api shipping:seed`,
+      );
+
+      throw AppException.shippingRateMissing();
+    }
+
+    /*
+     * The row's own threshold wins over the configured one when it is set,
+     * because a rule written for a specific governorate is more specific than a
+     * global default. Every seeded row is `null`, so today this reads the
+     * configured value — which is itself `null` unless someone sets it. The
+     * threshold stays implemented and off.
+     */
+    const threshold = rate.freeShippingThreshold ?? this.config.freeShippingThreshold;
 
     /*
      * Free, and `priced: true` — deliberately.
      *
      * Free IS a price: a rate exists, the threshold was met, and the customer
      * owes nothing for delivery. Conflating this with "not yet calculated" is
-     * exactly the defect being removed, and it is reachable TODAY the moment a
-     * threshold is configured.
+     * exactly the defect `ShippingQuote` was introduced to remove.
      */
     if (threshold !== null && postDiscountSubtotal >= threshold) {
       return { fee: 0, priced: true };
     }
 
-    return { fee: flatFee, priced: true };
+    return { fee: rate.fee, priced: true };
   }
 }

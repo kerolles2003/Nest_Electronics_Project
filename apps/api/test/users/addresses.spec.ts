@@ -7,6 +7,7 @@ import { getStorageToken, type ThrottlerStorage } from '@nestjs/throttler';
 import { Connection, Model, Types } from 'mongoose';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { SEED_SHIPPING_RATES } from '../../src/database/seed/shipping.seed-data';
 import { EGYPTIAN_GOVERNORATES } from '../../src/common/constants/governorates';
 import { validationExceptionFactory } from '../../src/common/pipes/validation-exception.factory';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
@@ -125,6 +126,13 @@ function addressBody(overrides: AddressBody = {}): Record<string, unknown> {
 function create(customer: Customer, overrides: AddressBody = {}): request.Test {
   return http().post(ADDRESSES).set(...bearer(customer)).send(addressBody(overrides));
 }
+
+/**
+ * What the ratified table says Cairo costs — every address fixture here uses
+ * Cairo. Read from the seed rather than repeated as a literal, so this suite
+ * fails if checkout and the ratified table ever disagree.
+ */
+const CAIRO_FEE = SEED_SHIPPING_RATES.find((rate) => rate.governorate === 'Cairo')?.fee ?? -1;
 
 /** Creates an address through the real API and returns its id. */
 async function createAddress(customer: Customer, overrides: AddressBody = {}): Promise<string> {
@@ -1401,7 +1409,18 @@ describe('checkout integration', () => {
       .send({ addressId: id })
       .expect(200);
 
-    expect(quoted.body.data.pricing.shippingFee.amount).toBe(0);
+    /*
+     * A REAL fee, because the address names a governorate the rate table
+     * prices. This asserted `0` while OPEN-001 recorded the rates as
+     * unsupplied business input; D-8 supplied them.
+     *
+     * The figure is derived from the seed rather than written as `5000`. Two
+     * literals can be wrong in the same direction and agree with each other;
+     * deriving it means this fails if what checkout charges ever stops matching
+     * the ratified table.
+     */
+    expect(quoted.body.data.pricing.shippingFee.amount).toBe(CAIRO_FEE);
+    expect(quoted.body.data.pricing.shippingPriced).toBe(true);
     expect(quoted.body.data.pricing.grandTotal.amount).toBe(
       quoted.body.data.pricing.itemsSubtotal.amount -
         quoted.body.data.pricing.discountTotal.amount +
@@ -1417,7 +1436,16 @@ describe('checkout integration', () => {
     expect(refused.body.error.code).toBe('ADDRESS_NOT_FOUND');
   });
 
-  it('still quotes without an address', async () => {
+  it('still quotes without an address, and says the fee is not priced', async () => {
+    /*
+     * The distinction the whole `{ fee, priced }` shape exists for, at the HTTP
+     * boundary and against real rates.
+     *
+     * No address means no governorate means nothing to look up. That is
+     * unpriced — NOT free, and not a missing rate. A missing rate raises; this
+     * is an ordinary step of checkout, and answering 500 here would break the
+     * page a customer sees before they pick an address.
+     */
     const customer = await createCustomer('quote-no-address');
 
     const quoted = await http()
@@ -1427,6 +1455,7 @@ describe('checkout integration', () => {
       .expect(200);
 
     expect(quoted.body.data.pricing.shippingFee.amount).toBe(0);
+    expect(quoted.body.data.pricing.shippingPriced).toBe(false);
   });
 
   it('refuses a raw governorate on the quote', async () => {
@@ -1453,7 +1482,11 @@ describe('checkout integration', () => {
     expect(pricing.grandTotal.amount).toBe(
       pricing.itemsSubtotal.amount - pricing.discountTotal.amount + pricing.shippingFee.amount,
     );
-    expect(pricing.shippingFee.amount).toBe(0);
+
+    // A non-zero shipping fee makes the identity above worth asserting. While
+    // the fee was always 0 the equation held whether or not the code added it.
+    expect(pricing.shippingFee.amount).toBe(CAIRO_FEE);
+    expect(CAIRO_FEE).toBeGreaterThan(0);
   });
 });
 

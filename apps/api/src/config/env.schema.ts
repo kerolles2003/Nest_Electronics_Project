@@ -176,36 +176,22 @@ export const envSchema = z.object({
   AUTH_REQUIRE_EMAIL_VERIFICATION: booleanFromString.default('true'),
 
   // ---- Fulfilment (shipping cost policy) ----
-  /**
-   * Flat delivery fee in integer MINOR UNITS (piastres), applied to every
-   * governorate.
-   *
-   * OPTIONAL, with no default, and the distinction matters.
-   *
-   * ABSENT means no rate has been supplied (OPEN-001) — the customer is charged
-   * nothing and `FulfilmentService` reports `priced: false`, so the UI and the
-   * order email can say "not calculated yet" truthfully instead of inferring it
-   * from a zero.
-   *
-   * PRESENT AND 0 means a real, deliberate decision that delivery is free, and
-   * is reported as `priced: true`. It used to be indistinguishable from the
-   * absent case, which is the ambiguity this removes.
-   *
-   * The numbers a customer sees are unchanged by this: an unset value still
-   * charges nothing, exactly as the previous `.default(0)` did. What changes is
-   * that the system can now tell the two apart and say which one it means.
-   *
-   * Integer only: MONEY-MODEL.md §5 forbids a float anywhere a payable amount is
-   * derived, and `z.coerce.number().int()` rejects `50.5` rather than rounding
-   * it into a total.
-   */
-  SHIPPING_FLAT_FEE: z.coerce.number().int().min(0).max(1_000_000).optional(),
 
   /**
    * Order value in integer MINOR UNITS at or above which delivery is free.
    *
-   * Absent means "no threshold" — the flat fee always applies. Compared against
-   * the POST-DISCOUNT subtotal (MONEY-MODEL.md §7.1).
+   * Absent means "no threshold". Compared against the POST-DISCOUNT subtotal
+   * (MONEY-MODEL.md §7.1). Implemented and deliberately unset.
+   *
+   * `SHIPPING_FLAT_FEE` used to sit above this. It was OPEN-001's specified
+   * fallback while the per-governorate rates were unsupplied business input;
+   * D-8 supplied them, so the fee now comes from the `shippingRates`
+   * collection (`pnpm --filter api shipping:seed`) and the variable is gone
+   * rather than deprecated. A knob that is read by nothing is worse than an
+   * absent one: someone sets it, nothing happens, and nothing says why.
+   *
+   * A governorate may also carry a threshold of its own, which wins for that
+   * governorate. No seeded row sets one.
    */
   FREE_SHIPPING_THRESHOLD: z.coerce.number().int().min(0).optional(),
 

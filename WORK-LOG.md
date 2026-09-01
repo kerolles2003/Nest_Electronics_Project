@@ -1426,3 +1426,98 @@ reclaimed. Reported, but not what makes this a gate.
 
 Documented in `docs/api/SANDBOX.md` §3 and §7 and a new section of
 `docs/api/INTEGRATION.md`.
+
+## 2 — shipping rates, the D-8 model
+
+`shippingRates` exists with the frozen shape — `MONGODB-DESIGN.md` §11 and
+`MONEY-MODEL.md` §6 adopted unchanged, nothing amended. 27 rows, unique
+`{governorate:1}`, Cairo and Giza 5 000 pt and the other 25 at 10 000 pt.
+
+`FulfilmentService.quote()` is now `async` and reads the table. That is the
+whole change to callers: `governorate` was made a parameter before it was
+consulted, precisely so this substitution would not touch them, and the frozen
+public API is still `quote(governorate, subtotal)`.
+
+### Three outcomes, not two
+
+The miss path is the point of D-8, and it is not the same as "no address yet":
+
+| Input | Result | Why |
+|---|---|---|
+| a governorate with a row | `{ fee, priced: true }` | ordinary |
+| `null` governorate | `{ fee: 0, priced: false }` | the customer has not chosen an address; an ordinary step of checkout |
+| a governorate with **no** row | **raises** `SHIPPING_RATE_MISSING` (500) | bad data — the table is incomplete |
+
+Conflating the middle row with the last one would turn the checkout page into a
+500 before the customer picks an address. Conflating it the other way would
+quote a fee nobody decided.
+
+The raise is a **500, not a 4xx**: the governorate is closed to a validated list
+on both sides, so this is unreachable by any input a customer can send, and
+answering 400 would blame them for the operator's missing row. It names the
+governorate in the LOG and not in the response, because which parts of the rate
+table are incomplete is operational information and this surfaces mid-checkout.
+
+### `SHIPPING_FLAT_FEE` — removed, not deprecated
+
+A knob nothing reads is worse than one that does not exist: it survives in
+`.env.example` files and deployment manifests, somebody eventually sets it
+expecting an effect, and nothing anywhere says why there was none. `.env.example`
+carries a tombstone pointing at `shipping:seed` instead. Safe to remove because
+the env schema is a plain `z.object`, so an unknown key is stripped rather than
+rejected — an existing `.env` still boots.
+
+`FREE_SHIPPING_THRESHOLD` stays, implemented and off. A row may carry a
+threshold of its own, which wins for that governorate; **none does**. That
+precedence is a decision I made rather than one I was given — see "Needs owner".
+
+### `shipping:seed` is a release step, and non-destructive
+
+Separate from `seed`, which is development fixtures that must never reach
+production (D-6). This is the opposite: with no fallback row, an empty
+collection means **every checkout in the country raises**.
+
+`$setOnInsert`, never `$set`. Every row is independently editable (D-8), so a
+re-seed that reset an adjusted Alexandria rate from 12 000 back to 10 000 would
+be a silent pricing change and the person who ran it would have no reason to
+look. Stated in the command's own output: adds missing rows, leaves existing
+ones alone. The script also **asserts the row count** and exits non-zero on 26,
+because a short table is not a smaller table — it is one governorate whose
+customers cannot check out, and nothing else says so until one of them tries.
+
+### Tests
+
+38 across two files, split by what each can actually prove.
+
+- `fulfilment.spec.ts` (24) — the policy, over a stand-in repository. The **full
+  fee table**, every one of the 27 rows: a spot check on two or three would pass
+  just as happily if `Giza` had been typed `Gizah` and 26 rows were on the
+  standard fee.
+- `shipping-rates.spec.ts` (14) — the collection against the real database. The
+  unique index is asserted **by inserting a duplicate and being refused**, not by
+  reading `listIndexes`: an index can exist under the right name without
+  `unique`, which §1 measured storing two duplicates while looking healthy.
+
+The three `shippingPriced` states are re-proven with real rates in place, and
+one test exists purely to show the property test is not vacuous — a property
+over "never unpriced and non-zero" passes trivially if the interesting state is
+never reached.
+
+Also asserted: the fee is read **fresh on every quote**, proven by editing a row
+and re-quoting without a restart. That is the reason the repository holds no
+cache — money a customer is shown must not be a function of how long a process
+has been up.
+
+### Four downstream assertions had encoded the absence of rates
+
+`checkout.spec.ts` and `addresses.spec.ts` asserted `shippingFee === 0` and
+`shippingPriced === false`. Correct then, wrong now. Each was updated to the
+state it actually exercises — with an address it is priced, without one it is
+not — and the expected figure is **derived from the seed** rather than written
+as `5000`, so the suites fail if what checkout charges ever stops matching the
+ratified table rather than agreeing with a second copy of the same mistake.
+
+One is worth naming: the pricing-identity test asserted
+`grandTotal === subtotal − discount + shipping` while shipping was always 0, so
+the equation held whether or not the code added the term. It now runs against a
+non-zero fee.
