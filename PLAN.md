@@ -509,7 +509,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
    - **Collection** — `shippingRates` (frozen name; *not* `shippingRules`).
    - **Key** — `governorate: string`, **one document per governorate**, unique index `{governorate:1}` (frozen). *Not* an array of governorates.
    - **Fee** — `fee: number`, **int64 minor units (piastres)**, per `MONEY-MODEL.md` §6. *Not* EGP, *not* a float.
-   - **Threshold** — `freeShippingThreshold: number | null`, int64 minor units, already reserved by the frozen table. **Stays off** (`null`); the config-driven implementation remains authoritative until an owner value exists `[V]`.
+   - **Threshold** — **global configuration only** (`FREE_SHIPPING_THRESHOLD`), and **off**. `MONGODB-DESIGN.md` §11 describes the collection as "Governorate → fee, free-shipping threshold"; that is a one-line PURPOSE summary, and reading it as a per-row field produced a column nothing wrote, nothing read and nothing tested — plus an invented precedence rule ("a row beats the config") that no frozen document specifies. Both were removed in the 5a cleanup `[V]`. **Per-governorate free shipping is a reasonable later feature and needs a WRITTEN RULE before a field**: what beats what, and what a row saying `0` means against a global saying `50 000`. Adding the column first is how an unexercised rule becomes folklore.
    - **Seed (D-8 values) — exactly 27 rows, and no twenty-eighth.** `Cairo` → `5000`, `Giza` → `5000`, and each of the other 25 governorates in `EGYPTIAN_GOVERNORATES` (27 values, verified `[V]`) → `10000`. Because the frozen key is one row per governorate, the D-8 rule is expressed as **27 rows**, not two — and every one of them is **independently editable in admin**, which two rules would not have been.
    - `FulfilmentService.quote(governorate, postDiscountSubtotal)` swaps its flat-config read for a `shippingRates` lookup. Signature, callers, DTOs and the order schema are unchanged — the service was explicitly designed for this substitution `[V]`.
    - Update fulfilment/checkout specs, and the `FulfilmentService`/`fulfilment.config.ts` docstrings that currently justify *not* having the collection (§27 note 2).
@@ -715,6 +715,15 @@ Phase 7 to **Phase 4**. It **ships empty and is exercised only by tests** — no
 no images are loaded, because the real catalogue does not exist yet. **The admin upload UI
 stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
 on Phase 7 is now satisfied earlier** and is recorded as such.
+
+**29 — The per-row free-shipping threshold is withdrawn.**
+Phase 5a gave `shippingRates` a `freeShippingThreshold` column and a precedence
+rule — a row's threshold beating the configured one. Neither was specified.
+Nothing set the column, nothing read it and nothing tested the rule, which makes
+it future confusion rather than future flexibility. Removed from the schema, the
+seed, the service and the tests, and `$unset` from the 27 development rows;
+production is unaffected because the collection has never been deployed.
+The global `FREE_SHIPPING_THRESHOLD` is unchanged and still off. Updated Phase 5.
 
 **28 — The plan contradicted a frozen document on the password-reset paths, and lost.**
 §9 named the reset pair `POST /auth/password-reset/request` and `/confirm`. The

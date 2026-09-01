@@ -498,16 +498,16 @@ The rename was a **breaking** contract change and the gate reported it as one.
 Accepted because nothing consumes them — verified, not assumed: `/forgot-password`
 still calls Supabase. That window closes the moment 5b wires the page up.
 
-### 2. A shipping-rate row may carry its own free-shipping threshold
+### 2. ~~A shipping-rate row may carry its own free-shipping threshold~~ WITHDRAWN
 
-`MONGODB-DESIGN.md` §11 gives the collection a threshold as well as a fee, so
-the field exists on every row. Every seeded row is `null`, so the configured
-`FREE_SHIPPING_THRESHOLD` — itself unset — is the only live mechanism and **no
-order is free**.
+**Removed in the 5b cleanup.** The column and the precedence rule were both
+mine and neither was specified; nothing set the column, nothing read it and
+nothing tested the rule. `MONGODB-DESIGN.md` §11's "Governorate → fee,
+free-shipping threshold" is a purpose summary, not a field list.
 
-What I decided without being asked: **a row's threshold wins over the configured
-one** for that governorate. Nothing sets one, so nothing depends on it yet.
-Worth ratifying before something does.
+The threshold is global configuration and still off, so **no order is free**.
+Per-governorate free shipping remains a reasonable later feature — it needs a
+written rule before a column, and PLAN Phase 5 says what the rule has to answer.
 
 ### 3. The Cloudinary account is shared with another application
 

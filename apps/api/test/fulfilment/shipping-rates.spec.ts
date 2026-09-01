@@ -72,9 +72,9 @@ describe('the collection', () => {
      * cheerfully stored two duplicate documents. The only assertion that cannot
      * be satisfied by a lookalike is inserting the duplicate and being refused.
      */
-    await expect(
-      rates.create({ governorate: 'Cairo', fee: 999, freeShippingThreshold: null }),
-    ).rejects.toMatchObject({ code: 11000 });
+    await expect(rates.create({ governorate: 'Cairo', fee: 999 })).rejects.toMatchObject({
+      code: 11000,
+    });
 
     // And nothing was stored by trying.
     expect(await rates.countDocuments({ governorate: 'Cairo' }).exec()).toBe(1);
@@ -84,15 +84,11 @@ describe('the collection', () => {
     // The schema enum is the second half of the guarantee that makes a
     // no-fallback table safe: a row can only exist for a real governorate, so
     // the table cannot drift away from the addresses that reference it.
-    await expect(
-      rates.create({ governorate: 'Atlantis', fee: 5_000, freeShippingThreshold: null }),
-    ).rejects.toThrow();
+    await expect(rates.create({ governorate: 'Atlantis', fee: 5_000 })).rejects.toThrow();
   });
 
   it('refuses a negative fee', async () => {
-    await expect(
-      rates.create({ governorate: 'Luxor', fee: -1, freeShippingThreshold: null }),
-    ).rejects.toThrow();
+    await expect(rates.create({ governorate: 'Luxor', fee: -1 })).rejects.toThrow();
   });
 
   it('refuses an unknown field, because the schema is strict', async () => {
@@ -115,10 +111,26 @@ describe('the seeded values, read back from the database', () => {
     }
   });
 
-  it('leaves every row without a threshold of its own', async () => {
+  it('stores a governorate and a fee, and no other business field', async () => {
+    /*
+     * A per-row `freeShippingThreshold` existed here briefly and was removed —
+     * nothing wrote it, nothing read it, and its precedence was invented. This
+     * asserts the stored shape so it cannot come back without a rule.
+     *
+     * `_id` and the timestamps are Mongoose's, not the model's.
+     */
     const rows = await repository.findAll();
 
-    expect(rows.every((row) => row.freeShippingThreshold === null)).toBe(true);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual([
+        '__v',
+        '_id',
+        'createdAt',
+        'fee',
+        'governorate',
+        'updatedAt',
+      ]);
+    }
   });
 
   it('matches the seed definition exactly', async () => {
@@ -128,11 +140,7 @@ describe('the seeded values, read back from the database', () => {
     const rows = await repository.findAll();
 
     expect(
-      rows.map((row) => ({
-        governorate: row.governorate,
-        fee: row.fee,
-        freeShippingThreshold: row.freeShippingThreshold,
-      })),
+      rows.map((row) => ({ governorate: row.governorate, fee: row.fee })),
     ).toEqual([...SEED_SHIPPING_RATES].sort((a, b) => a.governorate.localeCompare(b.governorate)));
   });
 });
@@ -171,11 +179,7 @@ describe('FulfilmentService, resolved from the container', () => {
         status: 500,
       });
     } finally {
-      await rates.create({
-        governorate: original.governorate,
-        fee: original.fee,
-        freeShippingThreshold: original.freeShippingThreshold,
-      });
+      await rates.create({ governorate: original.governorate, fee: original.fee });
     }
 
     await expect(fulfilment.quote('Suez', 100_000)).resolves.toEqual({

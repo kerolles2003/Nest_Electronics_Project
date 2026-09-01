@@ -152,13 +152,17 @@ export class FulfilmentService {
     }
 
     /*
-     * The row's own threshold wins over the configured one when it is set,
-     * because a rule written for a specific governorate is more specific than a
-     * global default. Every seeded row is `null`, so today this reads the
-     * configured value — which is itself `null` unless someone sets it. The
-     * threshold stays implemented and off.
+     * ONE threshold, global, from configuration.
+     *
+     * There is no per-governorate override. A row-level threshold was written
+     * here and removed: nothing set it, nothing tested it, and the precedence it
+     * implied — row beats config — was invented rather than specified. See the
+     * note at the bottom of `shipping-rate.schema.ts`.
+     *
+     * `null` unless someone sets `FREE_SHIPPING_THRESHOLD`, so today no order is
+     * free. The mechanism stays implemented and off.
      */
-    const threshold = rate.freeShippingThreshold ?? this.config.freeShippingThreshold;
+    const threshold = this.config.freeShippingThreshold;
 
     /*
      * Free, and `priced: true` — deliberately.

@@ -39,7 +39,6 @@ for (const name of METROPOLITAN) {
 export interface SeedShippingRate {
   readonly governorate: string;
   readonly fee: number;
-  readonly freeShippingThreshold: number | null;
 }
 
 /**
@@ -48,13 +47,12 @@ export interface SeedShippingRate {
  * eventually has 26 in it, and the missing one is only discovered by a customer
  * in that governorate failing to check out.
  *
- * `freeShippingThreshold` is `null` on every row: the threshold stays
- * implemented and off.
+ * There is no per-row free-shipping threshold. The threshold is global
+ * configuration (`FREE_SHIPPING_THRESHOLD`), implemented and off.
  */
 export const SEED_SHIPPING_RATES: readonly SeedShippingRate[] = EGYPTIAN_GOVERNORATES.map(
   (governorate) => ({
     governorate,
     fee: METROPOLITAN.has(governorate) ? METROPOLITAN_FEE : STANDARD_FEE,
-    freeShippingThreshold: null,
   }),
 );

@@ -29,7 +29,7 @@ import type { ShippingRateLean } from '../../src/modules/fulfilment/infrastructu
 const SEEDED = new Map(SEED_SHIPPING_RATES.map((rate) => [rate.governorate, rate]));
 
 function rowsFrom(
-  overrides: Record<string, { fee: number; freeShippingThreshold?: number | null }> | 'seeded',
+  overrides: Record<string, { fee: number }> | 'seeded',
 ): Map<string, ShippingRateLean> {
   const source =
     overrides === 'seeded'
@@ -39,11 +39,7 @@ function rowsFrom(
   return new Map(
     Object.entries(source).map(([governorate, value]) => [
       governorate,
-      {
-        governorate,
-        fee: value.fee,
-        freeShippingThreshold: value.freeShippingThreshold ?? null,
-      } as ShippingRateLean,
+      { governorate, fee: value.fee } as unknown as ShippingRateLean,
     ]),
   );
 }
@@ -113,8 +109,18 @@ describe('the ratified rate table', () => {
     await expect(seeded().quote('Cairo', 0)).resolves.toEqual({ fee: 5_000, priced: true });
   });
 
-  it('gives every seeded row a null threshold — implemented and off', () => {
-    expect(SEED_SHIPPING_RATES.every((rate) => rate.freeShippingThreshold === null)).toBe(true);
+  it('carries a fee and a governorate, and nothing else', () => {
+    /*
+     * The row shape, asserted exactly.
+     *
+     * A per-row `freeShippingThreshold` lived here briefly. Nothing set it,
+     * nothing read it, and the precedence it implied was invented rather than
+     * specified — so it went. This assertion is what stops a field creeping
+     * back in without a rule to go with it.
+     */
+    for (const rate of SEED_SHIPPING_RATES) {
+      expect(Object.keys(rate).sort()).toEqual(['fee', 'governorate']);
+    }
   });
 
   it('charges 50.00 and 100.00 EGP, in piastres', () => {
@@ -242,32 +248,24 @@ describe('the free-shipping threshold', () => {
     await expect(fulfilment.quote('Cairo', 0)).resolves.toEqual({ fee: 0, priced: true });
   });
 
-  it("lets a ROW's own threshold win over the configured one", async () => {
+  it('applies the SAME threshold to every governorate', async () => {
     /*
-     * A rule written for one governorate is more specific than a global
-     * default. Nothing seeds a row threshold today; this asserts the precedence
-     * before anything depends on it, so it is a decision rather than whatever
-     * the code happened to do.
+     * There is one threshold and it is global. A per-row override lived here
+     * briefly, with a precedence rule nothing specified; both are gone.
+     *
+     * Asserted across the whole table rather than on one governorate, because
+     * "global" is a statement about all 27 and a single example would pass just
+     * as happily if Cairo were special-cased.
      */
-    const fulfilment = service(
-      rowsFrom({ Cairo: { fee: 5_000, freeShippingThreshold: 10_000 } }),
-      { freeShippingThreshold: 90_000 },
-    );
+    const fulfilment = seeded({ freeShippingThreshold: 50_000 });
 
-    // Over the row's 10 000, under the global 90 000: the row wins, so free.
-    await expect(fulfilment.quote('Cairo', 20_000)).resolves.toEqual({ fee: 0, priced: true });
-  });
-
-  it('falls back to the configured threshold for a row that sets none', async () => {
-    const fulfilment = service(
-      rowsFrom({ Cairo: { fee: 5_000 }, Giza: { fee: 5_000, freeShippingThreshold: 10_000 } }),
-      { freeShippingThreshold: 90_000 },
-    );
-
-    await expect(fulfilment.quote('Cairo', 20_000)).resolves.toEqual({
-      fee: 5_000,
-      priced: true,
-    });
+    for (const governorate of EGYPTIAN_GOVERNORATES) {
+      await expect(fulfilment.quote(governorate, 49_999)).resolves.toMatchObject({ priced: true });
+      await expect(fulfilment.quote(governorate, 50_000)).resolves.toEqual({
+        fee: 0,
+        priced: true,
+      });
+    }
   });
 });
 

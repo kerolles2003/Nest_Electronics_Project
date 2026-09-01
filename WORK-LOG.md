@@ -2056,3 +2056,44 @@ that must NOT exist, and both `GET /users/me` and `GET /auth/google` appear in
 Everything else a document names and the API does not serve belongs to a later
 phase — coupons, reviews, wishlist, blog, audit logs, admin CRUD, guest order
 tracking, `POST /cart/merge` — or is deferred by D-3.
+
+## 3 — the per-row free-shipping threshold is withdrawn
+
+Removed from the schema, the seed, the service and the tests. The column and the
+precedence rule were both mine; **neither was specified, nothing set the column,
+nothing read it, and nothing tested the rule.**
+
+`MONGODB-DESIGN.md` §11 describes the collection as "Governorate → fee,
+free-shipping threshold". That is a one-line PURPOSE summary in a table of
+supporting collections, not a field list — and I read it as a field, then had to
+invent a precedence rule to make the field mean anything. An unexercised rule is
+not future flexibility; it is a decision made in advance by somebody who was not
+thinking about the problem, waiting to be discovered as folklore.
+
+The service now reads one threshold, from configuration. `FREE_SHIPPING_THRESHOLD`
+is unchanged, still unset, so **no order is free** — exactly as before.
+
+### The 27 existing rows
+
+`$unset` on all 27 development rows: 27 had the field, 27 modified, 0 remain,
+total still 27. **Production is unaffected** — the collection has never been
+deployed.
+
+### Two tests changed shape rather than disappearing
+
+The two precedence cases are gone, and the row-threshold assertions were
+replaced by something more useful than nothing:
+
+- `fulfilment.spec.ts` now asserts the threshold applies to **every one of the
+  27 governorates**, not to one example — "global" is a claim about all of them,
+  and a single case would pass just as happily if Cairo were special-cased.
+- Both suites now assert the row's **exact key set**, so a field cannot creep
+  back in without a rule to go with it.
+
+Recorded where somebody would look: a note at the bottom of
+`shipping-rate.schema.ts` saying why there is no such field, and what a future
+per-governorate free-shipping feature has to decide first — what beats what, and
+what a row saying `0` means against a global saying `50 000`. PLAN Phase 5 and
+changelog **29** carry the same.
+
+38 fulfilment tests pass.

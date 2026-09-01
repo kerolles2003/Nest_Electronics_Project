@@ -49,26 +49,27 @@ export class ShippingRate {
   @Prop({ type: Number, required: true, min: 0 })
   fee!: number;
 
-  /**
-   * Order value at or above which delivery is free in THIS governorate, in
-   * integer minor units, or `null` for "this governorate has no threshold of
-   * its own".
-   *
-   * Present because MONGODB-DESIGN.md §11 gives this collection the
-   * free-shipping threshold as well as the fee, and narrowing a frozen shape
-   * would be as much of an amendment as widening it. Every seeded row is
-   * `null`, so the configured `FREE_SHIPPING_THRESHOLD` remains the only live
-   * mechanism and behaviour is unchanged: **the threshold stays implemented and
-   * off.**
-   *
-   * When a row does set one it wins for that governorate, because a rule
-   * written against a specific place is more specific than a global default.
-   * Nothing sets one today, and that precedence is worth ratifying before
-   * anything does.
-   */
-  @Prop({ type: Number, default: null, min: 0 })
-  freeShippingThreshold!: number | null;
 }
+
+/*
+ * ## There is deliberately NO per-row free-shipping threshold
+ *
+ * One was added here and then removed. `MONGODB-DESIGN.md` §11 describes this
+ * collection as "Governorate → fee, free-shipping threshold", which is a
+ * one-line purpose summary rather than a field list, and reading it as a field
+ * produced a column nothing wrote, nothing read and nothing tested — plus an
+ * invented precedence rule ("a row's threshold beats the configured one") that
+ * no frozen document specifies.
+ *
+ * An unexercised rule is not flexibility, it is a decision made in advance by
+ * somebody who was not thinking about the problem. The free-shipping threshold
+ * is global configuration (`FREE_SHIPPING_THRESHOLD`) and remains so.
+ *
+ * Per-governorate free shipping is a reasonable future feature. When it is
+ * actually wanted it needs a written rule first — what beats what, and what a
+ * row saying `0` means against a global saying `50000` — and then a field.
+ * PLAN.md records that.
+ */
 
 export type ShippingRateDocument = HydratedDocument<ShippingRate>;
 export type ShippingRateLean = ShippingRate & {
