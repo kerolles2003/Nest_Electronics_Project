@@ -1,74 +1,73 @@
 import { Suspense } from "react";
-import { getServices } from "@/lib/services";
+import * as api from "@/lib/api/endpoints";
+import { flattenCategoryTree, toLegacyBrand, toProductCard } from "@/lib/api/view-model";
 import { HeroBanner } from "@/components/home/HeroBanner";
 import { TrustBar } from "@/components/home/TrustBar";
 import { CategoryGrid } from "@/components/home/CategoryGrid";
 import { FeaturedProducts, FeaturedProductsSkeleton } from "@/components/home/FeaturedProducts";
 import { NewArrivals } from "@/components/home/NewArrivals";
 import { BrandsStrip } from "@/components/home/BrandsStrip";
+import type { Category } from "@nest/types";
 
 export const revalidate = 3600;
 
-function toDTO(p: {
-  id: string;
-  slug: string;
-  sku: string;
-  name_en: string;
-  brand?: { name_en: string } | null;
-  category?: { name_en: string } | null;
-  images?: { url: string }[];
-  base_price: number;
-  sale_price: number | null;
-  avg_rating?: number;
-  review_count?: number;
-  available_stock: number;
-  is_featured: boolean;
-}) {
-  return {
-    id: p.id,
-    slug: p.slug,
-    sku: p.sku,
-    name: p.name_en,
-    brandName: p.brand?.name_en || null,
-    categoryName: p.category?.name_en || null,
-    imageUrl: p.images?.[0]?.url || null,
-    basePrice: p.base_price,
-    salePrice: p.sale_price,
-    rating: p.avg_rating || 0,
-    reviewCount: p.review_count || 0,
-    inStock: p.available_stock > 0,
-    availableStock: p.available_stock,
-    isFeatured: p.is_featured,
-  };
-}
+/**
+ * The home page, on the API.
+ *
+ * ## The rails stay in Suspense, and that still matters
+ *
+ * Featured products, new arrivals and the brand strip each stream in behind
+ * their own boundary, so the hero and the category grid paint immediately
+ * rather than waiting on three catalogue reads. The structure is unchanged —
+ * only the calls behind each boundary moved — and it is worth more now than it
+ * was: the API is a network hop, where the Supabase client was too.
+ *
+ * ## Featured and new arrivals are one endpoint with two queries
+ *
+ * `?featured=true` and `?sort=newest` against `GET /products`. The old service
+ * had a bespoke method for each; the API expresses both as filters over one
+ * discovery endpoint, which is why there is nothing to add server-side when a
+ * fourth rail is wanted.
+ *
+ * ## The category artwork
+ *
+ * `CategoryGrid` renders `/images/categories/<slug>.png` and falls back to an
+ * icon on error. Those files were named for the LEGACY category slugs, none of
+ * which the API uses, so every tile would have fallen back to a generic icon —
+ * a visible regression, plus a failed image request per tile. The same design
+ * artwork now also exists under the six API root slugs. No new images were
+ * drawn and none were deleted; the legacy names stay until Phase 9 removes what
+ * still uses them.
+ */
 
 async function FeaturedProductsSection() {
-  const { productService } = await getServices();
-  const featuredRaw = await productService.getFeaturedProducts(10);
-  return <FeaturedProducts products={featuredRaw.map(toDTO)} />;
+  const featured = await api.listProducts({ featured: true, limit: 10, sort: 'newest' });
+
+  return <FeaturedProducts products={featured.data.map(toProductCard)} />;
 }
 
 async function NewArrivalsSection() {
-  const { productService } = await getServices();
-  const newArrivalsRaw = await productService.getNewArrivals(10);
-  return <NewArrivals products={newArrivalsRaw.map(toDTO)} />;
+  const arrivals = await api.listProducts({ limit: 10, sort: 'newest' });
+
+  return <NewArrivals products={arrivals.data.map(toProductCard)} />;
 }
 
 async function BrandsSection() {
-  const { productService } = await getServices();
-  const brands = await productService.getAllBrands();
-  return <BrandsStrip brands={brands} />;
+  const brands = await api.listBrands();
+
+  return <BrandsStrip brands={brands.data.map(toLegacyBrand)} />;
 }
 
-import type { Category } from '@nest/types';
-
-async function CategorySection({ categories }: { categories: Category[] }) {
+function CategorySection({ categories }: { categories: Category[] }) {
   return <CategoryGrid categories={categories} />;
 }
 
 export default async function HomePage() {
-  const { productService } = await getServices();
-  const categories = await productService.getCategoryTree();
+  // FLAT, because `HeroBanner` and `CategoryGrid` both select roots themselves
+  // with `filter(c => !c.parent_id)` — which is a no-op on a nested tree and
+  // would have quietly shown every category as a root.
+  const tree = await api.getCategoryTree();
+  const categories = flattenCategoryTree(tree.data);
 
   return (
     <>

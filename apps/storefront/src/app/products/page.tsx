@@ -1,12 +1,55 @@
-import { getServices } from "@/lib/services"
+import * as api from "@/lib/api/endpoints"
+import type { ProductQuery } from "@/lib/api/endpoints"
+import { toLegacyBrand, toLegacyCategory, toProductCard } from "@/lib/api/view-model"
 import { searchParamsCache } from "./search-params"
 import { ProductCard } from "@/components/ProductCard"
-import { ProductFilters } from "@nest/types"
 import { FilterSidebar } from "@/components/FilterSidebar"
 import { MobileFilterToggle } from "@/components/MobileFilterToggle"
 import Link from "next/link"
 
 export const dynamic = "force-dynamic"
+
+/**
+ * The discovery page, on the API.
+ *
+ * ## Three reads become one round trip plus two cached ones
+ *
+ * `GET /products` returns the page, the TRUE total and the server-computed
+ * facets together. The category and brand lists are separate, but both are
+ * public and cached for five minutes, so a filter change costs one uncached
+ * call rather than three.
+ *
+ * ## Prices in the URL are MAJOR units; the API speaks minor
+ *
+ * `?min_price=100` means 100.00 EGP because that is what the sidebar puts
+ * there and what the active-filter chip prints. The conversion happens here,
+ * at the boundary, and nowhere else.
+ *
+ * ## The price slider's bounds are now the TRUE range
+ *
+ * The old page computed them from the products on the current page, so page 2
+ * of a filtered result offered a different range from page 1 and neither was
+ * the range of the actual result set. `facets.priceRange` is computed across
+ * every match. That is a behaviour change in the direction of correctness, and
+ * it is the reason the facets are worth fetching at all.
+ */
+
+/**
+ * The legacy sort row offers "Featured"; the API has no such sort.
+ *
+ * `SEARCH-MODEL.md` §5 froze six sorts and `featured` is not among them — the
+ * API instead offers `featured` as a FILTER. So this option is mapped to that
+ * filter, ordered by `newest`, which is the closest honest behaviour available:
+ * a customer who clicks "Featured" wants to see featured products.
+ *
+ * It is a small semantic change — a sort became a filter — and it is FLAGGED
+ * rather than hidden. The alternative that preserves it exactly is a new
+ * `featured` value in the API's frozen sort enum, which is a contract change
+ * and an owner decision, not something to slip into a read migration.
+ */
+const FEATURED_SORT = 'featured'
+
+const API_SORTS = new Set(['relevance', 'newest', 'price_asc', 'price_desc', 'rating', 'name_asc'])
 
 function buildUrl(
   base: Record<string, string | number | boolean | null | undefined>,
@@ -54,42 +97,36 @@ export default async function ProductsPage(
   const searchParams = await props.searchParams
   const parsedParams = searchParamsCache.parse(searchParams)
 
-  const { productService } = await getServices()
+  const wantsFeatured = parsedParams.sort === FEATURED_SORT
 
-  const filters: ProductFilters = {
-    search: parsedParams.q || undefined,
-    categorySlug: parsedParams.category || undefined,
-    brandSlug: parsedParams.brand || undefined,
-    minPrice: parsedParams.min_price || undefined,
-    maxPrice: parsedParams.max_price || undefined,
-    inStockOnly: parsedParams.in_stock || false,
-    sort: (parsedParams.sort as ProductFilters['sort']) || "newest"
+  const query: ProductQuery = {
+    page: parsedParams.page,
+    limit: 16,
+    ...(parsedParams.q ? { q: parsedParams.q } : {}),
+    ...(parsedParams.category ? { category: parsedParams.category } : {}),
+    // Repeatable on the wire and ORed within itself, so an array even for one.
+    ...(parsedParams.brand ? { brand: [parsedParams.brand] } : {}),
+    // Major units in the URL, minor units on the wire. One conversion, here.
+    ...(parsedParams.min_price ? { minPrice: parsedParams.min_price * 100 } : {}),
+    ...(parsedParams.max_price ? { maxPrice: parsedParams.max_price * 100 } : {}),
+    ...(parsedParams.in_stock ? { inStock: true } : {}),
+    ...(wantsFeatured ? { featured: true } : {}),
+    // An unrecognised `?sort=` in the URL would be a 400 UNSUPPORTED_SORT, and
+    // a hand-edited address bar should not produce an error page.
+    sort: (API_SORTS.has(parsedParams.sort)
+      ? parsedParams.sort
+      : 'newest') as ProductQuery['sort'],
   }
 
-  const pagination = { page: parsedParams.page, limit: 16 }
-
-  const [categories, brands, result] = await Promise.all([
-    productService.getCategoryTree(),
-    productService.getAllBrands(),
-    productService.listProducts(filters, pagination)
+  const [categoryList, brandList, result] = await Promise.all([
+    api.listCategories(),
+    api.listBrands(),
+    api.listProducts(query),
   ])
 
-  const products = result.data.map(p => ({
-    id: p.id,
-    slug: p.slug,
-    sku: p.sku,
-    name: p.name_en,
-    brandName: p.brand?.name_en || null,
-    categoryName: p.category?.name_en || null,
-    imageUrl: p.images?.[0]?.url || null,
-    basePrice: p.base_price,
-    salePrice: p.sale_price,
-    rating: p.avg_rating || 0,
-    reviewCount: p.review_count || 0,
-    inStock: p.available_stock > 0,
-    availableStock: p.available_stock,
-    isFeatured: p.is_featured,
-  }))
+  const categories = categoryList.data.map(toLegacyCategory)
+  const brands = brandList.data.map(toLegacyBrand)
+  const products = result.data.map(toProductCard)
 
   const currentParams = {
     q: parsedParams.q || undefined,
@@ -118,15 +155,17 @@ export default async function ProductsPage(
     activeFilters.push({ key: "in_stock", label: "In Stock", removeUrl: buildUrlExcluding(currentParams, ["in_stock"]) })
   }
 
-  const totalPages = result.totalPages || 1
+  const totalPages = result.meta.totalPages || 1
   const activeSort = parsedParams.sort || "newest"
 
-  const priceRange = products.length > 0
-    ? {
-        min: Math.floor(Math.min(...products.map(p => p.salePrice ?? p.basePrice))),
-        max: Math.ceil(Math.max(...products.map(p => p.salePrice ?? p.basePrice))),
+  // From the FACET, which spans every match, not just this page. Converted to
+  // major units because that is what the slider and the URL use.
+  const priceRange = result.facets.priceRange === null
+    ? { min: 0, max: 10000 }
+    : {
+        min: Math.floor(result.facets.priceRange.min.amount / 100),
+        max: Math.ceil(result.facets.priceRange.max.amount / 100),
       }
-    : { min: 0, max: 10000 }
 
   const activeFilterCount = activeFilters.length
 
@@ -141,7 +180,7 @@ export default async function ProductsPage(
 
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-foreground-muted">{result.total} products found</p>
+        <p className="text-sm text-foreground-muted">{result.meta.total} products found</p>
         <div className="flex items-center gap-2">
           <span className="text-xs text-foreground-muted hidden sm:inline">Sort:</span>
           <div className="flex items-center gap-0.5">
@@ -165,12 +204,12 @@ export default async function ProductsPage(
       <div className="flex gap-6">
         {/* Desktop Sidebar */}
         <div className="w-60 shrink-0 hidden lg:block space-y-3">
-          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.total} />
+          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.meta.total} />
         </div>
 
         {/* Mobile Filter Sidebar (hidden on desktop, shows drawer on mobile) */}
         <div className="lg:hidden">
-          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.total} />
+          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.meta.total} />
         </div>
 
         {/* Main Content */}

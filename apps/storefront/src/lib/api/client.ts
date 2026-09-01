@@ -51,8 +51,17 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Send the bearer token. Default true; catalogue reads set it false. */
   auth?: boolean;
-  /** Next.js fetch caching. Defaults to `no-store` — this is live commerce data. */
+  /**
+   * Next.js fetch caching. Defaults to `no-store` — this is live commerce data.
+   *
+   * Ignored when `revalidate` is set: the two are opposite instructions and
+   * sending both silently discards the revalidation (see `send`).
+   */
   cache?: RequestCache;
+  /**
+   * Seconds a cached response may be reused for. Setting this makes the route
+   * that calls it statically renderable; leaving it unset does not.
+   */
   revalidate?: number;
 }
 
@@ -81,8 +90,30 @@ async function send(
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      cache: options.cache ?? 'no-store',
-      ...(options.revalidate === undefined ? {} : { next: { revalidate: options.revalidate } }),
+      /*
+       * ONE of the two, never both.
+       *
+       * `cache: 'no-store'` and `next: { revalidate }` are opposite
+       * instructions — Next's own docs give `{ cache: 'no-store', next: {
+       * revalidate: 0 } }` as the definition of `force-dynamic` — and when both
+       * are sent, `no-store` wins. This previously sent both, so `revalidate`
+       * was accepted, documented, and silently ignored on every call that used
+       * it.
+       *
+       * It cost nothing while every caller was a `force-dynamic` page. It
+       * became fatal the moment the ROOT LAYOUT made one of these calls: a
+       * no-store fetch in a layout opts every route in the application out of
+       * static rendering, and `next build` then failed to prerender pages that
+       * have nothing to do with the catalogue — `/account`, `/blog`,
+       * `/_not-found` — each with "Route ... couldn't be rendered statically
+       * because it used no-store fetch .../categories/tree".
+       *
+       * Uncached remains the DEFAULT. This is live commerce data, and a caller
+       * has to ask for caching explicitly by naming how stale it may be.
+       */
+      ...(options.revalidate === undefined
+        ? { cache: options.cache ?? 'no-store' }
+        : { next: { revalidate: options.revalidate } }),
     });
   } catch (cause) {
     // The request never produced a response: the API is down, DNS failed, the

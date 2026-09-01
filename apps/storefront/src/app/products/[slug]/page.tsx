@@ -1,4 +1,7 @@
-import { getCachedProductBySlug, getServices } from "@/lib/services"
+import * as api from "@/lib/api/endpoints"
+import { ApiError } from "@/lib/api/errors"
+import { imageUrl } from "@/lib/images"
+import { toCartProduct, toProductCard } from "@/lib/api/view-model"
 import { notFound } from "next/navigation"
 import { Metadata } from "next"
 import { Star, Check, X, Heart } from "lucide-react"
@@ -10,27 +13,75 @@ import { WishlistButton } from "@/components/WishlistButton"
 import { generateProductJsonLd, generateBreadcrumbJsonLd } from "@/lib/json-ld"
 import { SITE_URL } from "@nest/config/constants"
 import type { Product as CartProduct } from "@/stores/cart-store"
+import type { ProductDetail } from "@/lib/api/types"
 
 export const dynamic = "force-dynamic"
 
+/**
+ * One product, on the API.
+ *
+ * ## Reads moved; markup untouched
+ *
+ * The gallery, the badges, the price block, the tabs and the specification
+ * table are all as they were. `AddToCartButton` and the cart store are NOT
+ * touched — Phase 5 owns the session cluster — so `toCartProduct` builds the
+ * object the store already accepts, exactly as `ProductCard` does inline. The
+ * boundary stays where it was; only what is behind it moved.
+ *
+ * ## Specifications come from `specs`, not from Supabase `attributes`
+ *
+ * The legacy shape was a join table of attribute rows. The API returns
+ * `specs: [{ key, label, value, unit, filterable }]` on the detail response —
+ * the same information, already resolved, and with the UNIT the legacy shape
+ * had nowhere to put. The table renders `value unit` where a unit exists, which
+ * is why the seed's `240 MHz` and `±1 %` now read as they should.
+ *
+ * ## The gallery is finally reachable
+ *
+ * `images.length > 1` was dead code as far as the seed was concerned — no
+ * product had any image at all. Step 0 extended the seed with single-image and
+ * three-image products precisely so this branch, and the primary-image border,
+ * can be exercised. The bytes still do not resolve without a Cloudinary
+ * account; the LAYOUT is driven by real counts and real dimensions either way.
+ */
+
 function formatPrice(price: number) {
   return `EGP ${Math.round(price).toLocaleString()}`
+}
+
+/**
+ * The product, or `null` when the API says there is no such slug.
+ *
+ * Only `PRODUCT_NOT_FOUND` becomes `null`; an outage is rethrown, so a broken
+ * API renders an error rather than a convincing "this product does not exist".
+ * Inactive and soft-deleted products answer 404 too — identical to a slug that
+ * never existed, so an id can never become an existence oracle.
+ */
+async function findProduct(slug: string): Promise<ProductDetail | null> {
+  try {
+    return (await api.getProduct(slug)).data
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'PRODUCT_NOT_FOUND') return null
+    throw error
+  }
 }
 
 export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
 ): Promise<Metadata> {
   const params = await props.params
-  const product = await getCachedProductBySlug(params.slug)
+  const product = await findProduct(params.slug)
 
-  if (!product) {
+  if (product === null) {
     return { title: "Product Not Found" }
   }
 
-  const description = product.seo_description || product.description_en || undefined
-  const title = product.seo_title || `${product.name_en} | Nest Electronics`
-  const primaryImage = product.images?.[0]?.url
-  const isActive = product.is_active !== false
+  const description = product.shortDescription ?? product.description ?? undefined
+  const title = `${product.name} | Nest Electronics`
+  const primaryImage = imageUrl(product.primaryImage, 'detail')
+  // The API only ever returns products that are live: inactive and soft-deleted
+  // ones answer 404. Reaching this line therefore means indexable.
+  const isActive = true
 
   return {
     title,
@@ -41,7 +92,12 @@ export async function generateMetadata(
       type: "website",
       url: `${SITE_URL}/products/${product.slug}`,
       images: primaryImage
-        ? [{ url: primaryImage, width: 600, height: 600, alt: product.name_en }]
+        ? [{
+            url: primaryImage,
+            width: product.primaryImage?.width ?? 600,
+            height: product.primaryImage?.height ?? 600,
+            alt: product.primaryImage?.alt ?? product.name,
+          }]
         : [],
     },
     alternates: {
@@ -61,55 +117,70 @@ export async function generateMetadata(
 export default async function ProductDetailPage(props: { params: Promise<{ slug: string }> }) {
   const params = await props.params
 
-  const productRaw = await getCachedProductBySlug(params.slug)
+  const detail = await findProduct(params.slug)
 
-  if (!productRaw) {
+  if (detail === null) {
     notFound()
   }
 
   const product = {
-    id: productRaw.id,
-    slug: productRaw.slug,
-    sku: productRaw.sku,
-    name: productRaw.name_en,
-    description: productRaw.description_en,
-    brand: productRaw.brand ? {
-      id: productRaw.brand.id,
-      name_en: productRaw.brand.name_en,
-      slug: productRaw.brand.slug,
-      logo_url: productRaw.brand.logo_url
-    } : null,
-    category: productRaw.category ? {
-      id: productRaw.category.id,
-      name_en: productRaw.category.name_en,
-      slug: productRaw.category.slug
-    } : null,
-    images: (productRaw.images || []).map(img => ({
-      id: img.id,
-      url: img.url,
-      altText: img.alt_text,
-      isPrimary: img.is_primary
-    })).sort((a) => a.isPrimary ? -1 : 1),
-    basePrice: productRaw.base_price,
-    salePrice: productRaw.sale_price,
-    stockQuantity: productRaw.stock_quantity,
-    availableStock: productRaw.available_stock,
-    rating: productRaw.avg_rating || 0,
-    reviewCount: productRaw.review_count || 0,
-    attributes: (productRaw.attributes || []).map(attr => ({
-      id: attr.id,
-      name: attr.attribute?.name_en || "Unknown",
-      value: attr.custom_value || attr.value?.value_en || "Unknown"
-    }))
+    id: detail.id,
+    slug: detail.slug,
+    sku: detail.sku,
+    name: detail.name,
+    description: detail.description,
+    brand: detail.brand
+      ? { id: detail.brand.id, name_en: detail.brand.name, slug: detail.brand.slug, logo_url: null }
+      : null,
+    category: { id: detail.category.id, name_en: detail.category.name, slug: detail.category.slug },
+
+    /*
+     * Already ordered by the server, with exactly one primary.
+     *
+     * The old code re-sorted with `.sort((a) => a.isPrimary ? -1 : 1)`, which is
+     * not a valid comparator — it ignores its second argument, so the result
+     * depends on the engine's sort implementation rather than on the data. The
+     * API guarantees the ordering instead (MEDIA-MODEL.md §9.2: one atomic
+     * write maintains `sortOrder` and exactly one `isPrimary`), so there is
+     * nothing left to sort.
+     */
+    images: detail.images.map((image, index) => ({
+      id: image.publicId,
+      url: imageUrl(image, index === 0 ? 'detail' : 'gallery'),
+      altText: image.alt,
+      isPrimary: index === 0,
+      width: image.width,
+      height: image.height,
+    })),
+
+    basePrice: detail.pricing.basePrice.amount / 100,
+    salePrice: detail.pricing.salePrice === null ? null : detail.pricing.salePrice.amount / 100,
+    stockOnHand: detail.stockOnHand,
+    availableStock: detail.stockOnHand,
+    rating: detail.rating.average / 100,
+    reviewCount: detail.rating.count,
+
+    // `specs` carries a unit the legacy attribute join had nowhere to put.
+    attributes: detail.specs.map((spec) => ({
+      id: spec.key,
+      name: spec.label,
+      value: spec.unit === null ? spec.value : `${spec.value} ${spec.unit}`,
+    })),
   }
 
-  const hasStock = product.availableStock > 0
-  const primaryImage = product.images[0]?.url || null
+  // From `availability`, not from the raw count: the API decides what "in
+  // stock" means, and a page that made that judgement itself would eventually
+  // disagree with the badge on the card that linked to it.
+  const hasStock = detail.availability !== 'OUT_OF_STOCK'
+  const primaryImage = product.images[0]?.url ?? null
   const jsonLd = generateProductJsonLd({
     name: product.name,
     description: product.description,
     sku: product.sku,
-    images: product.images,
+    // Only images that RESOLVE. With no CDN configured `imageUrl` returns null,
+    // and structured data naming an image with no URL is worse than structured
+    // data with no image — a crawler reports it as invalid.
+    images: product.images.filter((image): image is typeof image & { url: string } => image.url !== null),
     brand: product.brand,
     basePrice: product.basePrice,
     salePrice: product.salePrice,
@@ -173,7 +244,7 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
             {primaryImage ? (
               <Image
                 src={primaryImage}
-                alt={product.images[0]?.altText || product.name}
+                alt={product.images[0]?.altText ?? product.name}
                 fill
                 className="object-contain p-8 transition-transform duration-700 ease-out group-hover:scale-110"
                 priority
@@ -196,7 +267,9 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
                       : "border border-border opacity-70 hover:opacity-100 hover:border-border-strong hover:shadow-sm scale-95 hover:scale-100"
                   }`}
                 >
-                  <Image src={img.url} alt={img.altText || ""} fill className="object-cover" sizes="80px" />
+                  {img.url !== null && (
+                    <Image src={img.url} alt={img.altText ?? ""} fill className="object-cover" sizes="80px" />
+                  )}
                 </div>
               ))}
             </div>
@@ -249,7 +322,7 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
 
           {/* Action Row */}
           <div className="flex items-center gap-4 mb-8">
-            <AddToCartButton product={productRaw as unknown as CartProduct} className="flex-1 max-w-[300px] h-14 rounded-2xl font-bold text-base tracking-wide" size="lg" />
+            <AddToCartButton product={toCartProduct(detail) as CartProduct} className="flex-1 max-w-[300px] h-14 rounded-2xl font-bold text-base tracking-wide" size="lg" />
             <div className="flex items-center justify-center w-14 h-14 rounded-2xl border border-border hover:border-primary transition-colors cursor-pointer text-foreground-muted hover:text-primary">
               <WishlistButton />
             </div>
@@ -322,34 +395,23 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
       </div>
 
       {/* Related Products Section */}
-      <RelatedProducts categorySlug={product.category?.slug} currentProductId={product.id} />
+      <RelatedProducts slug={product.slug} />
     </div>
   )
 }
 
-async function RelatedProducts({ categorySlug, currentProductId }: { categorySlug?: string, currentProductId: string }) {
-  if (!categorySlug) return null;
-  const { productService } = await getServices();
-  const result = await productService.listProducts({ categorySlug }, { page: 1, limit: 5 });
-  const products = result.data
-    .filter(p => p.id !== currentProductId)
-    .slice(0, 4)
-    .map(p => ({
-      id: p.id,
-      slug: p.slug,
-      sku: p.sku,
-      name: p.name_en,
-      brandName: p.brand?.name_en || null,
-      categoryName: p.category?.name_en || null,
-      imageUrl: p.images?.[0]?.url || null,
-      basePrice: p.base_price,
-      salePrice: p.sale_price,
-      rating: p.avg_rating || 0,
-      reviewCount: p.review_count || 0,
-      inStock: p.available_stock > 0,
-      availableStock: p.available_stock,
-      isFeatured: p.is_featured,
-    }));
+/**
+ * Related products, from the endpoint that exists for it.
+ *
+ * `GET /products/:slug/related` returns up to 8 in the same category, ordered
+ * by sales, WITH THIS PRODUCT ALREADY EXCLUDED. The old code asked for the
+ * category's first five and filtered the current product out client-side, which
+ * meant asking for one more than it needed and getting four or five depending
+ * on where the product happened to sort — a row that silently changed length.
+ */
+async function RelatedProducts({ slug }: { slug: string }) {
+  const related = await api.getRelatedProducts(slug);
+  const products = related.data.slice(0, 4).map(toProductCard);
 
   if (products.length === 0) return null;
 

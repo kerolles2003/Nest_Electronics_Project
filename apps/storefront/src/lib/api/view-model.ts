@@ -1,6 +1,6 @@
 import type { Brand as LegacyBrand, Category as LegacyCategory } from '@nest/types';
 import { imageUrl } from '../images';
-import type { Brand, Category, CategoryTreeNode, ProductListItem } from './types';
+import type { Brand, Category, CategoryTreeNode, ProductDetail, ProductListItem } from './types';
 
 /**
  * API responses in the shapes the existing components already accept.
@@ -183,5 +183,49 @@ export function toProductCard(product: ProductListItem): ProductCardModel {
     availableStock: product.availability === 'OUT_OF_STOCK' ? 0 : 1,
 
     isFeatured: product.isFeatured,
+  };
+}
+
+/**
+ * The shape the client-side cart store accepts.
+ *
+ * ## Why this is an adapter and not an untangling
+ *
+ * The guest cart, its store and the whole session cluster belong to Phase 5 and
+ * are not to be touched here. Nothing in them changes: this builds the object
+ * `addItem` already expects — the same object `ProductCard` builds inline
+ * today — from an API product instead of a Supabase row. The boundary stays
+ * exactly where it was; only what is on the far side of it moved.
+ *
+ * The cast is unavoidable and is the one that already ships. `Product` in the
+ * store is the full generated Supabase row type, with columns no API product
+ * has and none of which `addItem` reads. Reproducing thirty null fields to
+ * satisfy a type that Phase 5 deletes would be ceremony, not safety.
+ */
+export function toCartProduct(product: ProductDetail): unknown {
+  return {
+    id: product.id,
+    name_en: product.name,
+    slug: product.slug,
+    sku: product.sku,
+    base_price: product.pricing.basePrice.amount / 100,
+    sale_price:
+      product.pricing.salePrice === null ? null : product.pricing.salePrice.amount / 100,
+
+    /*
+     * The REAL count here, unlike the listing card.
+     *
+     * A detail page is where a customer chooses a quantity, so the cart's
+     * client-side clamp needs the actual number — and `GET /products/:slug`
+     * returns `stockOnHand` for exactly this reason. It is still only an
+     * optimistic check: the server re-clamps on every cart write, because a
+     * number read at render time is already out of date by the time somebody
+     * clicks.
+     */
+    available_stock: product.stockOnHand,
+    is_active: true,
+    images: product.images
+      .map((image) => ({ url: imageUrl(image, 'thumbnail') }))
+      .filter((image): image is { url: string } => image.url !== null),
   };
 }

@@ -1,11 +1,33 @@
-import { getServices } from "@/lib/services"
+import * as api from "@/lib/api/endpoints"
+import { toProductCard } from "@/lib/api/view-model"
 import { ProductCard } from "@/components/ProductCard"
 import { SearchBar } from "@/components/SearchBar"
-import type { ProductCardDTO } from "@nest/types"
 import Link from "next/link"
 import { Search } from "lucide-react"
 
 export const dynamic = "force-dynamic"
+
+/**
+ * Search, on the API.
+ *
+ * ## The search itself is now the server's, not a `LIKE` over a column
+ *
+ * `GET /products?q=` runs the frozen search model (`SEARCH-MODEL.md`): a
+ * weighted text index over name, SKU, brand and both descriptions, ordered by
+ * relevance. Makers search by part number, so SKU is a first-class match rather
+ * than an afterthought — which is the difference between `esp32-s3` finding the
+ * board and finding nothing.
+ *
+ * `sort` is left unset deliberately. The API defaults to `relevance` when `q`
+ * is present, and naming a sort here would override the ranking the search
+ * exists to produce.
+ *
+ * ## An empty query still renders the prompt, without asking the API anything
+ *
+ * The early return is unchanged. A search page with no term has nothing to
+ * search for, and issuing a request for every product to then render "enter a
+ * search term" would be a full catalogue read to display a placeholder.
+ */
 
 interface SearchPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>
@@ -30,31 +52,10 @@ export default async function SearchPage(props: SearchPageProps) {
     )
   }
 
-  const { productService } = await getServices()
+  const result = await api.listProducts({ q: query, page, limit: 24 })
 
-  const filters = { search: query }
-  const pagination = { page, limit: 24 }
-
-  const result = await productService.listProducts(filters, pagination)
-
-  const products: ProductCardDTO[] = result.data.map((p) => ({
-    id: p.id,
-    slug: p.slug,
-    sku: p.sku,
-    name: p.name_en,
-    brandName: p.brand?.name_en ?? null,
-    categoryName: p.category?.name_en ?? null,
-    imageUrl: p.images?.[0]?.url ?? null,
-    basePrice: p.base_price,
-    salePrice: p.sale_price,
-    rating: p.avg_rating ?? 0,
-    reviewCount: p.review_count ?? 0,
-    inStock: p.available_stock > 0,
-    availableStock: p.available_stock,
-    isFeatured: p.is_featured,
-  }))
-
-  const totalPages = result.totalPages || 1
+  const products = result.data.map(toProductCard)
+  const totalPages = result.meta.totalPages || 1
 
   return (
     <div className="container-nest py-6">
@@ -67,7 +68,7 @@ export default async function SearchPage(props: SearchPageProps) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-xl font-heading font-semibold text-foreground">Search Results</h1>
-          <p className="text-xs text-foreground-muted mt-0.5">{result.total} results for &lsquo;{query}&rsquo;</p>
+          <p className="text-xs text-foreground-muted mt-0.5">{result.meta.total} results for &lsquo;{query}&rsquo;</p>
         </div>
       </div>
 
