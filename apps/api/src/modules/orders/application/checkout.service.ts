@@ -3,6 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { Types } from 'mongoose';
 import type { ClientSession } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
+import type { Locale } from '../../../common/localization/locale';
+import { NotificationsService } from '../../notifications/application/notifications.service';
 import { TransactionService } from '../../../database/transaction.service';
 import { CartLineStatus, CartService, type CartLineView, type CartView } from '../../cart/application/cart.service';
 import { FulfilmentService } from '../../fulfilment/fulfilment.service';
@@ -76,6 +78,15 @@ export interface PlaceOrderCommand {
    */
   readonly addressId: Types.ObjectId;
   readonly customerNote: string | null;
+  /**
+   * The request's resolved locale, used ONLY to choose the language of the
+   * confirmation email — one request, one language.
+   *
+   * Deliberately absent from `fingerprint()`: a retry sent with a different
+   * `Accept-Language` is the SAME order, and treating it as a conflicting
+   * request would turn a header change into a 409.
+   */
+  readonly locale: Locale;
 }
 
 /** An order as written, or as replayed. One shape, so one response mapper. */
@@ -164,6 +175,7 @@ export class CheckoutService {
     private readonly orders: OrderRepository,
     private readonly counters: OrderCounterRepository,
     private readonly idempotency: IdempotencyRepository,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -240,12 +252,12 @@ export class CheckoutService {
 
     const orderId = new Types.ObjectId();
 
+    let placed: PlacedOrder;
+
     try {
-      const order = await this.transactions.run(async (session) =>
+      placed = await this.transactions.run(async (session) =>
         this.commit({ command, requestHash, profile, day, orderId, session }),
       );
-
-      return { order, replayed: false };
     } catch (error) {
       if (error instanceof DuplicateCheckoutError || isDuplicateKeyError(error)) {
         // Another request won the key, or won `orders.idempotencyKey`. Our
@@ -256,6 +268,27 @@ export class CheckoutService {
 
       throw error;
     }
+
+    // --- post-commit ---------------------------------------------------------
+    // OUTSIDE the try, deliberately. Inside it, any error escaping the
+    // notification path would be handed to a `catch` that asks "was this a
+    // duplicate key?" — and a false positive there would answer a successful
+    // placement with somebody else's order. The catch block guards exactly one
+    // thing: the transaction.
+    //
+    // Placement is the asset; the email is a courtesy about it. This call
+    // therefore cannot fail the request — `NotificationsService` catches
+    // everything and returns void (CONSISTENCY-MODEL.md §7,
+    // ORDER-LIFECYCLE.md §12).
+    //
+    // It is also where duplicate emails are prevented, at no extra cost: both
+    // replay paths return before reaching this line, so one send is bound to
+    // one commit by the same idempotency key that already makes placement safe
+    // to retry. A customer who taps "Place order" three times on a bad
+    // connection gets one order and one email.
+    await this.notifications.sendOrderConfirmation(placed, command.locale);
+
+    return { order: placed, replayed: false };
   }
 
   // --- the transaction ------------------------------------------------------

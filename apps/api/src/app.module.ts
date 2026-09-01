@@ -15,8 +15,10 @@ import { CartModule } from './modules/cart/cart.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { FulfilmentModule } from './modules/fulfilment/fulfilment.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { UsersModule } from './modules/users/users.module';
+import { ProvidersModule } from './providers/providers.module';
 
 /**
  * The composition root — the only file that knows the full module list.
@@ -46,8 +48,15 @@ import { UsersModule } from './modules/users/users.module';
     ThrottlerModule.forRoot({
       throttlers: [{ name: 'global', ttl: 60_000, limit: 300 }],
     }),
+    /**
+     * Registered BEFORE any module that sends: it is `@Global`, and it binds
+     * `EmailSenderPort` to the adapter `EMAIL_PROVIDER` selects. This is the
+     * only edge in the graph between a business capability and a vendor.
+     */
+    ProvidersModule,
     HealthModule,
     UsersModule,
+    NotificationsModule,
     AuthModule,
     CatalogModule,
     CartModule,

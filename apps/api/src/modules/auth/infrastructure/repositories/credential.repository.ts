@@ -13,12 +13,32 @@ const DUPLICATE_KEY = 11000;
  */
 export type UserCredentials = Pick<
   UserLean,
-  '_id' | 'email' | 'passwordHash' | 'emailVerifiedAt' | 'tokenVersion' | 'role' | 'deletedAt'
+  | '_id'
+  | 'email'
+  | 'fullName'
+  | 'passwordHash'
+  | 'emailVerifiedAt'
+  | 'tokenVersion'
+  | 'role'
+  | 'deletedAt'
 >;
 
+/**
+ * `fullName` is here for ONE reason: addressing a verification email to a
+ * person rather than to "there". `POST /auth/resend-verification` reaches this
+ * projection and nothing else, so without it the resent mail would be less
+ * personal than the one sent at registration.
+ *
+ * It is not a widening of the credential boundary — a name is the user's own,
+ * carries no authorisation and appears in every profile response already. The
+ * fields that must never leave this module remain `passwordHash`,
+ * `tokenVersion` and `emailVerification`, and none of them is exposed by
+ * anything that reads this type.
+ */
 const CREDENTIAL_PROJECTION = {
   _id: 1,
   email: 1,
+  fullName: 1,
   passwordHash: 1,
   emailVerifiedAt: 1,
   tokenVersion: 1,

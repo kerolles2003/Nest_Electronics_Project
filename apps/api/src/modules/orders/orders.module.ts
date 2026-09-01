@@ -15,6 +15,7 @@ import {
   IdempotencyKeyRecord,
   IdempotencyKeySchema,
 } from './infrastructure/schemas/idempotency-key.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderCounter, OrderCounterSchema } from './infrastructure/schemas/order-counter.schema';
 import { Order, OrderSchema } from './infrastructure/schemas/order.schema';
 import { AdminOrdersController } from './presentation/admin-orders.controller';
@@ -77,6 +78,11 @@ import { OrdersController } from './presentation/orders.controller';
     InventoryModule,
     UsersModule,
     FulfilmentModule,
+    // For the post-commit order confirmation. Orders injects
+    // `NotificationsService`, never `EmailSenderPort` — the port sits one
+    // module deeper, so email semantics cannot ripple into checkout
+    // (PROVIDER-ARCHITECTURE.md §2).
+    NotificationsModule,
   ],
   controllers: [CheckoutController, OrdersController, AdminOrdersController],
   providers: [

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
+import { Types } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
+import { NotificationsService } from '../../notifications/application/notifications.service';
 import { CredentialRepository } from '../infrastructure/repositories/credential.repository';
 import { normaliseEmail } from '../domain/password-policy';
 
@@ -20,18 +22,25 @@ export interface VerificationChallenge {
  * Authority: docs/architecture/AUTHORIZATION-MODEL.md §2.5 — 32-byte random,
  * hashed at rest, 24-hour TTL, required before login.
  *
- * DELIVERY IS NOT IMPLEMENTED HERE. `NotificationsModule` owns email and does
- * not exist yet, so the token is issued and stored but not sent. That is why
- * `AUTH_REQUIRE_EMAIL_VERIFICATION` exists — and why the configuration schema
- * refuses to let it be false in production. When the notifications module
- * lands, one call replaces one log line and the flag flips; nothing else here
- * changes.
+ * DELIVERY IS DELEGATED, not performed here. `NotificationsModule` owns the
+ * template, the recipient and the transport; this service owns the token
+ * lifecycle and nothing else. The split is why swapping mail providers cannot
+ * touch token security, and why changing the token TTL cannot touch an email
+ * template.
+ *
+ * The raw token leaves this class exactly once, to `NotificationsService`, and
+ * reaches exactly one destination: the URL in the body of the mail. It is
+ * never logged — a verification token is a bearer credential for an account,
+ * and OBSERVABILITY.md §4 puts tokens on the mandatory redaction list.
  */
 @Injectable()
 export class EmailVerificationService {
   private readonly logger = new Logger(EmailVerificationService.name);
 
-  constructor(private readonly credentials: CredentialRepository) {}
+  constructor(
+    private readonly credentials: CredentialRepository,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Mints a challenge. The raw token is returned to the caller for delivery and
@@ -53,14 +62,32 @@ export class EmailVerificationService {
   }
 
   /**
-   * Records that a challenge was issued.
+   * Hands the challenge to the notification boundary.
    *
-   * The token is deliberately absent from this line. A verification token is a
-   * bearer credential for an account, and a log file is not a safe place for
-   * one — OBSERVABILITY.md §4 puts tokens on the mandatory redaction list.
+   * NEVER THROWS, because `NotificationsService` never throws: a mail provider
+   * outage must not fail a registration whose account row is already
+   * committed. If it did, the caller would see a 500, retry, and be told the
+   * email is already taken — a strictly worse outcome than an account that
+   * exists and needs one click on "resend".
+   *
+   * The log line records that delivery was attempted, and deliberately carries
+   * the user id rather than the token or the address.
    */
-  noteDeliveryPending(userId: string): void {
-    this.logger.log(`email verification token issued for user ${userId} (delivery pending)`);
+  async deliver(recipient: {
+    userId: Types.ObjectId;
+    email: string;
+    fullName: string;
+    rawToken: string;
+  }): Promise<void> {
+    await this.notifications.sendEmailVerification({
+      recipientEmail: recipient.email,
+      recipientName: recipient.fullName,
+      rawToken: recipient.rawToken,
+    });
+
+    this.logger.log(
+      `email verification challenge dispatched for user ${recipient.userId.toHexString()}`,
+    );
   }
 
   /** Consumes a challenge. Unknown or expired tokens are indistinguishable. */
@@ -100,6 +127,12 @@ export class EmailVerificationService {
       challenge.tokenHash,
       challenge.expiresAt,
     );
-    this.noteDeliveryPending(user._id.toHexString());
+
+    await this.deliver({
+      userId: user._id,
+      email: user.email,
+      fullName: user.fullName,
+      rawToken: challenge.rawToken,
+    });
   }
 }

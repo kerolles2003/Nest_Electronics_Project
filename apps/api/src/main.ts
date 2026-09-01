@@ -33,6 +33,40 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
+  /**
+   * CORS — an explicit allow-list, never a wildcard.
+   * Authority: docs/architecture/API-STANDARDS.md §6.
+   *
+   * `credentials: true` and `origin: '*'` are mutually exclusive in the Fetch
+   * spec: a browser refuses a credentialed response whose
+   * `Access-Control-Allow-Origin` is a wildcard. So a wildcard here would not
+   * merely be lax — it would BREAK every authenticated browser call while
+   * appearing to work for public ones. The allow-list is the only correct
+   * option, not the strict one.
+   *
+   * An empty list disables cross-origin browser access entirely, which is the
+   * correct default and the current topology: the storefront calls this API
+   * from its Next.js SERVER, where CORS does not apply. This matters for the
+   * deployment — see docs/deployment/DEPLOYMENT-DECISION.md §5. It becomes
+   * load-bearing the moment a browser calls the API directly, and failing
+   * closed until then is what keeps an unreviewed origin from being trusted.
+   *
+   * Flutter is not subject to CORS and must not be used as a reason to widen
+   * this.
+   */
+  app.enableCors({
+    origin: config.corsOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    // Both are REQUEST headers this API requires: without them a browser
+    // pre-flight rejects the very calls the allow-list exists to permit.
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept-Language', 'Idempotency-Key'],
+    // So a browser client can read the correlation id it needs to quote in a
+    // bug report. Response headers are invisible to script unless exposed.
+    exposedHeaders: ['X-Request-Id'],
+    maxAge: 600,
+  });
+
   // Base path /api/v1 — URI path versioning, v1 from day one.
   // Authority: docs/architecture/API-CONTRACT.md §1.
   app.setGlobalPrefix(config.apiPrefix);
@@ -149,7 +183,11 @@ async function bootstrap(): Promise<void> {
   // Authority: docs/architecture/CONFIGURATION-ARCHITECTURE.md §6.
   new Logger('Bootstrap').log(
     `config loaded  env=${config.nodeEnv}  port=${String(config.port)}  ` +
-      `prefix=/${config.apiPrefix}/v1  swagger=${String(config.swaggerEnabled)}`,
+      `prefix=/${config.apiPrefix}/v1  swagger=${String(config.swaggerEnabled)}  ` +
+      // COUNT, not the origins themselves: a deployment log is read by more
+      // people than the allow-list is, and "how many" is what answers "did my
+      // configuration land?".
+      `corsOrigins=${String(config.corsOrigins.length)}  site=${config.siteUrl}`,
   );
 }
 

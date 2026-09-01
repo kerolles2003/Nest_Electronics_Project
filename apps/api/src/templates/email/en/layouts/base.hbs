@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" dir="{{textDirection}}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{subject}}</title>
+  </head>
+  {{!--
+    Table layout with inline styles, deliberately.
+
+    Email clients are not browsers: Outlook renders with Word's HTML engine,
+    Gmail strips <style> blocks in some contexts, and flexbox/grid support is
+    inconsistent everywhere. A single-column table with inline styles is the
+    one construction that renders the same in all of them. This is not legacy
+    markup — it is the current correct answer for email, and it is why
+    MJML is recorded as deferred rather than rejected.
+  --}}
+  <body
+    style="margin:0;padding:0;background-color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b;"
+  >
+    <table
+      role="presentation"
+      width="100%"
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      style="background-color:#f4f4f5;padding:24px 12px;"
+    >
+      <tr>
+        <td align="center">
+          <table
+            role="presentation"
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            style="max-width:560px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e4e4e7;"
+          >
+            <tr>
+              <td style="padding:24px 28px 8px 28px;">
+                <span style="font-size:18px;font-weight:800;letter-spacing:-0.02em;color:#18181b;"
+                  >Nest Electronics</span
+                >
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:8px 28px 28px 28px;font-size:15px;line-height:1.6;">
+                {{{body}}}
+              </td>
+            </tr>
+          </table>
+
+          <table
+            role="presentation"
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            style="max-width:560px;"
+          >
+            <tr>
+              <td style="padding:16px 28px;font-size:12px;line-height:1.5;color:#71717a;">
+                <p style="margin:0 0 4px 0;">
+                  This is a transactional message about your account or an order you placed.
+                </p>
+                <p style="margin:0;">&copy; {{year}} Nest Electronics</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

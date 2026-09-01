@@ -1,0 +1,38 @@
+{{!-- subject: We received your order {{orderNumber}} --}}
+<h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:800;letter-spacing:-0.02em;">
+  Thank you — we have your order
+</h1>
+
+<p style="margin:0 0 4px 0;">Hello {{customerName}},</p>
+
+<p style="margin:12px 0 0 0;color:#3f3f46;">
+  We received order <strong style="color:#18181b;">{{orderNumber}}</strong> on {{placedAt}}. We will
+  email you again as soon as it is confirmed and on its way.
+</p>
+
+<h2
+  style="margin:24px 0 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:#71717a;font-weight:600;"
+>
+  What you ordered
+</h2>
+
+{{> order-items-table items=items}}
+
+{{> price-summary itemsSubtotal=itemsSubtotal hasDiscount=hasDiscount
+discountTotal=discountTotal shippingUnpriced=shippingUnpriced shippingFee=shippingFee
+grandTotal=grandTotal paymentMethod=paymentMethod amountDueOnDelivery=amountDueOnDelivery}}
+
+<h2
+  style="margin:24px 0 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:#71717a;font-weight:600;"
+>
+  Delivering to
+</h2>
+
+{{> address-block shippingAddress=shippingAddress}}
+
+{{> button url=orderUrl label="View your order"}}
+
+<p style="margin:0;font-size:13px;color:#71717a;">
+  Current status: {{status}}. You can follow it, or cancel while it is still unconfirmed, from your
+  order page.
+</p>

@@ -43,7 +43,12 @@ const durationString = z
  * Authority: docs/architecture/CONFIGURATION-ARCHITECTURE.md §6 — secrets are
  * never logged.
  */
-const SECRET_KEYS: ReadonlySet<string> = new Set(['MONGODB_URI', 'RESEND_API_KEY', 'JWT_SECRET']);
+const SECRET_KEYS: ReadonlySet<string> = new Set([
+  'MONGODB_URI',
+  'RESEND_API_KEY',
+  'BREVO_API_KEY',
+  'JWT_SECRET',
+]);
 
 export const envSchema = z.object({
   // ---- Application ----
@@ -56,6 +61,41 @@ export const envSchema = z.object({
    * Normalised in app.config.ts so the default is computed once.
    */
   SWAGGER_ENABLED: booleanFromString.optional(),
+
+  /**
+   * Public origin of the STOREFRONT, used to build links a customer clicks
+   * from an email — the verification link and the order link.
+   *
+   * Not the API's own origin: nothing in an email points at the API. A wrong
+   * value produces emails whose links 404, so it is validated as a real
+   * absolute URL, and the trailing slash is normalised away once here rather
+   * than defended against at every concatenation site.
+   */
+  SITE_URL: z
+    .string()
+    .url({ message: 'Must be an absolute URL such as https://nestelectronics.com' })
+    .default('http://localhost:3000')
+    .transform((value) => value.replace(/\/+$/, '')),
+
+  /**
+   * Comma-separated browser origins allowed to call this API with credentials.
+   *
+   * An ALLOW-LIST, never a wildcard: API-STANDARDS.md §6 freezes
+   * `credentials: true`, and the Fetch spec forbids pairing that with `*` — so
+   * a wildcard here would not merely be lax, it would break every
+   * authenticated browser call. Empty (the default) allows no browser origin,
+   * which is correct for the current server-to-server topology and fails
+   * closed rather than open.
+   */
+  CORS_ORIGINS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((origin) => origin.trim().replace(/\/+$/, ''))
+        .filter((origin) => origin.length > 0),
+    ),
 
   // ---- Database ----
   /**
@@ -142,13 +182,44 @@ export const envSchema = z.object({
   // Selection only. NO SDK is initialised in this phase, and no business code
   // may ever branch on this value.
   // Authority: CONFIGURATION-ARCHITECTURE.md §5; PROVIDER-ARCHITECTURE.md §5.5.
-  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  EMAIL_PROVIDER: z.enum(['console', 'resend', 'brevo']).default('console'),
+
+  /**
+   * The envelope sender. Provider-agnostic and application-level: the ADAPTER
+   * reads it, so no business code can ever choose a from-address, and a
+   * provider swap does not move it.
+   *
+   * In production this must be an address at a domain whose SPF/DKIM records
+   * authorise the provider. That is a DNS fact this schema cannot check, so it
+   * validates the shape and the deployment checklist owns the rest.
+   */
+  EMAIL_FROM_ADDRESS: z.string().email().default('onboarding@resend.dev'),
+
+  /** Display name shown beside the from-address in a mail client. */
+  EMAIL_FROM_NAME: z.string().min(1).default('Nest Electronics'),
+
+  /**
+   * Where a customer's reply goes. Absent means replies go to the
+   * from-address, which for a no-reply sender means they vanish — so setting
+   * this is strongly advised in production but not forced, because a team
+   * without a support inbox yet should not be blocked from deploying.
+   */
+  EMAIL_REPLY_TO: z.string().email().optional(),
 
   // ---- Email provider credentials (vendor level) ----
   // Conditionally required — see the superRefine below. Deliberately NOT
   // exposed through any application-level namespace: when the Resend adapter
   // exists it reads this through its own vendor config, and nothing else does.
   RESEND_API_KEY: z.string().min(1).optional(),
+
+  /**
+   * Brevo (formerly Sendinblue). Required ONLY when `EMAIL_PROVIDER=brevo`.
+   *
+   * Read exclusively through `providers/email/brevo/brevo.config.ts`; no
+   * application-level namespace exposes it, so nothing outside that adapter
+   * can reach it.
+   */
+  BREVO_API_KEY: z.string().min(1).optional(),
 });
 
 /**
@@ -172,6 +243,37 @@ const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['RESEND_API_KEY'],
       message: "Required when EMAIL_PROVIDER='resend'",
+    });
+  }
+
+  if (value.EMAIL_PROVIDER === 'brevo' && value.BREVO_API_KEY === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['BREVO_API_KEY'],
+      message: "Required when EMAIL_PROVIDER='brevo'",
+    });
+  }
+
+  // The console adapter prints to stdout instead of sending. In production
+  // that is not a degraded mode, it is a BROKEN one: verification is mandatory
+  // in production (the rule above), so every account created would be
+  // permanently unable to sign in while the API reported success. Refusing to
+  // boot is the only honest behaviour.
+  if (value.NODE_ENV === 'production' && value.EMAIL_PROVIDER === 'console') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['EMAIL_PROVIDER'],
+      message: "Must not be 'console' when NODE_ENV='production' — no mail would be delivered",
+    });
+  }
+
+  // A localhost site URL in production yields verification links that only
+  // resolve on the deployer's own laptop.
+  if (value.NODE_ENV === 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)/i.test(value.SITE_URL)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['SITE_URL'],
+      message: "Must be the public storefront origin when NODE_ENV='production', not localhost",
     });
   }
 });

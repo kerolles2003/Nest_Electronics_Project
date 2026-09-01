@@ -1,0 +1,45 @@
+# Local development MongoDB for apps/api.
+#
+# Runs as a SINGLE-NODE REPLICA SET, not a standalone. The frozen architecture
+# requires a replica set in every environment because multi-document
+# transactions need one — a standalone mongod throws
+#   IllegalOperation: Transaction numbers are only allowed on a replica set
+#   member or mongos
+# Authority: docs/architecture/CONSISTENCY-MODEL.md §1.
+#
+# This file provides DATABASE AVAILABILITY only. It does not verify that
+# transactions work — that is the transaction gate, which owns its own proof
+# and has not run. Connection readiness is not transaction readiness.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml down -v
+#
+# No credentials: this is a local, disposable instance bound to loopback.
+# Never reuse this configuration for staging or production.
+
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: nest-electronics-mongo
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      # Loopback only — not exposed to the network.
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Idempotent self-initiation: reports healthy once the set has a primary.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status().ok }
+          catch (e) {
+            rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok
+          }
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  mongo-data:

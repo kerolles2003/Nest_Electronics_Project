@@ -82,7 +82,17 @@ export class AuthService {
       verification: { tokenHash: challenge.tokenHash, expiresAt: challenge.expiresAt },
     });
 
-    this.verification.noteDeliveryPending(user._id.toHexString());
+    // POST-INSERT, deliberately. The account is already durably committed, so
+    // a mail-provider outage costs the customer one click on "resend" rather
+    // than the account itself — and a retry after a failed send would hit
+    // DUPLICATE_EMAIL, which is a strictly worse outcome than an unverified
+    // account that exists.
+    await this.verification.deliver({
+      userId: user._id,
+      email,
+      fullName: input.fullName.trim(),
+      rawToken: challenge.rawToken,
+    });
   }
 
   /**

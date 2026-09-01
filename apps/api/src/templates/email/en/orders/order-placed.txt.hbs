@@ -1,0 +1,33 @@
+{{!-- subject: We received your order {{orderNumber}} --}}
+THANK YOU — WE HAVE YOUR ORDER
+
+Hello {{customerName}},
+
+We received order {{orderNumber}} on {{placedAt}}. We will email you again as
+soon as it is confirmed and on its way.
+
+WHAT YOU ORDERED
+{{#each items}}
+  {{this.name}}
+  {{qty this.quantity}} x {{this.unitPrice}}  =  {{this.lineTotal}}
+{{/each}}
+
+Subtotal          {{itemsSubtotal}}
+{{#if hasDiscount}}Discount         -{{discountTotal}}
+{{/if}}Delivery          {{#if shippingUnpriced}}Calculated before dispatch{{else}}{{shippingFee}}{{/if}}
+Total             {{grandTotal}}
+
+{{paymentMethod}}
+Please have {{amountDueOnDelivery}} ready when your order arrives.
+
+DELIVERING TO
+{{shippingAddress.fullName}}
+{{shippingAddress.street}}
+{{shippingAddress.city}}, {{shippingAddress.governorate}}{{#if shippingAddress.postalCode}} {{shippingAddress.postalCode}}{{/if}}
+{{shippingAddress.phone}}
+
+View your order:
+{{orderUrl}}
+
+Current status: {{status}}. You can follow it, or cancel while it is still
+unconfirmed, from your order page.

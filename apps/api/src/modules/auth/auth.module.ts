@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { authConfig, type AuthConfig } from '../../config/auth.config';
 import { DatabaseModule } from '../../database/database.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { AuthService } from './application/auth.service';
 import { EmailVerificationService } from './application/email-verification.service';
@@ -42,6 +43,9 @@ import { AuthController } from './presentation/auth.controller';
 @Module({
   imports: [
     UsersModule,
+    // Verification tokens are minted here and DELIVERED there. Auth owns the
+    // token lifecycle; Notifications owns the template and the transport.
+    NotificationsModule,
     // For TransactionService: refresh rotation revokes one document and inserts
     // another, and those two writes must not be separable.
     DatabaseModule,

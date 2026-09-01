@@ -23,6 +23,18 @@ export const appConfig = registerAs('app', () => {
      * Authority: CONFIGURATION-ARCHITECTURE.md §7, §8.
      */
     swaggerEnabled: e.SWAGGER_ENABLED ?? e.NODE_ENV !== 'production',
+
+    /**
+     * Public storefront origin, already stripped of a trailing slash by the
+     * schema. Consumers concatenate a path onto it directly.
+     */
+    siteUrl: e.SITE_URL,
+
+    /**
+     * Browser origins permitted to send credentialed requests. Frozen as an
+     * allow-list (API-STANDARDS.md §6); an empty array allows none.
+     */
+    corsOrigins: e.CORS_ORIGINS,
   } as const;
 });
 

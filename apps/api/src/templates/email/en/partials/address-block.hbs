@@ -1,0 +1,15 @@
+{{!--
+  The delivery address, from the order's immutable snapshot.
+
+  This is the address as it was at placement, never a live lookup: editing the
+  address book afterwards must not change what this email said.
+
+  Expects: shippingAddress { fullName, phone, street, city, governorate, postalCode }
+--}}
+<p style="margin:8px 0 0 0;font-size:14px;line-height:1.55;color:#3f3f46;">
+  <strong style="color:#18181b;">{{shippingAddress.fullName}}</strong><br />
+  {{shippingAddress.street}}<br />
+  {{shippingAddress.city}}, {{shippingAddress.governorate}}{{#if
+  shippingAddress.postalCode}} {{shippingAddress.postalCode}}{{/if}}<br />
+  {{shippingAddress.phone}}
+</p>

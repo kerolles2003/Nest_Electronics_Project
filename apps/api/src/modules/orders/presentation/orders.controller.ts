@@ -205,6 +205,8 @@ export class OrdersController {
       // address at all.
       addressId: new Types.ObjectId(dto.addressId),
       customerNote: dto.customerNote ?? null,
+      // Chooses the language of the confirmation email, nothing else.
+      locale,
     });
 
     // 201 on creation, 200 on a replay — the frozen contract
