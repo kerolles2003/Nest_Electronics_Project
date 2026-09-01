@@ -1,0 +1,148 @@
+# Nest Electronics — CI (Phase 2.1 foundation + Phase 2.5 transaction gate)
+#
+# Scope: the pnpm + Turborepo workspace, plus the MongoDB transaction hard gate.
+# Deliberately NOT included:
+#   - no deploy / CD : still out of scope
+#   - no secrets     : no job requires a credential, and none is referenced.
+#                      MONGODB_URI here is a credential-free, runner-local
+#                      address, which is also what makes it safe to write in
+#                      plain text (see the transaction-gate job).
+#
+# Each check is a real gate. Nothing is marked continue-on-error, so a failure
+# here reflects the true state of the repository rather than a suppressed one.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Turborepo emits hyperlinks and spinners that are noise in CI logs.
+  TURBO_TELEMETRY_DISABLED: 1
+  DO_NOT_TRACK: 1
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pinned "packageManager": "pnpm@9.0.0" from package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the declared engines floor: "node": ">=20".
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+  type-check:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm type-check
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+  # ---------------------------------------------------------------------------
+  # PHASE 2.5 HARD GATE — MongoDB multi-document transactions.
+  #
+  # Authority: docs/architecture/CONSISTENCY-MODEL.md §1 ("the first
+  #            integration test written must prove a transaction rolls back
+  #            with no partial writes, IN EVERY ENVIRONMENT");
+  #            docs/architecture/ARCHITECTURE-FREEZE-RATIFICATION.md §11 gate 4.
+  #
+  # This job must FAIL LOUDLY if transactions are unavailable. There is
+  # deliberately no continue-on-error, no `|| true`, no conditional skip and no
+  # environment probe that turns a missing replica set into a pass. Verified by
+  # execution: pointed at a standalone mongod the suite exits 1 with
+  # "Transaction numbers are only allowed on a replica set member or mongos".
+  # ---------------------------------------------------------------------------
+  transaction-gate:
+    name: Transaction gate
+    runs-on: ubuntu-latest
+
+    env:
+      # Runner-local and credential-free — this is an address, not a secret,
+      # and it names its own database so the gate can never share a namespace
+      # with anything else. It is read through the same validated
+      # configuration boundary as every other environment (env.schema.ts).
+      MONGODB_URI: mongodb://127.0.0.1:27017/nest_electronics_ci
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The SAME compose file local development uses, so CI and a developer's
+      # machine prove the same thing about the same topology. Its healthcheck
+      # initiates the replica set idempotently; --wait blocks until a PRIMARY
+      # is reported.
+      - name: Start MongoDB replica set
+        run: docker compose -f docker-compose.dev.yml up -d --wait
+
+      # Readiness is asserted, not assumed. A compose filename is not evidence
+      # of a topology, so the server is asked directly before the gate runs.
+      - name: Prove the topology has a PRIMARY
+        run: >
+          docker exec nest-electronics-mongo mongosh --quiet --eval
+          'const h = db.adminCommand({ hello: 1 });
+           if (!h.setName || !h.isWritablePrimary) {
+             print("FAIL: not a replica set PRIMARY: " + JSON.stringify(h));
+             quit(1);
+           }
+           print("replica set " + h.setName + " PRIMARY at " + h.me + ", server " + db.version());'
+
+      - name: Transaction gate
+        run: pnpm --filter api test
+
+      # Cleanup only. `if: always()` releases the container after a failure; it
+      # does not affect the job outcome, and no step above can be skipped by it.
+      - name: Stop MongoDB
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v
