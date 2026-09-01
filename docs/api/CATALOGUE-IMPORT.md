@@ -143,8 +143,9 @@ If your file has no weight column, importing it will not erase the weights
 products already have. The profile says what your file is *about*; anything it
 does not mention, the import does not touch.
 
-The same goes for **images**: an import never changes them, so photographs added
-in the admin survive every price update.
+The same goes for **images**: an import never *changes* them, so photographs
+added in the admin survive every price update. It can *add* them to a product
+that has none — see "Importing images" below.
 
 ---
 
@@ -228,23 +229,65 @@ to use inside a script.
   as it is. That matters: if a supplier's export fails and sends 40 rows instead
   of 4,000, the shop is not emptied.
 - **It never invents a category or a brand.** It reports instead.
-- **It never changes images.** Photographs added in the admin survive.
+- **It never changes images that are already there.** Photographs added in the
+  admin survive. It only ever adds them to a product with none.
 - **It never guesses at a value it cannot read.** It reports the row.
 
 ---
 
 ## Importing images
 
-**Not supported yet, and it fails loudly rather than half-working.**
+Add a column of file names to your spreadsheet and pass `--images`:
 
-`--images` exists and refuses, because the shop has no image-hosting account
-configured (D-4). Without one, uploaded pictures live only inside the running
-program and disappear when it finishes — so every imported product would point
-at a photograph that no longer exists. That is worse than having no photograph,
-so the tool will not do it.
+| SKU | Name | ... | Images |
+|---|---|---|---|
+| ESP32-DEV | ESP32 DevKit | ... | `esp32-front.jpg;esp32-back.jpg` |
 
-Import the products now; add their images through the admin once the account is
-configured (Phase 7).
+```bash
+pnpm --filter api catalogue:import -- \
+  --file supplier/catalogue.csv --profile profiles/supplier.json --images
+```
+
+Map the column in your profile as `imagePaths`, type `stringList`. Several files
+are separated by `;`, like every other list column.
+
+### Where the files have to be
+
+**Beside the spreadsheet.** A file name in the sheet is looked for relative to
+the catalogue file, not to wherever you are standing when you run the command —
+so a supplier can send you one folder containing the CSV and the pictures, and
+it works as it arrives. An absolute path works too.
+
+### What happens to each picture
+
+Exactly what happens to one uploaded through the admin: it is checked to be a
+real JPEG, PNG or WebP, refused if it is too large or too small, rotated
+upright, stripped of camera metadata (including where the photograph was taken),
+and measured.
+
+A file that is not what its name claims — a PNG called `.jpg`, which is common
+in supplier folders — **is refused and named in the report**. The product still
+imports; only that picture does not.
+
+### Running it twice is safe
+
+**A product that already has pictures is left alone.** The report says
+`skipped`, and nothing is uploaded.
+
+That is what makes a re-run safe: uploading again would give the same photograph
+a second identity, so the product would end up showing duplicates and the first
+copy would sit in the image account forever with nothing pointing at it.
+
+The consequence is worth knowing: **a re-import does not update pictures.** To
+replace them, clear that product's images in the admin and import again.
+
+### Two things it will not do
+
+- **`--dry-run` uploads nothing**, but still reports how many pictures a real
+  run would add.
+- Without an image-hosting account configured it **refuses outright** rather
+  than half-working: the pictures would live only inside the running program and
+  vanish when it finishes, leaving every product pointing at nothing.
 
 ---
 

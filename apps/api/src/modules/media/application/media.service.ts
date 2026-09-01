@@ -160,6 +160,44 @@ export class MediaService {
    * asset is refused with a count, so the operator learns *why* rather than
    * discovering the consequence later.
    */
+  /**
+   * Records that one more document now references this asset.
+   *
+   * ## Why this exists on the service rather than only on the repository
+   *
+   * Reference counting is the rule that makes `destroy` safe: an asset with
+   * references is refused, which is the whole defence against deleting a
+   * photograph a live product page is showing. Until now nothing in production
+   * ever ATTACHED an image, so nothing ever retained one and the count sat at
+   * zero everywhere — harmless while no product had an image, and a live defect
+   * the moment one did.
+   *
+   * The catalogue import is the first real consumer. Phase 7's admin upload UI
+   * is the second, and it needs exactly this.
+   *
+   * Called AFTER the referencing document is written, never before. If the
+   * write fails, the count stays at zero and the asset is an ordinary
+   * unreferenced upload the reconciliation report can offer for cleanup —
+   * whereas a count incremented first would leave an asset nothing references
+   * and nothing can delete.
+   */
+  async retain(publicId: string): Promise<number> {
+    return this.ledger.retain(publicId);
+  }
+
+  /**
+   * Records that one fewer document references this asset.
+   *
+   * The counterpart of `retain`, and the operation a Phase 7 "remove this
+   * image" action performs. It never destroys anything: an asset that falls to
+   * zero references is a candidate for cleanup, reported by
+   * `reconcile()`, and MEDIA-MODEL.md §9 is explicit that reconciliation
+   * reports rather than deletes.
+   */
+  async release(publicId: string): Promise<number> {
+    return this.ledger.release(publicId);
+  }
+
   async destroy(publicId: string): Promise<void> {
     const asset = await this.ledger.find(publicId);
 

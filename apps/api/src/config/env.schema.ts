@@ -230,6 +230,29 @@ export const envSchema = z.object({
   RESEND_API_KEY: z.string().min(1).optional(),
 
   /**
+   * The prefix every managed asset lives under (MEDIA-MODEL.md §6).
+   *
+   * Default `nest`, which is what production uses. It is configurable because
+   * **the Cloudinary account is shared** — it already holds 108 assets from an
+   * unrelated application under `partners/` and `users/avatars/` — so a second
+   * environment pointing at the same cloud would otherwise write into the same
+   * folder as the first, and the orphan reconciliation report would then see
+   * one environment's assets as the other's orphans.
+   *
+   * Constrained to path-safe characters and no leading or trailing slash,
+   * because it is concatenated into a `publicId`. A value containing `..`
+   * would be a path-traversal question in somebody else's storage.
+   */
+  MEDIA_FOLDER_ROOT: z
+    .string()
+    .regex(
+      /^[a-z0-9][a-z0-9/_-]*[a-z0-9]$/,
+      'MEDIA_FOLDER_ROOT must be lowercase path-safe characters, with no leading or trailing slash',
+    )
+    .refine((value) => !value.includes('..'), 'MEDIA_FOLDER_ROOT must not contain ".."')
+    .default('nest'),
+
+  /**
    * Brevo (formerly Sendinblue). Required ONLY when `EMAIL_PROVIDER=brevo`.
    *
    * Read exclusively through `providers/email/brevo/brevo.config.ts`; no

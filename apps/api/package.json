@@ -9,6 +9,7 @@
     "lint": "eslint src test",
     "type-check": "tsc --noEmit",
     "test": "jest",
+    "test:cloudinary": "node scripts/cloudinary-tests.js",
     "indexes:sync": "nest build && node dist/database/sync-indexes.js",
     "seed": "nest build && node dist/database/seed/seed.js",
     "shipping:seed": "nest build && node dist/database/seed/shipping-seed.js",

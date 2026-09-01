@@ -1,5 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import { Logger } from '@nestjs/common';
+import type { ImageImporter, ImageImportResult } from './image-importer';
 import type { Model, Types } from 'mongoose';
 import { Brand } from '../../modules/catalog/infrastructure/schemas/brand.schema';
 import { Category } from '../../modules/catalog/infrastructure/schemas/category.schema';
@@ -44,6 +45,13 @@ export class ImportRunner {
       categories: Model<Category>;
       brands: Model<Brand>;
     },
+    /**
+     * Absent unless `--images` was passed. When it is absent the tool behaves
+     * exactly as it did before images existed — an `imagePaths` column is
+     * simply not acted on — which is what keeps the default path free of any
+     * dependency on a media provider being configured.
+     */
+    private readonly images?: ImageImporter,
   ) {}
 
   async run(options: {
@@ -123,7 +131,21 @@ export class ImportRunner {
         continue;
       }
 
-      const brandSlug = mapped.brandSlug === null ? null : String(mapped.brandSlug);
+      /*
+       * An UNMAPPED `brandSlug` means the feed has no opinion about brand — the
+       * same rule that governs every other optional field, applied to the one
+       * place it was missed.
+       *
+       * Without the `mappedFields` check, `mapped.brandSlug` is `undefined`,
+       * `String(undefined)` is the literal `"undefined"`, and every row in the
+       * file skips with `brand "undefined" does not exist`. Both shipped
+       * profiles map a brand column, which is why no test caught it: the bug
+       * needs a profile that legitimately omits one.
+       */
+      const brandSlug =
+        !mappedFields.has('brandSlug') || mapped.brandSlug === null
+          ? null
+          : String(mapped.brandSlug);
       const brand = brandSlug === null ? null : (brands.get(brandSlug) ?? undefined);
 
       if (brand === undefined) {
@@ -268,32 +290,129 @@ export class ImportRunner {
     if (has('weight')) changes.weight = numberOrNull(mapped.weight);
 
     if (existing === null) {
-      if (!input.dryRun) {
-        // `images` and `salesCount` are set on INSERT only. An import must never
-        // wipe images an operator added in admin — the spreadsheet has no
-        // opinion about them, and "no opinion" is not the same as "none".
-        await this.models.products.create({
-          ...expand(changes),
-          currency: 'EGP',
-          specs: [],
-          isActive: true,
-          deletedAt: null,
-          images: [],
-          salesCount: 0,
-        });
+      if (input.dryRun) {
+        // Nothing is written, but the image count is still reported — the point
+        // of a dry run is to show what a real one would do.
+        const planned = await this.importImages(null, [], input);
+
+        return { line: input.line, key: input.key, outcome: 'created', ...withImages(planned) };
       }
-      return { line: input.line, key: input.key, outcome: 'created' };
+
+      // `images` and `salesCount` are set on INSERT only. An import must never
+      // wipe images an operator added in admin — the spreadsheet has no
+      // opinion about them, and "no opinion" is not the same as "none".
+      const created = await this.models.products.create({
+        ...expand(changes),
+        currency: 'EGP',
+        specs: [],
+        isActive: true,
+        deletedAt: null,
+        images: [],
+        salesCount: 0,
+      });
+
+      const images = await this.importImages(created._id, [], input);
+
+      return { line: input.line, key: input.key, outcome: 'created', ...withImages(images) };
     }
 
+    const productId = existing['_id'] as Types.ObjectId;
+    const existingImages = (existing['images'] ?? []) as { publicId: string }[];
+
+    /*
+     * Images are imported even for an UNCHANGED row.
+     *
+     * The row being unchanged is a statement about the columns the profile
+     * maps; it says nothing about whether the product has its photographs. A
+     * first run that imported the catalogue without `--images` and a second
+     * with it is an ordinary sequence, and refusing to act on it would leave
+     * the operator with no way to add images short of editing the file.
+     *
+     * It stays idempotent because `ImageImporter` skips any product that
+     * already has images.
+     */
+    const images = await this.importImages(productId, existingImages, input);
+
     if (!differs(existing, changes)) {
-      return { line: input.line, key: input.key, outcome: 'unchanged' };
+      return { line: input.line, key: input.key, outcome: 'unchanged', ...withImages(images) };
     }
 
     if (!input.dryRun) {
       await this.models.products.updateOne(filter, { $set: changes }).exec();
     }
 
-    return { line: input.line, key: input.key, outcome: 'updated' };
+    return { line: input.line, key: input.key, outcome: 'updated', ...withImages(images) };
+  }
+
+  /**
+   * Uploads a row's images and writes them onto the product.
+   *
+   * Returns `undefined` when images are not being imported at all, which is
+   * what keeps `--images` invisible in the report unless it was asked for.
+   *
+   * The write is a separate `updateOne` rather than part of the row's `$set`,
+   * because the upload has to happen AFTER the product exists — its `_id` is
+   * the folder the assets are stored under (MEDIA-MODEL.md §6), so ownership is
+   * a property of the path rather than of a join.
+   */
+  private async importImages(
+    /**
+     * `null` on a dry run, where the product was never created and there is
+     * therefore no id to store images under. The dry-run branch returns before
+     * this is read, which is why a placeholder id is not needed — and a
+     * placeholder is exactly what would eventually get uploaded to.
+     */
+    productId: Types.ObjectId | null,
+    existingImages: readonly { publicId: string }[],
+    input: { mapped: MappedRow; mappedFields: ReadonlySet<ImportableField>; dryRun: boolean },
+  ): Promise<ImageImportResult | undefined> {
+    if (this.images === undefined || !input.mappedFields.has('imagePaths')) {
+      return undefined;
+    }
+
+    const paths = Array.isArray(input.mapped.imagePaths)
+      ? (input.mapped.imagePaths as string[])
+      : [];
+
+    if (input.dryRun || productId === null) {
+      // Nothing is uploaded on a dry run — an upload is a real, billable write
+      // to a third party, and a "nothing will be written" flag that wrote to
+      // Cloudinary would be the worst kind of surprise. The count is still
+      // reported, so the operator sees what a real run would do.
+      return { uploaded: 0, skipped: paths.length, failures: [] };
+    }
+
+    const { images, result } = await this.images.importFor({
+      productId,
+      paths,
+      existing: existingImages,
+    });
+
+    if (images !== null) {
+      const publicIds = (images as { publicId: string }[]).map((image) => image.publicId);
+
+      try {
+        await this.models.products.updateOne({ _id: productId }, { $set: { images } }).exec();
+      } catch (error) {
+        /*
+         * The assets are already in Cloudinary and the product cannot reference
+         * them, which is the definition of an orphan. Roll them back rather
+         * than leave the account paying for images nothing points at.
+         *
+         * Safe to destroy precisely because nothing has been retained yet: the
+         * reference count is still zero, so `destroy` will not refuse.
+         */
+        await this.images.rollback(publicIds);
+        throw error;
+      }
+
+      // AFTER the write. The product now references them, and the ledger has to
+      // say so or a later `DELETE /admin/media` would happily destroy an image
+      // a live product page is showing.
+      await this.images.retainAll(publicIds);
+    }
+
+    return result;
   }
 
   private async categoryIndex(): Promise<Map<string, CategoryRef>> {
@@ -402,6 +521,17 @@ function expand(changes: Record<string, unknown>): Record<string, unknown> {
  * far end of the run — which is how an unmapped optional column used to fail
  * every row of an otherwise valid file with a message about casting.
  */
+/**
+ * Omits `images` entirely when there is nothing to report.
+ *
+ * `{ images: undefined }` and "no `images` key" are different objects under
+ * `exactOptionalPropertyTypes`, and the difference is worth keeping: a report
+ * row for a run without `--images` should not carry the field at all.
+ */
+function withImages(result: ImageImportResult | undefined): { images?: ImageImportResult } {
+  return result === undefined ? {} : { images: result };
+}
+
 function numberOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }

@@ -241,3 +241,56 @@ pnpm --filter api seed && pnpm --filter api indexes:sync
 | `429` on register/login | the real rate limits (§4) | wait, or restart the API |
 | No verification link in the terminal | `EMAIL_PROVIDER` is not `console` | set it; no key needed |
 | Verification link 404s in a browser | `SITE_URL` points at a storefront you are not running | you only need the `token`, not the page |
+
+---
+
+## Media, and the shared Cloudinary account
+
+`MEDIA_PROVIDER=memory` is the development default and needs no account: uploads
+are held in the API process and the whole pipeline — sniffing, size limits, EXIF
+stripping, dimension capture, the reference ledger — runs exactly as it does in
+production. Only the store is different.
+
+### The account is shared with another application
+
+The Cloudinary account holds **108 assets belonging to an unrelated product**,
+under `partners/` and `users/avatars/`. Nothing here will ever touch them:
+uploads, the orphan report and every listing are scoped to `MEDIA_FOLDER_ROOT`
+(default `nest`).
+
+Two things follow, and both matter:
+
+- **Never run a bulk delete against the account without a prefix.** The
+  reconciliation report is prefix-scoped and safe; a hand-written cleanup script
+  is not.
+- **Give each environment its own `MEDIA_FOLDER_ROOT`.** Staging and production
+  sharing one root would make each one's assets look like the other's orphans.
+
+### Exercising the real account
+
+```bash
+pnpm --filter api test:cloudinary
+```
+
+Opt-in, and deliberately not part of `pnpm test`: these are real, authenticated,
+billable calls, and running them from the default suite would upload from every
+developer's machine and fail wherever there is no network.
+
+Every upload lands under `dev-test/<runId>/` and is destroyed afterwards; the
+suite asserts the prefix is empty when it finishes.
+
+### Importing a supplier's images
+
+```bash
+MEDIA_PROVIDER=cloudinary pnpm --filter api catalogue:import -- \
+  --file supplier/catalogue.csv --profile profiles/supplier.json --images
+```
+
+- Refused outright when `MEDIA_PROVIDER=memory`: the bytes would vanish with the
+  process, leaving every product pointing at an asset that does not exist.
+- Paths in the spreadsheet resolve **against the catalogue file**, not the
+  working directory — a supplier sends one folder containing both.
+- Every file goes through the same validation an admin upload does, so a `.jpg`
+  that is really a PNG is refused and named in the report.
+- **A product that already has images is left alone.** That is what makes a
+  re-run safe; changing photographs is an admin action, not a re-import.

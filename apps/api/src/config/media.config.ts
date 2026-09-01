@@ -76,8 +76,15 @@ export const mediaConfig = registerAs('media', () => {
      */
     maxImagesPerProduct: 8,
 
-    /** Every managed asset lives under this prefix (§6). */
-    folderRoot: 'nest',
+    /**
+     * Every managed asset lives under this prefix (§6).
+     *
+     * Configurable because the Cloudinary account is SHARED with an unrelated
+     * application, so "one cloud, one folder" is not a safe assumption: two
+     * environments pointing at the same cloud with the same root would each see
+     * the other's assets as orphans in the reconciliation report.
+     */
+    folderRoot: e.MEDIA_FOLDER_ROOT,
   } as const;
 });
 

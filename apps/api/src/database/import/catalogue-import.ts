@@ -13,6 +13,8 @@ import { Product } from '../../modules/catalog/infrastructure/schemas/product.sc
 import { ImportRunner } from './import-runner';
 import { countByOutcome, renderReport } from './import-report';
 import { ProfileError, validateProfile } from './mapping-profile';
+import { ImageImporter } from './image-importer';
+import { MediaService } from '../../modules/media/application/media.service';
 
 /**
  * The catalogue import tool.
@@ -118,32 +120,23 @@ async function main(): Promise<void> {
     const media = app.get<MediaConfig>(mediaConfig.KEY);
 
     /*
-     * Images are OPT-IN, and refused outright on the in-memory store.
+     * Images are OPT-IN, and still refused outright on the in-memory store.
      *
-     * The brief allowed image handling to be optional if it complicated the
-     * tool. It does — the folder for an image is `nest/products/<productId>/…`,
-     * so the product must exist before its images can be uploaded, which makes
-     * every row a two-phase write with a partial-failure state of its own.
+     * With `MEDIA_PROVIDER=memory` the uploaded bytes live in THIS process and
+     * are gone when it exits, so every imported product would reference an
+     * asset that does not exist — worse than importing no images at all, and
+     * worse silently. It is refused rather than warned about.
      *
-     * But the decisive reason is not complexity, it is correctness: with
-     * `MEDIA_PROVIDER=memory` the uploaded bytes live in THIS process and are
-     * gone when it exits, so importing images would leave every product
-     * pointing at an asset that does not exist. That is worse than not
-     * importing them, so it is refused rather than warned about.
-     *
-     * With a real Cloudinary account (D-4, not yet supplied) the flag becomes
-     * implementable; until one exists there is nothing to implement against and
-     * building it would be writing code no test could exercise.
+     * The flag itself is implemented now that a real account exists (D-4).
+     * Every file goes through `MediaService`, so a supplier's photograph is
+     * sniffed, size-capped, EXIF-stripped and ledgered exactly like one an
+     * operator drags into the admin.
      */
-    if (args.withImages) {
+    if (args.withImages && media.provider === 'memory') {
       logger.error(
-        media.provider === 'memory'
-          ? 'refusing --images: MEDIA_PROVIDER=memory stores uploads in this process only, so ' +
-              'every imported product would reference an image that vanishes when it exits. ' +
-              'Configure Cloudinary first.'
-          : 'refusing --images: image import is not implemented yet. It needs a Cloudinary ' +
-              'account to be built against (D-4), and none has been supplied. Import the ' +
-              'products first; add their images through the admin (Phase 7).',
+        'refusing --images: MEDIA_PROVIDER=memory stores uploads in this process only, so ' +
+          'every imported product would reference an image that vanishes when it exits. ' +
+          'Configure Cloudinary first.',
       );
       process.exitCode = 1;
       return;
@@ -176,14 +169,37 @@ async function main(): Promise<void> {
     logger.log(
       `importing ${args.file} with profile "${profile.name}"` +
         `${args.dryRun ? ' (DRY RUN — nothing will be written)' : ''}` +
+        `${args.withImages ? ' with images' : ''}` +
         ` against ${config.nodeEnv}`,
     );
 
-    const runner = new ImportRunner({
-      products: app.get<Model<Product>>(getModelToken(Product.name)),
-      categories: app.get<Model<Category>>(getModelToken(Category.name)),
-      brands: app.get<Model<Brand>>(getModelToken(Brand.name)),
-    });
+    if (args.withImages && !('imagePaths' in profile.fields)) {
+      // Asked for images, and the profile has no column to take them from.
+      // Silently importing nothing would look like the images failed.
+      logger.warn(
+        `--images was passed but the profile "${profile.name}" does not map an ` +
+          '`imagePaths` column, so no images will be imported.',
+      );
+    }
+
+    /*
+     * The importer is constructed only when it is wanted. That keeps the
+     * default path free of any dependency on a media provider being reachable:
+     * an import without `--images` never resolves `MediaService` and so cannot
+     * fail because of it.
+     */
+    const images = args.withImages
+      ? new ImageImporter(app.get(MediaService), media, args.file)
+      : undefined;
+
+    const runner = new ImportRunner(
+      {
+        products: app.get<Model<Product>>(getModelToken(Product.name)),
+        categories: app.get<Model<Category>>(getModelToken(Category.name)),
+        brands: app.get<Model<Brand>>(getModelToken(Brand.name)),
+      },
+      images,
+    );
 
     const report = await runner.run({
       content,

@@ -11,25 +11,21 @@ import {
  *
  * Authority: docs/architecture/MEDIA-MODEL.md §2 (ADR-MEDIA-001), §6, §7, §9.
  *
- * ## Integration status — stated plainly
+ * ## Integration status
  *
- * **This adapter has never run against a real Cloudinary account.** D-4 confirms
- * Cloudinary as the provider, but the credentials are an owner deliverable that
- * has not arrived: there is no `CLOUDINARY_*` value anywhere in this repository
- * or its environment files. Everything below is written against the published
- * SDK contract and is unit-tested with the SDK's calls observed, which proves
- * the request this code MAKES and not the response a real account GIVES.
+ * **PROVEN against a real account** (Phase 5a). Upload, list, destroy and the
+ * response mapping were exercised end to end; `test/media/cloudinary-integration.spec.ts`
+ * re-runs the whole of it on demand, under a per-run `dev-test/` prefix that it
+ * cleans up.
  *
- * Two consequences, both real:
- *   · the request shape (folder, `overwrite`, `resource_type`) is asserted;
- *   · the response mapping is asserted against a fixture, so a field Cloudinary
- *     renames would not be caught until an integration run.
+ * Every field the mapping reads was present with the expected type. The one
+ * surprise is handled below: Cloudinary answers `format: "jpg"` where the rest
+ * of this system says `jpeg`.
  *
- * The pipeline in front of this file — validation, sniffing, EXIF stripping,
- * dimension capture, the ledger — is provider-independent and IS proven, by
- * running the whole of it against the in-memory adapter. That is the split
- * ADR-MEDIA-001 was chosen for: because the server sees every byte, almost
- * nothing that matters depends on which store the bytes end up in.
+ * That suite is **opt-in** — `pnpm --filter api test:cloudinary` — and never
+ * runs as part of `pnpm test`. Live calls in the default suite would upload to
+ * the owner's account from every machine and fail wherever there is no network,
+ * which is the media form of the 225 live email sends F-07 found.
  */
 export class CloudinaryMediaStorage extends MediaStoragePort {
   private readonly logger = new Logger(CloudinaryMediaStorage.name);
@@ -157,18 +153,40 @@ export class CloudinaryMediaStorage extends MediaStoragePort {
 }
 
 /**
+ * Cloudinary's spelling of the one format name that differs.
+ *
+ * Measured against the real account: a JPEG upload comes back as
+ * `format: "jpg"`. Everything else in this system — the magic-byte sniffer, the
+ * MIME allow-list, the in-memory adapter, `sharp` — says `jpeg`, so without
+ * this the SAME image would be recorded with a different `format` depending on
+ * which adapter stored it. A port whose output shape depends on the vendor
+ * behind it is not a port.
+ *
+ * Deliberately a one-entry map rather than a general "normalise" step: only the
+ * spelling is corrected. If Cloudinary ever answered `png` for a JPEG upload —
+ * a real transcode — that would pass through untouched and be visible, which is
+ * the behaviour MEDIA-MODEL.md §4 wants when it makes the response the
+ * authority for what was actually stored.
+ */
+const FORMAT_ALIASES: Readonly<Record<string, string>> = { jpg: 'jpeg' };
+
+/**
  * The Cloudinary response is the authority for what was stored.
  *
  * MEDIA-MODEL.md §4 allows either sharp or the upload response as the source of
  * metadata; the response is preferred here because it describes the object that
  * actually exists in the CDN. If Cloudinary ever transformed the image on
  * ingest, sharp's numbers would describe a file that was never stored.
+ *
+ * Verified field by field against a real upload: `public_id`, `version`,
+ * `format`, `width`, `height` and `bytes` are all present, with the types this
+ * mapping assumes.
  */
 export function mapUploadResponse(response: UploadApiResponse): StoredMediaAsset {
   return {
     publicId: response.public_id,
     version: response.version,
-    format: response.format,
+    format: FORMAT_ALIASES[response.format] ?? response.format,
     width: response.width,
     height: response.height,
     bytes: response.bytes,

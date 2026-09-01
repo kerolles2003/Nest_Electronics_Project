@@ -1708,3 +1708,134 @@ Three older T1 tests covered the same ground more weakly (they asserted
 Removed rather than duplicated, with a pointer where they stood — and the long
 measurement note in `t1-taxonomy.spec.ts` went with them, because a second copy
 of a measurement is a second thing to keep true.
+
+## 5 — Cloudinary, proven
+
+The credentials are real and everything works. **15 tests against the live
+account**, opt-in via `pnpm --filter api test:cloudinary`.
+
+### The response mapping was right, with one exception
+
+The item recorded as unproven at the end of Phase 4 was the mapping. Measured
+against a real upload, every field it reads is present with the assumed type:
+`public_id` string, `version` number, `format` string, `width`/`height` number,
+`bytes` number. `destroy` answers `{result:'ok'}` then `{result:'not found'}`,
+exactly as the retry story assumed; `api.resources` returns
+`next_cursor: undefined` when exhausted, which is what the paging loop tests.
+
+**One field was wrong: Cloudinary answers `format: "jpg"`.** Everything else in
+the system — the sniffer, the MIME allow-list, the in-memory adapter, sharp —
+says `jpeg`. Left alone, the same photograph would be recorded with a different
+`format` depending on which adapter stored it, and a port whose output shape
+depends on the vendor behind it is not a port. The adapter now maps that one
+spelling. Deliberately a one-entry alias table rather than a general normalise
+step: a genuine transcode (`png` back from a JPEG upload) still passes through
+visibly, which is what MEDIA-MODEL.md §4 wants when it makes the response the
+authority for what was stored.
+
+The upload response also carries `api_key` and `signature`. Neither is mapped,
+and the probe that measured all this redacted both rather than printing them.
+
+### The account is SHARED with another application
+
+It holds **108 assets that are not ours** — `partners/images/...` and
+`users/avatars/...` from an unrelated product.
+
+Nothing here can touch them: uploads, listings and the reconciliation report are
+all scoped to `folderRoot`. But that scoping stopped being tidiness and became
+load-bearing, so two things changed:
+
+- **`MEDIA_FOLDER_ROOT` is now configurable** (default `nest`). Staging and
+  production pointing at one cloud with one root would each see the other's
+  assets as orphans in the reconciliation report. Validated to lowercase
+  path-safe characters with no `..`, because it is concatenated into a
+  `publicId`.
+- Documented in `SANDBOX.md`: **never run a bulk delete against the account
+  without a prefix.**
+
+### What the 15 tests cover
+
+Upload of all three formats; the stored identifier is provider-relative and
+**no absolute URL appears anywhere in the response** (asserted over the whole
+serialised body, not a field list, so a future field carrying one fails too);
+retrieval from Cloudinary under exactly that id; EXIF stripped with orientation
+baked in first (a 1200x800 tagged "rotate 90" is stored 800x1200); a 6000px
+image downscaled to 4000.
+
+Every refusal is asserted **against the real account with a list before and
+after** — a JPEG claiming to be a PNG, an SVG both honest and lying, an oversize
+file, an image below the minimum edge, a signed-in CUSTOMER. That before/after
+list is the only check that would notice a refusal happening *after* the upload
+rather than before it.
+
+Delete removes the remote object, not just the ledger row. The reconciliation
+report names a real orphan and **does not delete it**.
+
+### `--images` is unblocked
+
+Every file goes through `MediaService`, so a supplier's photograph gets the same
+sniffing, size cap, EXIF strip and ledger row as one an operator drags into the
+admin. A supplier folder is untrusted input that nobody looked at.
+
+**Idempotency is by construction: a product that already has images is left
+alone.** Re-uploading would give the same photograph a second identity —
+duplicates on the product, and the first copy orphaned in the account, on every
+run. Proven twice: 14 offline tests, and a live two-run case asserting **the
+same public ids**, not merely the same count.
+
+Verified by hand against the real account as well:
+
+```
+pass 1   created 4, images uploaded 3, failed 1   -> cloudinary holds 3
+pass 2   unchanged 4, uploaded 0, skipped 3       -> cloudinary holds 3
+ledger   3 rows, refCounts [1,1,1], 0 primary-image invariant violations
+```
+
+The `failed 1` is the deliberately mislabelled PNG-named-`.jpg` — refused, named
+in the report, and the product imported without it.
+
+### Three bugs found while building it
+
+1. **Nothing had ever called `retain()`.** Reference counting is what makes
+   `DELETE /admin/media` refuse to destroy an image a live page is showing — and
+   every ledger row sat at `refCount: 0`, because until now nothing in
+   production ever ATTACHED an image. Harmless while no product had one; a live
+   defect the moment the import gave them some. `MediaService.retain/release`
+   now exist and the import calls `retain` **after** the product write, so a
+   failure leaves the count at zero rather than at one with nothing referencing
+   it. Phase 7's upload UI needs exactly this.
+2. **A profile that does not map `brandSlug` skipped every row** with
+   `brand "undefined" does not exist`. `brandSlug` is optional, so a feed with
+   no brand column is legitimate — but unmapped, `String(undefined)` is the
+   literal `"undefined"`. Both shipped profiles map a brand column, which is
+   precisely why no test caught it. Found by my own fixture on its first run.
+3. **The report showed the HTTP-safe refusal message** — "The uploaded file was
+   rejected" — instead of the specific reason. Useless to the person holding the
+   file; it now says which check failed.
+
+### Two bugs in my own test fixtures, worth recording
+
+The image-import spec cleaned up by SKU prefix and left 13 products behind,
+because **the schema uppercases `sku`** and the prefix was lowercase — the same
+shape as the cart-test bug from session 3. And the product names were not
+run-scoped, so the derived slug collided with a previous run and tripped
+`product_slug_unique`. Both fixed; the second one is why the leftovers were
+noticed at all.
+
+### Cleanup, asserted rather than assumed
+
+Every test upload goes under `dev-test/<runId>/`, and `afterAll` lists that
+prefix from Cloudinary and destroys what it finds — by what the account actually
+holds, not by what the ledger recorded, so a case that failed between the upload
+and the ledger write still cleans up. It then asserts the prefix is empty. A
+cleanup nobody checks is how a test account fills with a decade of orphans.
+
+Independently audited afterwards: `dev-test` 0, `nest` 0, and the 108 foreign
+assets untouched.
+
+### Secrets
+
+`.env` is still gitignored. Every tracked file plus the four new ones swept for
+the cloud name, the API key and the secret: **no match**. The OpenAPI artifact
+is clean. The one test that ever read a credential — asserting the API key was
+undefined, and printing it when that broke — was removed in section 1.

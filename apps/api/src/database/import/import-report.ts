@@ -1,3 +1,4 @@
+import type { ImageImportResult } from './image-importer';
 /**
  * What one import run did, in a form a non-developer can act on.
  *
@@ -25,6 +26,16 @@ export interface RowResult {
   readonly outcome: RowOutcome;
   /** Present for `skipped` and `errored`, and phrased for the person fixing it. */
   readonly reason?: string;
+  /**
+   * Present only when `--images` was passed AND the profile maps `imagePaths`.
+   *
+   * Kept OUT of `outcome` deliberately. A row whose product was unchanged but
+   * whose three photographs were uploaded is still `unchanged` as far as the
+   * catalogue columns go, and folding images into the outcome would make the
+   * idempotency signal — "3 unchanged, 0 updated" on a second run — mean two
+   * different things at once.
+   */
+  readonly images?: ImageImportResult;
 }
 
 export interface ImportReport {
@@ -80,6 +91,39 @@ export function renderReport(report: ImportReport): string {
     `  rows read  ${String(report.rows.length).padStart(6)}`,
     '',
   ];
+
+  /*
+   * The image section only appears when images were actually being imported.
+   * A block reading "0 uploaded" on every ordinary run would train the reader
+   * to skip past it, which is how the run that DID fail to upload gets missed.
+   */
+  const withImages = report.rows.filter((row) => row.images !== undefined);
+
+  if (withImages.length > 0) {
+    const uploaded = withImages.reduce((total, row) => total + (row.images?.uploaded ?? 0), 0);
+    const skipped = withImages.reduce((total, row) => total + (row.images?.skipped ?? 0), 0);
+    const failed = withImages.flatMap((row) =>
+      (row.images?.failures ?? []).map((failure) => `  row ${String(row.line)}  ${failure}`),
+    );
+
+    lines.push(
+      'IMAGES',
+      `  uploaded   ${String(uploaded).padStart(6)}`,
+      `  skipped    ${String(skipped).padStart(6)}   (the product already has images)`,
+      `  failed     ${String(failed.length).padStart(6)}`,
+      '',
+    );
+
+    if (failed.length > 0) {
+      lines.push(
+        'The products themselves imported; only these files did not.',
+        "Fix the files, clear that product's images in admin, and run again.",
+        '',
+        ...failed,
+        '',
+      );
+    }
+  }
 
   const problems = report.rows.filter(
     (row) => row.outcome === 'skipped' || row.outcome === 'errored',
