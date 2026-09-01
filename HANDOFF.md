@@ -119,8 +119,8 @@ clean → exit 0; removed path → BREAKING; newly-required property → BREAKIN
   deliverability testing. Still the long-lead item that blocks go-live.
 - **Phases 4–11** — not started. Out of scope for tonight.
 - **The `shippingRates` collection itself** — Task 2b was a *documentation* correction. No
-  collection, no seed, no `FulfilmentService` lookup was built; that is Phase 5 work, and it
-  is additionally blocked on the ratification in §4 below.
+  collection, no seed, no `FulfilmentService` lookup was built; that is Phase 5 work. (The
+  ratification that used to block it is now settled — §4 item 1.)
 - **No unit test for `customerMessage()` (F-11).** The storefront has **no unit-test runner**
   at all — Playwright only — and adding jest/vitest to it is well outside Phase 1. The API
   half of that contract *is* asserted. The browser half belongs to the existing verify-email
@@ -135,15 +135,11 @@ clean → exit 0; removed path → BREAKING; newly-required property → BREAKIN
 
 ## 4. Needs owner — decisions I would not make for you
 
-1. **⚠️ Ratify the shipping default-rate extension (blocks Phase 5).**
-   The frozen `shippingRates` shape — one row per governorate under a unique `governorate`
-   key — **cannot express the default fallback D-8 asks for.** There is no slot for "the fee
-   for a governorate with no row".
-   I proposed the minimal extension in PLAN.md Phase 5: a reserved `governorate: "*"` sentinel
-   row — **no new field, no schema change, no index change**. The alternative (`isDefault`
-   boolean + partial unique index) is self-describing but a larger amendment.
-   **I did not choose**, because either one amends a frozen document (`MONGODB-DESIGN.md`
-   §11). Until you ratify one, a lookup miss must raise rather than invent a fee.
+1. ~~**Ratify the shipping default-rate extension (blocks Phase 5).**~~ — **RESOLVED
+   2026-09-02.** You ratified **27 seeded `shippingRates` rows, one per governorate, with no
+   default row, no fallback and no sentinel**; a lookup miss **raises**. No frozen document is
+   amended, so the `"*"` extension I proposed is **withdrawn, not approved**. Recorded in
+   PLAN.md §3, D-8, Phase 5, Phase 7 and changelog 26e. **Phase 5 is unblocked.**
 
 2. **`apps/api/.env` points `MONGODB_URI` at a live MongoDB Atlas cluster with an embedded
    password.** The file is gitignored and has never been committed — I checked. But I

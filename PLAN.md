@@ -107,7 +107,7 @@ Classification values: `AUTHORITATIVE` / `LEGACY` / `TEMPORARY COMPATIBILITY` / 
 | Inventory | **DUPLICATED** — Supabase `inventory_transactions` (admin) vs Mongo `inventoryEvents` + `stock.onHand` (API, transactional) `[V]` | API/Mongo | The API side is the engineered one (events, transactions, idempotent replay). |
 | Cart | **DUPLICATED** — Zustand+Supabase (`carts`, `cart_items`, merge-on-login `syncCartToDatabase`) vs Mongo cart (auth-only, re-priced per read) `[V]` | API/Mongo (+ client-side guest cart that merges at login) | API cart is bearer-auth only `[V]`; guest checkout is FROZEN-removed (`GUEST-CHECKOUT.md` `[P]`), guest *browsing* cart remains a UX requirement. |
 | Addresses | **DUPLICATED** — Supabase `addresses` vs Mongo embedded addresses with default-invariant `[V]` | API/Mongo | |
-| Shipping | `FulfilmentService` exists; flat fee currently configured at 0 → UI shows “Not yet calculated” `[V]` | API/Mongo — **rate DECIDED (D-8)**: 50 EGP (5 000 pt) Cairo & Giza, 100 EGP (10 000 pt) all other governorates; admin-editable via the **frozen `shippingRates` collection** (`MONEY-MODEL.md` §6, `MONGODB-DESIGN.md` §11 — one row per governorate, `fee` in int64 minor units) | Quote-side lookup ships with Phase 5 (closes F-13); admin editor ships with Phase 7. Free-shipping threshold already implemented, config-driven `[V]` — stays off until the owner sets it. |
+| Shipping | `FulfilmentService` exists; flat fee currently unset → UI shows “Not yet calculated” `[V]` | API/Mongo — **rate DECIDED (D-8), representation RATIFIED**: **27 rows in the frozen `shippingRates` collection, one per governorate** — Cairo and Giza 5 000 pt, the other 25 governorates 10 000 pt, each row independently admin-editable. **No default row, no fallback, no sentinel**; a lookup miss **raises** (`MONEY-MODEL.md` §6, `MONGODB-DESIGN.md` §11, both adopted unchanged) | Quote-side lookup ships with Phase 5 (closes F-13); admin editor ships with Phase 7. The no-fallback design is safe because the governorate is a closed, server-validated list on both sides `[V]`. Free-shipping threshold already implemented, config-driven `[V]` — stays off until the owner sets it. |
 | Checkout | **DUPLICATED** — legacy `supabase.rpc('create_order_v2')` + `reservations` vs API quote + transactional order placement `[V]` | API | |
 | Orders | **DUPLICATED — the most dangerous one.** Legacy+admin on Supabase `orders`; `/shop`+Flutter on Mongo `orders` `[V]` | API/Mongo | Admin cannot see or fulfil a Mongo order today. Legacy Supabase orders are discarded outright (D-6) — no archive, no read-only view. |
 | Payments | Nowhere — no provider code in any app (`stripe/paymob/paytabs/fawry/paypal` grep: no source hits) `[V]` | **COD at launch — CONFIRMED (D-7)**, a time-driven interim choice; provider integration is a recorded future project | “Cash on delivery” is asserted in checkout UI `[V]`. |
@@ -484,13 +484,15 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
    - **Key** — `governorate: string`, **one document per governorate**, unique index `{governorate:1}` (frozen). *Not* an array of governorates.
    - **Fee** — `fee: number`, **int64 minor units (piastres)**, per `MONEY-MODEL.md` §6. *Not* EGP, *not* a float.
    - **Threshold** — `freeShippingThreshold: number | null`, int64 minor units, already reserved by the frozen table. **Stays off** (`null`); the config-driven implementation remains authoritative until an owner value exists `[V]`.
-   - **Seed (D-8 values)** — `Cairo` → `5000`, `Giza` → `5000`, and every other governorate in `EGYPTIAN_GOVERNORATES` (27 values, verified `[V]`) → `10000`. Because the frozen key is one row per governorate, the D-8 rule is expressed as **27 rows**, not two.
+   - **Seed (D-8 values) — exactly 27 rows, and no twenty-eighth.** `Cairo` → `5000`, `Giza` → `5000`, and each of the other 25 governorates in `EGYPTIAN_GOVERNORATES` (27 values, verified `[V]`) → `10000`. Because the frozen key is one row per governorate, the D-8 rule is expressed as **27 rows**, not two — and every one of them is **independently editable in admin**, which two rules would not have been.
    - `FulfilmentService.quote(governorate, postDiscountSubtotal)` swaps its flat-config read for a `shippingRates` lookup. Signature, callers, DTOs and the order schema are unchanged — the service was explicitly designed for this substitution `[V]`.
    - Update fulfilment/checkout specs, and the `FulfilmentService`/`fulfilment.config.ts` docstrings that currently justify *not* having the collection (§27 note 2).
 
-   **⚠ Gap the frozen shape cannot express — stated, not silently patched.** A unique scalar `governorate` key can express admin-editable per-governorate fees, but it has **no way to say “the fee for a governorate with no row”**. D-8 asks for a default fallback; the frozen schema has no slot for one. Enumerating all 27 rows makes a miss impossible *for today’s vocabulary*, but the miss path is still undefined — and an undefined miss path is precisely what `fulfilment.config.ts` warns about: “the miss path — not the data — would decide what every customer is charged” `[V]`.
+   - **The miss path — RATIFIED by the owner `[O]`: a lookup miss RAISES. It never invents a fee.** There is **no default row, no fallback and no sentinel**, and **no frozen document is amended**: `MONGODB-DESIGN.md` §11 and `MONEY-MODEL.md` §6 are adopted exactly as written.
 
-   **Minimal documented extension proposed (needs owner ratification — it amends `MONGODB-DESIGN.md` §11):** reserve a single row whose `governorate` is the sentinel `"*"`, meaning “every governorate without its own row”. This needs **no new field, no schema change and no index change** — `"*"` is just another value under the existing unique key — and costs only one documented rule: `"*"` is not a member of `EGYPTIAN_GOVERNORATES` and is rejected as an address value. *Alternative considered:* an explicit `isDefault: boolean` with a partial unique index — more self-describing, but it adds a field and an index to a frozen collection, so it is the larger amendment. **Do not implement either until the owner ratifies one; until then `quote` must treat a miss as an error, never as a fabricated amount.**
+   **Why this is safe, and why it is more than D-8 asked for.** The earlier draft of this plan flagged the absence of a fallback slot as a gap and proposed a `"*"` sentinel row to fill it. The owner rejected the premise rather than the proposal, and was right to: 27 individually-priced rows are **more** of what D-8 asks for than two rules, because “admin-editable” then means every governorate can be repriced on its own without touching any other. The fallback was only ever needed to answer *“what do we charge for a governorate we do not have a row for?”* — and since **B3 closed `governorate` to a validated 27-value list on the storefront, on the admin and in the API `[V]`**, no such governorate can reach a quote. A miss is therefore not an unpriced region; it is **bad data** — a deleted or corrupted row — and the honest response to bad data is to fail loudly, not to silently charge a made-up amount to a real customer. That is exactly the outcome `fulfilment.config.ts` warns about: “the miss path — not the data — would decide what every customer is charged” `[V]`.
+
+   **What this obliges the implementation to do.** `quote` raises on a miss (a 5xx-class internal error, not a validation error — the customer supplied a legal value); the 27 rows are seeded as a release step alongside `indexes:sync`; Phase 7's editor may **edit** a rate but must **refuse to delete a row**, since deleting one is the only way to manufacture the miss the design assumes is impossible; and a test asserts that every member of `EGYPTIAN_GOVERNORATES` resolves to a rate.
 2. Password-reset + profile endpoints.
 3. Guest cart rebuild per §8; T2 route migration as one atomic release train; **Google buttons removed (D-3)**; proxy guard rewritten around `nest_rt`; order self-cancel surfaced in account pages; T3: 301 `/shop/*`, delete slice + legacy Supabase auth/cart/checkout actions; route-group split (F-12).
 **Dependencies** — Phases 1, 2, 4.
@@ -524,7 +526,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Why** — F-09 fully closes; the admin becomes the fresh-data entry system D-6 assumes.
 **Current state** — API lacks CRUD/media/inventory-ops/customers/shipping-rules endpoints (G-01); admin UIs exist `[V]`; per-capability depth `[A]` resolved screen-by-screen here.
 **Files/systems involved** — API catalog/inventory/users/fulfilment modules (**the media module itself is no longer here — it shipped in Phase 4 `[O]`**); admin actions for product/category-brand/inventory + the admin **upload UI** onto the existing Phase-4 endpoint; `check-slug`/`attributes` handlers re-pointed; new `shippingRates` editor screen.
-**Work required** — endpoints per §9 with tests; **the admin upload UI** per §13 — the API pipeline already exists and is tested from Phase 4, so this is the operator-facing half only (picker, progress, ordering, primary-image selection, replace/delete), with **no server-side validation rewritten here**; inventory ops per §14; customers list/detail/role; **`shippingRates` CRUD + admin editor (D-8 second half)** over the frozen collection, with guardrails (every governorate in `EGYPTIAN_GOVERNORATES` resolvable, `fee` a non-negative integer in minor units, and — if the owner ratified the Phase 5 sentinel extension — exactly one `"*"` row); audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
+**Work required** — endpoints per §9 with tests; **the admin upload UI** per §13 — the API pipeline already exists and is tested from Phase 4, so this is the operator-facing half only (picker, progress, ordering, primary-image selection, replace/delete), with **no server-side validation rewritten here**; inventory ops per §14; customers list/detail/role; **`shippingRates` editing + admin editor (D-8 second half)** over the frozen collection, with guardrails from the ratified Phase 5 design: **every governorate in `EGYPTIAN_GOVERNORATES` must remain resolvable**, `fee` a non-negative integer in minor units, and — because there is **no fallback row and a miss raises** — **row deletion is refused** and creation is restricted to the 27 known governorates. Editing a rate is the whole feature; the row set is fixed; audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
 **Dependencies** — Phase 6 (admin auth); **Phase 4 for the media endpoint**; D-4 Cloudinary account (owner supplies credentials — needed as early as Phase 4 now).
 **Risks** — scope creep in settings/dashboard → explicit KEEP/REMOVE pass; upload security → **already settled server-side in Phase 4** per ADR-MEDIA-001, and this phase must not re-implement or weaken it client-side.
 **Acceptance criteria** — create a product with images in admin → purchasable on the storefront and correct via the API within one refresh; a stock adjustment produces a typed inventory event and correct availability; editing a shipping rule changes the next checkout quote.
@@ -645,7 +647,7 @@ P0 baseline
 | D-5 | Coupons / reviews / wishlist / blog | **BUILD API replacements for all four.** Coupons per the frozen `DISCOUNT-MODEL.md`, money-discipline; reviews moderation-first; wishlist authenticated server-side; blog with admin authoring. ~2.5–3 weeks, ordered cheapest-first with a deferral checkpoint | §16, Phase 8 |
 | D-6 | Legacy data | **THROWN AWAY ENTIRELY** — all data in Supabase *and* Mongo is mock; no import, no archival, no retention, no restore drills, no slug-redirect preservation. Real data entered fresh (import tool + admin) | §18 and throughout |
 | D-7 | Payments | **COD-only launch CONFIRMED** as a time-driven interim choice; provider integration is a recorded future project | §17 |
-| D-8 | Shipping pricing | **DECIDED:** 50 EGP Cairo & Giza, 100 EGP all other governorates; **admin-editable**. **Modelled on the FROZEN `shippingRates` collection** (`MONEY-MODEL.md` §6 `shippingRates[].fee` + `freeShippingThreshold`, int64 minor units; `MONGODB-DESIGN.md` §11 key `{governorate:1}` unique) — i.e. **one row per governorate, 27 rows**, over `EGYPTIAN_GOVERNORATES` (verified present `[V]`). The earlier `{ governorates[], fee, isDefault }` sketch is **withdrawn**: the frozen document wins. The **default-fallback rule D-8 asks for has no slot in the frozen shape** — a minimal sentinel-row extension is proposed in Phase 5 and **awaits owner ratification**. Free-shipping threshold stays off. Quote-side in Phase 5; admin editor in Phase 7 | §3, Phases 5, 7 |
+| D-8 | Shipping pricing | **DECIDED:** 50 EGP Cairo & Giza, 100 EGP all other governorates; **admin-editable**. **Modelled on the FROZEN `shippingRates` collection** (`MONEY-MODEL.md` §6 `shippingRates[].fee` + `freeShippingThreshold`, int64 minor units; `MONGODB-DESIGN.md` §11 key `{governorate:1}` unique) — i.e. **one row per governorate, 27 rows**, over `EGYPTIAN_GOVERNORATES` (verified present `[V]`). The earlier `{ governorates[], fee, isDefault }` sketch is **withdrawn**: the frozen document wins. **Representation RATIFIED 2026-09-02 `[O]`: 27 seeded rows, one per governorate, no default row, no fallback, no sentinel — a lookup miss RAISES rather than inventing a fee, which is safe because B3 closed the governorate to a validated list on both sides `[V]`. No frozen document is amended.** Free-shipping threshold stays off. Quote-side in Phase 5; per-row admin editing in Phase 7 | §3, Phases 5, 7 |
 | D-9 | Campaigns / ads / analytics | **DEFERRED — out of scope by decision.** No requirements invented | §16 |
 | D-10 | Deployment targets | **DEFERRED until the build is complete.** Production phase stays; provisioning decisions open; the Brevo/DNS long-lead item explicitly does not wait | §21, Phase 11 |
 
@@ -699,7 +701,8 @@ without a row". A **minimal extension is proposed** (a reserved `governorate: "*
 row: no new field, no schema change, no index change; the `isDefault` + partial-index
 alternative is recorded as the larger amendment). It **amends a frozen document and
 therefore awaits owner ratification**; until then a lookup miss must raise, never invent a
-fee.
+fee. **→ Superseded by 26e: the owner ratified *no* fallback, so the extension is withdrawn
+and no frozen document is amended. The "miss must raise" rule survives, permanently.**
 
 **26c — `shippingFee === 0` semantics resolved in Phase 2, before the Phase 3 freeze.**
 A correctness fix. §19 told the Flutter developer the quote was "safe to integrate now"
@@ -731,10 +734,28 @@ while the store has nothing real to sell. Recorded throughout that the storefron
 the 26-product dev seed for the whole build, and that this **blocks launch only, never
 engineering**.
 
-**Not changed, deliberately** — nothing in `docs/architecture/` was edited. 26b resolves a
-plan-vs-frozen-doc conflict in the frozen doc's favour, which is what the owner directed;
-the one place that would *amend* a frozen doc (the default-rate sentinel) is left unimplemented
-and flagged for ratification rather than decided here.
+**26e — D-8 shipping representation RATIFIED; the proposed extension is withdrawn `[O]`.**
+26b left one item open: the frozen `shippingRates` shape has no slot for the default
+fallback D-8 asks for, and this plan proposed a reserved `governorate: "*"` sentinel row to
+fill it, pending ratification. **The owner ratified a different and better answer: there is
+no fallback.** The collection holds **27 seeded rows, one per governorate** — Cairo and Giza
+5 000 pt, the other 25 at 10 000 pt, each independently editable in admin — with **no
+default row, no fallback and no sentinel**. `MONGODB-DESIGN.md` §11 and `MONEY-MODEL.md` §6
+are adopted **unchanged**; **no frozen document is amended**, so the extension 26b flagged
+for ratification is withdrawn rather than approved.
+**The reasoning, recorded because it is not obvious from the shape alone:** 27
+individually-priced rows are *more* of what D-8 asks for than two rules — “admin-editable”
+becomes per-governorate rather than per-rule. And the fallback existed only to answer
+“what do we charge for a governorate with no row?”, a question **B3 made unaskable** by
+closing `governorate` to a validated 27-value list on the storefront, in the admin and in
+the API `[V]`. A miss is therefore not an unpriced region but **bad data**, and **failing
+loudly beats silently charging a made-up fee to a real customer**. Updated §3, D-8, Phase 5,
+Phase 7; the corresponding open item is removed from `HANDOFF.md` §4.
+
+**Not changed, deliberately** — nothing in `docs/architecture/` was edited, by 26b or by
+26e. 26b resolved a plan-vs-frozen-doc conflict in the frozen doc's favour, which is what
+the owner directed; 26e settles the one item that would have *amended* a frozen doc by
+removing the need for the amendment entirely.
 
 ---
 
