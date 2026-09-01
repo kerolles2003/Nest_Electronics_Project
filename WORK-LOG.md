@@ -1061,3 +1061,239 @@ No semantic differ built, per the brief. Instead:
   see it. "The drift gate passed" is explicitly named as not an answer to that.
 - **`.github/workflows/ci.yml`** carries the same warning at the `openapi:check` step, so a
   developer reading the gate finds the limitation without having to read the consumer docs.
+
+---
+
+# SESSION 3, PART 2 — Phase 4
+
+## Step 0 — the seed assessment, before a single route moved
+
+Inventoried the seeded catalogue against what the T1 pages actually render, by
+querying Mongo rather than reading the seed file:
+
+```
+products 26   categories 12   brands 6
+  with >=1 image : 0        <-- every product
+  on sale        : 7        out of stock : 2      low stock : 4
+  featured       : 6        no brand     : 13
+  rating.count 0 : 0        max category depth : 1
+  brands with 0 products : none
+```
+
+**Four states the T1 pages handle were unreachable from the seed**, which meant
+a migration could break any of them and still look correct:
+
+| State | Rendered by | Seed support |
+|---|---|---|
+| a product image | every card, the detail hero | **0 of 26** |
+| the gallery / thumbnail strip (`images.length > 1`) | `/products/[slug]` | **0** |
+| "no reviews yet" (the rating widget renders nothing) | every card | **0** |
+| a brand that stocks nothing | `/brands/[slug]` empty state | **0** |
+| a breadcrumb deeper than two levels | `/categories/[slug]` | **0** |
+
+Extended to **34 products / 13 categories / 7 brands**: 12 products with images
+(8 with 2+, 5 with 3), 2 with no reviews, 3 out of stock, 6 low stock, 11 on
+sale, 8 featured, 17 with no brand, one brand (`sparkfun`) stocking nothing, and
+one depth-2 category (`imu-modules`). Idempotency re-proven: two runs leave
+34/13/7 unchanged, zero primary-image invariant violations.
+
+Images carry a provider-relative `publicId` in the namespace the upload API
+writes to — never a URL (`MEDIA-MODEL.md` §3). With no Cloudinary account they
+resolve to nothing and the placeholder renders, which is correct; the LAYOUT is
+still driven by real image counts and real dimensions.
+
+**Acceptance criterion corrected.** Phase 4 demanded T1 routes render
+"pixel-equivalent to before". That is impossible — the two catalogues hold
+different mock data by design (D-6) — so the criterion is now **structural
+parity**: same layout, same components, every state still handled. A criterion
+that cannot be met is one that gets quietly ignored.
+
+---
+
+## Step 1 — media upload API
+
+`Client → NestJS → Cloudinary` per ADR-MEDIA-001. Three endpoints
+(`POST`/`DELETE /admin/media`, `GET /admin/media/reconciliation`), the
+`mediaAssets` reference ledger, and `MEDIA_PROVIDER` switching through
+`ProvidersModule` — the same one switch, in the same one file, as
+`EMAIL_PROVIDER`.
+
+**The credentials were not there.** The brief said Cloudinary credentials are in
+`.env`; they are not, anywhere in this repository. Per the instruction the
+endpoint was built and tested anyway, and the gap is recorded rather than worked
+around: the adapter's request shape is asserted against the SDK contract, but no
+call has ever reached a real account, so its response mapping is unproven.
+
+An in-memory adapter — the media counterpart of the console email sender — runs
+the entire pipeline without an account, which is what makes the other 95% of
+this provable today.
+
+**163 assertions across three suites**, weighted deliberately towards refusals:
+a JPEG declared as PNG, an SVG (honest and lying), a PDF, a zip, plain text,
+oversize, an image below the minimum edge, an empty part, a missing part, a
+path-traversal filename, an `entityId` containing separators, and a signed-in
+CUSTOMER — each asserting that **nothing was stored**.
+
+Proven rather than assumed: EXIF orientation is applied *before* stripping (get
+that backwards and every phone photo comes out sideways); 6000px downscales to
+4000 while 600px is not upscaled; the ledger never goes negative and does not
+lose 20 concurrent increments; a referenced asset is refused with its count; and
+the port resolves to the memory adapter with no credentials present — the media
+equivalent of the F-07 guarantee.
+
+**A test caught a contradiction in my own docstring.** I had written that
+reordering images promotes a new primary, while `setPrimary` argued that order
+and primary are independent questions. The code was right and the docstring and
+test were wrong; the corrected test records why.
+
+---
+
+## Step 2 — catalogue import tool
+
+`pnpm --filter api catalogue:import -- --file <csv|json> --profile <json> [--dry-run]`
+
+Column mapping is configuration. Two profiles ship and the second exists to
+prove the point: `nest-standard` reads our own headings, `supplier-example`
+reads a semicolon-separated file with German headings, `1.299,00` prices and
+Ja/Nein booleans. The tests import **the same three products from both** and
+assert the catalogue matches — nothing but the JSON differs between the runs.
+
+Idempotency is *observable*, not asserted: `unchanged` is a separate outcome
+from `updated`, so a second run reports "3 unchanged, 0 updated" rather than a
+number that would look identical if the tool rewrote everything. Proven at the
+CLI:
+
+```
+pass 1   created 3, updated 0, unchanged 0, skipped 1, errored 1
+pass 2   created 0, updated 0, unchanged 3, skipped 1, errored 1
+```
+
+with no duplicate rows, `89.5` stored as 8950 and `1,299.00` as 129900.
+
+### Five bugs the tests found, each fixed in the code rather than the test
+
+1. An absent short description wrote `{ en: '' }`, which the schema refuses.
+   Found by the first fixture that omitted the column entirely — the CSV
+   fixtures all happened to carry one, which is exactly how this kind of hole
+   survives.
+2. Unmapped optional numeric columns became `NaN` and failed every row with a
+   Mongoose cast error.
+3. A profile could not declare a supplier's own yes/no words, so the German feed
+   errored on every row. `trueValues` / `falseValues` are now declarative.
+4. **`89.5` parsed as 89,500 EGP** — a thousandfold overcharge from an entirely
+   ordinary-looking cell. The rule required exactly two decimal digits; one is
+   also a decimal.
+5. Running the documented command failed before reading anything: pnpm forwards
+   the literal `--`, which the argument parser treated as a flag needing a value.
+
+### And one deeper correction
+
+A profile is a statement about which columns a file HAS. A field it does not
+mention is one that feed has **no opinion about** — not one it says is empty.
+Writing whole documents meant importing a price list nulled every product's
+weight, and importing from a second supplier undid the first. It now writes
+dotted `$set` paths for mapped fields only.
+
+Documented for a non-developer in `docs/api/CATALOGUE-IMPORT.md`.
+
+---
+
+## Step 3 — the T1 read migration
+
+Every T1 route is API-backed. **No `@nest/services` import remains in any of
+them**; only `/blog` still reads Supabase, and blog is a Phase 8 domain.
+
+An adapter (`lib/api/view-model.ts`) reshapes API types into what the existing
+components already accept, so **no component changed**. That was the point: a
+page that renders differently can then only be a data problem, and there is
+exactly one place to look. The file is temporary by design and says so — Phase 9
+deletes it whole.
+
+### Three storefront types had never matched the contract
+
+`discountPercent` (the API sends `discountPercentBps`), `stockQuantity` (the API
+sends `stockOnHand`), and `ProductImage` missing `version`, `format`, `width`
+and `height`. All three were latent — a wrong type costs nothing until the first
+reader, and the `/shop` slice never showed a discount badge or a stock count.
+T1 pages do.
+
+### The build broke, and it was mine to break
+
+`apiFetch` sent `cache: 'no-store'` **and** `next: { revalidate }` on the same
+request. Those are opposite instructions — Next's own docs give
+`{cache:'no-store', next:{revalidate:0}}` as the definition of `force-dynamic` —
+so `no-store` won and **`revalidate` had never once taken effect**.
+
+Harmless while every caller was a `force-dynamic` page. Fatal the moment the
+navbar put such a call in the ROOT LAYOUT: a no-store fetch in a layout opts the
+entire application out of static rendering, and `next build` then failed to
+prerender `/account`, `/blog` and `/_not-found` — pages with nothing to do with
+the catalogue — each reporting *"couldn't be rendered statically because it used
+no-store fetch .../categories/tree"*. Fixed at the client; `/categories` is
+prerendered static again with a 5-minute revalidate.
+
+### A latent bug the migration exposed
+
+`MobileMenu` is written against a FLAT category list — it asks
+`categories.some(c => c.parent_id === category.id)` — and the legacy service
+returned a NESTED tree, where that is false for every category. **No subcategory
+has ever appeared in the mobile menu.** Giving each consumer the shape its own
+code reads fixes it. That is a user-visible change and is recorded as one; the
+alternative was knowingly feeding a component data it cannot interpret in order
+to preserve a bug.
+
+### Six more corrections, each in the page that had it
+
+| Was | Consequence |
+|---|---|
+| sitemap asked for `limit: 5000` | the API caps at **100** (checked); transplanted unchanged it would have produced an empty sitemap and an error nobody watches |
+| sitemap mapped over the category TREE | silently omitted all seven subcategories |
+| price-slider bounds computed from the current PAGE | page 2 offered a different range from page 1, and neither was the range of the result set |
+| related products fetched 5 and filtered client-side | the row silently varied between four and five items |
+| gallery re-sorted with `.sort((a) => a.isPrimary ? -1 : 1)` | not a valid comparator — it ignores its second argument, so the order depended on the engine |
+| JSON-LD listed images whose URL is null | structured data naming an image with no URL is reported as invalid |
+
+### Two deliberate, flagged changes
+
+- **"Featured" became a filter, not a sort.** `featured` is not in the frozen
+  sort enum (`SEARCH-MODEL.md` §5); the API offers it as a filter. Preserving
+  the sort exactly means adding a value to a frozen contract — an owner
+  decision, not something to slip into a read migration.
+- **Six category tile images were COPIED to the API's root slugs.** The files
+  were named for legacy slugs the API does not use, so every tile on the home
+  page would have fallen back to a generic icon *and* fired a failed image
+  request. No artwork was drawn and none deleted.
+
+### A pre-existing defect found, measured, and deliberately not fixed
+
+`notFound()` on a streaming route renders an **empty `<main>`** — header, footer,
+nothing between. Measured side by side in one browser session:
+
+```
+/this-route-does-not-exist         404  main=112 chars  h1=["Page Not Found"]
+/products/definitely-not-real      200  main=0          h1=[]   <- UN-MIGRATED, Supabase
+/brands/not-a-real-brand           200  main=0          h1=[]   <- migrated
+/categories/does-not-exist-at-all  200  main=0          h1=[]   <- migrated
+```
+
+The un-migrated route behaves identically and a route with no page at all still
+renders its 404, so the trigger is streaming, not the data source. Next
+documents the 200 status and applies its own mitigation — the `noindex` tag is
+present, so nothing is indexed. The blank body is a separate matter, and both
+remedies (removing the root `loading.tsx`, or an existence check in `proxy.ts`)
+are decisions with costs beyond T1. The specs assert what is true rather than
+pinning the defect in place.
+
+### The security fix found on the way
+
+`dangerouslyAllowSVG: true` was set in **both** `next.config.ts` files.
+`MEDIA-MODEL.md` §5 item 6 and §12 require its removal: SVG is executable markup
+and one served from a whitelisted image host is a stored-XSS vector (Phase 0
+M3). Nothing in either `src/` renders an SVG through `next/image`, so removing
+it cost nothing.
+
+### Three Playwright assertions were wrong before they were right
+
+Each is recorded in the spec that has it: a hover-revealed menu asserted without
+hovering; a 404 status Next documents as 200 for streamed responses; and a
+product count that double-counted because every card links to its product twice.

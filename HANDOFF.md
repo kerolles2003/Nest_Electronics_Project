@@ -315,3 +315,159 @@ Supabase `shipping_fee` paths are a different data source scheduled for deletion
 ---
 
 Full narrative, with the measurements behind every claim, is in **`WORK-LOG.md`**.
+
+---
+
+# SESSION 3 — housekeeping, then Phase 4
+
+## Read this first
+
+**Phase 4 is done.** The media upload API, the catalogue import tool and the T1
+read migration all landed. Everything is on `phase-1-2-overnight`, unpushed.
+
+**Three things need you.** Nothing is blocked waiting for them except where said:
+
+1. **The Cloudinary account (D-4) is still not supplied.** The brief said the
+   credentials were in `.env`. They are not, anywhere in the repository. The
+   upload API is built and tested against an in-memory store; the Cloudinary
+   adapter is written to the SDK contract but **has never made a real call**.
+   Product images will not display until this arrives — the storefront renders
+   its placeholder, correctly, everywhere.
+2. **"Featured" on `/products` is now a filter, not a sort.** `featured` is not
+   in the frozen sort enum (`SEARCH-MODEL.md` §5). Clicking it now shows the 8
+   featured products rather than reordering all 34. Restoring the old meaning
+   means adding a value to a frozen contract — your call.
+3. **A blank 404 page, pre-existing.** A customer visiting a dead product,
+   brand or category link sees the header, the footer, and nothing between. See
+   §"Found, measured, not fixed" below.
+
+---
+
+## Part 1 — housekeeping
+
+### 1a — the vacuous-assertion sweep
+
+Audited **all 172** substring assertions across jest and Playwright. **Seven**
+could be satisfied by a different value in the same document; all seven are
+fixed. The worst was the same shape as the one you found: the discount
+assertion `toContain('50.00 EGP')` was satisfied by the line total
+`650.00 EGP`, so the Discount row could be deleted entirely and the test still
+passed.
+
+**Verified by breaking the templates, not by reading them.** Deleting the
+Discount row, the Subtotal row, or every line total was invisible to all three
+old assertions and is caught by exactly one new test each.
+
+Also found: `admin-orders.spec.ts` checked index usage against the *whole*
+explain output including `queryPlanner.rejectedPlans`, so a regression to a
+different index passed. Its own sibling in `orders-read.spec.ts` already scoped
+to `winningPlan`.
+
+### 1b — D-8 ratified
+
+Recorded in `PLAN.md` §3, D-8, Phase 5, Phase 7 and changelog **26e**; the open
+item is struck from §4 below. **No frozen document was amended** — by rejecting
+the premise rather than the proposal, you removed the need for the amendment.
+**Phase 5 is unblocked.**
+
+### 1c — the drift gate's blind spot
+
+`docs/api/INTEGRATION.md` now states plainly what the gate does not catch — enum
+narrowing, tightened validation, changed meaning, newly-enforced constraints —
+with the governorate narrowing as the worked example, plus a contract-policy
+checklist item requiring any PR touching an enum, a validator or a field's
+meaning to state the client impact. The same warning sits on the CI step.
+
+---
+
+## Part 2 — Phase 4
+
+### What shipped
+
+| | |
+|---|---|
+| **Media upload API** | `POST` / `DELETE /admin/media`, orphan reconciliation report, `mediaAssets` reference ledger. Ships **empty**. Admin UI stays Phase 7. |
+| **Catalogue import tool** | `pnpm --filter api catalogue:import`, declarative mapping profiles, `--dry-run`, per-run report. Documented for a non-developer in **`docs/api/CATALOGUE-IMPORT.md`** — read that one when the supplier file arrives. |
+| **T1 routes** | `/`, `/products`, `/products/[slug]`, `/categories`, `/categories/[slug]`, `/brands/[slug]`, `/search`, navbar tree, sitemap. **No Supabase import remains in any of them.** |
+| **Dev seed** | 26 → **34 products**, 12 → 13 categories, 6 → 7 brands. |
+
+### Why the seed grew
+
+Four states your pages render were **unreachable** from the old seed, so the
+migration could have broken any of them and still looked correct: no product had
+*any* image (so the gallery and thumbnail strip were dead code), every product
+had reviews, every brand stocked something, and the category tree was two levels
+everywhere. The seed is test infrastructure, not business data (D-6).
+
+### The bug that mattered most
+
+`apiFetch` sent `cache: 'no-store'` **and** `next: { revalidate }` together.
+They are opposite instructions, `no-store` wins, and **`revalidate` had never
+once taken effect** anywhere in the storefront. It cost nothing until the navbar
+put such a call in the root layout — at which point `next build` could no longer
+prerender `/account`, `/blog` or `/_not-found`, pages with nothing to do with
+the catalogue. Fixed; `/categories` is static again with a 5-minute revalidate.
+
+### A bug the migration exposed rather than caused
+
+**No subcategory has ever appeared in the mobile menu.** `MobileMenu` is written
+against a flat category list; the legacy service returned a nested tree, where
+its check is false for every category. Giving each consumer the shape its own
+code reads fixes it. This is a visible change on mobile — flagged, not hidden.
+
+### Security fix found on the way
+
+**`dangerouslyAllowSVG: true` was set in both `next.config.ts` files.** SVG is
+executable markup and one served from a whitelisted image host is a stored-XSS
+vector; `MEDIA-MODEL.md` §5/§12 require its removal. Nothing rendered an SVG
+through `next/image`, so removing it cost nothing.
+
+### Six correctness fixes, each in the page that had it
+
+- the sitemap asked for `limit: 5000`; **the API caps at 100** — transplanted
+  unchanged it would have produced an empty sitemap and an error nobody watches
+- the sitemap mapped over the category *tree*, silently omitting all seven
+  subcategories
+- the price-slider bounds came from the current *page*, so page 2 offered a
+  different range from page 1
+- related products fetched five and filtered client-side, so the row varied
+  between four and five items
+- the image gallery re-sorted with a comparator that ignores its second
+  argument, so the order depended on the JavaScript engine
+- JSON-LD listed images with no URL, which crawlers report as invalid
+
+### Found, measured, and deliberately NOT fixed
+
+**`notFound()` on a streaming route renders a blank page.** Measured side by
+side in one browser session:
+
+```
+/this-route-does-not-exist         404  main=112 chars  h1=["Page Not Found"]
+/products/definitely-not-real      200  main=0          h1=[]   <- UN-MIGRATED
+/brands/not-a-real-brand           200  main=0          h1=[]   <- migrated
+/categories/does-not-exist-at-all  200  main=0          h1=[]   <- migrated
+```
+
+The **un-migrated** route behaves identically, so this predates the migration.
+Next documents the 200 (streamed responses cannot change status) and applies its
+own mitigation — the `noindex` tag is present, so nothing is indexed. The blank
+body is separate. Both remedies (remove the root `loading.tsx`, or check
+existence in `proxy.ts` before the body streams) are decisions with costs, so
+they are yours rather than mine.
+
+---
+
+## The three things worth doing next
+
+1. **Get the Cloudinary account.** It is the only thing standing between the
+   media pipeline and being proven, it now blocks Phase 7's upload UI as well as
+   Phase 8's blog covers, and it is the difference between a catalogue with
+   photographs and one without.
+2. **Fix the blank 404.** It is the one defect in this report a customer meets
+   directly, it is cheap either way, and it is currently invisible because the
+   page returns 200.
+3. **Run `indexes:sync` after any fresh database.** This session opened with 19
+   red tests and a clean tree; every application index had vanished from the dev
+   database. `autoIndex` is off by design, so an index-less database is a silent
+   state — the API starts and serves traffic, and only the tests notice. CI does
+   this already; a developer's machine does not.
