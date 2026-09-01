@@ -1625,3 +1625,86 @@ the first.
 
 Additive: 2 new paths, 1 new operation on an existing path, 5 new schemas. The
 gate confirmed additive before the artifact was regenerated.
+
+## 4 — the blank 404
+
+**Status fixed. Body not, and the reason is measured rather than guessed.**
+
+Every dead product, category and brand URL answered **200**. That is a soft 404:
+indexable, counted as a successful page view, and invisible to any monitoring
+that watches 4xx.
+
+### What the fix was
+
+Next gives two remedies: check existence in `proxy.ts` before the body streams,
+or "ensure the resource exists before the response body is streamed". **The
+proxy is out of scope for 5a**, so the second one — and the body starts
+streaming "when a Suspense fallback renders (for example, a `loading.tsx`)".
+
+Removed: the root `app/loading.tsx` and the `loading.tsx` of
+`products/[slug]`, `categories/[slug]`, `brands/[slug]` and `blog/[slug]`.
+
+`app/products/loading.tsx` was the awkward one — it covers `[slug]` as well as
+the listing, so the listing's skeleton was forcing a 200 on every unknown
+product. Rather than delete the skeleton from the page that most needs it, the
+listing moved into a **`(listing)` route group**. A route group is not a path
+segment, so `/products` is unchanged and keeps its skeleton, while
+`/products/[slug]` no longer inherits it.
+
+### The full measurement, because three separate things were going on
+
+```
+how notFound() is reached                     status   designed page
+URL matches no route at all                     404     RENDERED
+thrown synchronously, before any await          404     RENDERED
+thrown after an await, no loading.tsx above     404     empty
+thrown after an await, loading.tsx above        200     empty      <- was here
+thrown from generateMetadata after an await     404     empty
+```
+
+Every data-driven 404 moved from the fourth row to the third. **The status is
+fixed; the body is still empty.**
+
+I could not fix the body within scope, and it is worth being precise about why.
+A data-driven 404 must ask the API whether the thing exists, so it always
+awaits — which is exactly the case Next's docs warn about: *"Place `notFound()`
+before those boundaries and before any `await` that may suspend."* No in-page
+arrangement satisfies both. Tried and measured as not working: a segment-level
+`not-found.tsx`, a re-exported one, and throwing from `generateMetadata`.
+
+The remaining half needs the existence check in `proxy.ts`, which is 5b's.
+
+### Two things found on the way
+
+1. **The root `app/not-found.tsx` never caught `notFound()` at all.** It covers
+   URLs that match no route. A segment that throws needs its own
+   `not-found.tsx`, and a bare `export { default } from ...` does not register
+   as one — both measured. Five route files now render one shared
+   `NotFoundContent`, so there is a single copy of the markup.
+2. **The root `loading.tsx` was a product-grid skeleton on a legacy class**,
+   shown on `/about`, `/contact`, `/login` and everything else without its own.
+   Removing it is closer to a fix than a regression.
+
+### What this costs, and it is a real cost
+
+The four detail routes have **no loading skeleton**. A click on a product shows
+the previous page until the server responds. Accepted deliberately: a correct
+status on every dead link against a skeleton on four routes — and reversible,
+because the proxy check that fixes the body would also let every `loading.tsx`
+come back.
+
+### The spec
+
+`e2e/not-found.spec.ts`, 10 tests. The status, the `noindex`, the absence of
+catalogue content, and — separately — **`test.fail()` on the rendered page**.
+
+`test.fail()` rather than a skip, deliberately: a skipped test proves nothing
+and rots. This one runs, asserts the real thing, and **turns the suite red if it
+ever passes** — which is the signal to delete the workaround rather than let it
+outlive the bug.
+
+Three older T1 tests covered the same ground more weakly (they asserted
+`noindex` but deliberately not the status, because the status was the defect).
+Removed rather than duplicated, with a pointer where they stood — and the long
+measurement note in `t1-taxonomy.spec.ts` went with them, because a second copy
+of a measurement is a second thing to keep true.

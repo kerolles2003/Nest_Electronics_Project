@@ -1,7 +1,7 @@
 import * as api from "@/lib/api/endpoints"
 import type { ProductQuery } from "@/lib/api/endpoints"
 import { toLegacyBrand, toLegacyCategory, toProductCard } from "@/lib/api/view-model"
-import { searchParamsCache } from "./search-params"
+import { searchParamsCache } from "../search-params"
 import { ProductCard } from "@/components/ProductCard"
 import { FilterSidebar } from "@/components/FilterSidebar"
 import { MobileFilterToggle } from "@/components/MobileFilterToggle"

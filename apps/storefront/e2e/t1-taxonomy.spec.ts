@@ -14,48 +14,17 @@ import { expect, test } from './fixtures/browser-health';
  * The seed was extended in step 0 specifically so those states exist.
  */
 
-/**
- * A slug the catalogue does not have.
+/*
+ * The long note that stood here recorded the blank-404 measurement and argued
+ * for not asserting the status, because the status was 200 and pinning it would
+ * have frozen the defect.
  *
- * ## What is asserted, and the defect that is deliberately NOT asserted
- *
- * Two things are true here and both are checked: the page does not render a
- * product grid, and it carries `<meta name="robots" content="noindex">` so the
- * URL is never indexed.
- *
- * What is NOT checked is that the customer sees a 404 page, because they do not.
- * **`notFound()` on a streaming route renders an empty `<main>` in this
- * application** — header, footer, and nothing between them.
- *
- * That is PRE-EXISTING and has nothing to do with this migration. Measured
- * side by side in one browser session:
- *
- * ```
- *   /this-route-does-not-exist         status=404  main=112 chars  h1=["Page Not Found"]
- *   /products/definitely-not-real      status=200  main=0 chars    h1=[]   <- UN-MIGRATED, still Supabase
- *   /brands/not-a-real-brand           status=200  main=0 chars    h1=[]   <- migrated
- *   /categories/does-not-exist-at-all  status=200  main=0 chars    h1=[]   <- migrated
- * ```
- *
- * The un-migrated route behaves identically to the migrated ones, and a route
- * with no page at all still renders the 404 correctly — so the trigger is
- * streaming, not the data source. Next documents the status half of this ("a
- * 200 status code for streamed responses... the status code cannot be
- * updated") and its own mitigation is the `noindex` tag, which is present. The
- * BLANK BODY is a separate matter and is recorded for the owner rather than
- * fixed in passing: the remedies are removing the root `loading.tsx` or
- * checking existence in `proxy.ts` before the body streams, and both are
- * decisions with costs beyond T1.
- *
- * Asserting the blank body here would be writing a test that pins a defect in
- * place and fails the day somebody fixes it.
+ * Phase 5a fixed the status. `e2e/not-found.spec.ts` now owns dead-link
+ * behaviour, carries the full measurement table across every way `notFound()`
+ * can be reached, and holds a `test.fail()` for the half that is still broken.
+ * The note is not reproduced here, because a second copy of a measurement is a
+ * second thing to keep true.
  */
-async function expectNoCatalogueContent(page: import('@playwright/test').Page, url: string) {
-  await page.goto(url);
-
-  await expect(page.locator('meta[name="robots"][content="noindex"]')).toHaveCount(1);
-  await expect(page.locator('main a[href^="/products/"]')).toHaveCount(0);
-}
 
 /** Every link to a product in the main grid. These pages use a div grid, not a list. */
 function productLinks(page: import('@playwright/test').Page) {
@@ -139,12 +108,16 @@ test.describe('/categories/[slug]', () => {
     expect(await countProducts(page)).toBe(2);
   });
 
-  test('shows no catalogue content for a slug that does not exist', async ({ page }) => {
-    // Not an empty product GRID either. A category page that renders "no
-    // products found" for a slug that was never real tells a customer they have
-    // found an empty shelf rather than a wrong address.
-    await expectNoCatalogueContent(page, '/categories/does-not-exist-at-all');
-  });
+  /*
+   * Dead-link behaviour moved to `e2e/not-found.spec.ts`.
+   *
+   * The test that stood here asserted `noindex` and the absence of catalogue
+   * content, and deliberately did NOT assert a status, because the status was
+   * 200 and pinning it would have frozen the defect. It is 404 now, and the new
+   * spec asserts the status, the `noindex`, the absence of catalogue content
+   * and — as a `test.fail()` — the rendered page. Keeping a weaker copy here
+   * would mean two places to edit and one of them silently going stale.
+   */
 });
 
 test.describe('/brands/[slug]', () => {
@@ -166,7 +139,14 @@ test.describe('/brands/[slug]', () => {
     await expect(page.locator('main').getByText('0 products')).toBeVisible();
   });
 
-  test('shows no catalogue content for a brand that does not exist', async ({ page }) => {
-    await expectNoCatalogueContent(page, '/brands/not-a-real-brand');
-  });
+  /*
+   * Dead-link behaviour moved to `e2e/not-found.spec.ts`.
+   *
+   * The test that stood here asserted `noindex` and the absence of catalogue
+   * content, and deliberately did NOT assert a status, because the status was
+   * 200 and pinning it would have frozen the defect. It is 404 now, and the new
+   * spec asserts the status, the `noindex`, the absence of catalogue content
+   * and — as a `test.fail()` — the rendered page. Keeping a weaker copy here
+   * would mean two places to edit and one of them silently going stale.
+   */
 });

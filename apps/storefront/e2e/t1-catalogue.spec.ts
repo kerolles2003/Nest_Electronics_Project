@@ -192,12 +192,16 @@ test.describe('/products/[slug]', () => {
     expect(hrefs).not.toContain('/products/esp32-devkit-v1');
   });
 
-  test('shows no catalogue content for a slug that does not exist', async ({ page }) => {
-    // See t1-taxonomy.spec.ts for why this asserts `noindex` rather than a 404.
-    await page.goto('/products/not-a-real-product-at-all');
-
-    await expect(page.locator('meta[name="robots"][content="noindex"]')).toHaveCount(1);
-  });
+  /*
+   * Dead-link behaviour moved to `e2e/not-found.spec.ts`.
+   *
+   * The test that stood here asserted `noindex` and the absence of catalogue
+   * content, and deliberately did NOT assert a status, because the status was
+   * 200 and pinning it would have frozen the defect. It is 404 now, and the new
+   * spec asserts the status, the `noindex`, the absence of catalogue content
+   * and — as a `test.fail()` — the rendered page. Keeping a weaker copy here
+   * would mean two places to edit and one of them silently going stale.
+   */
 });
 
 test.describe('/search', () => {
