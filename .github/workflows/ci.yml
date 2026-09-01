@@ -138,6 +138,26 @@ jobs:
            }
            print("replica set " + h.setName + " PRIMARY at " + h.me + ", server " + db.version());'
 
+      # F-15 — the suite cannot pass against an empty database.
+      #
+      # Measured, not assumed. Against a fresh Mongo the run is 333 failed /
+      # 194 passed, every failure reading "seed category development-boards is
+      # missing — run `pnpm --filter api seed`".
+      - name: Seed the catalogue
+        run: pnpm --filter api seed
+
+      # Seeding alone is NOT sufficient, which the original F-15 write-up did
+      # not capture. With data but no indexes the run is still 19 failed / 508
+      # passed: the index-usage, idempotency, transaction-atomicity and
+      # concurrency suites assert on index behaviour, `autoIndex` is off
+      # (deliberately — index creation is a release step, not a side effect of
+      # booting), and a fresh database therefore has no order_user_history,
+      # order_admin_queue or idempotency_key_unique for them to observe.
+      #
+      # With both steps the run is 538/538 green.
+      - name: Create the indexes
+        run: pnpm --filter api indexes:sync
+
       - name: Transaction gate
         run: pnpm --filter api test
 

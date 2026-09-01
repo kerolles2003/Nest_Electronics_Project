@@ -390,3 +390,32 @@ stranded; the defect was a **bare `catch {}`** that discarded the error and show
 "An unexpected error occurred". Now it logs the error and gives an actionable message naming
 the recoverable cause. The "your cart has not been changed" reassurance is verifiable:
 `clearCart()` is only on the success branch.
+
+### Items 2 & 3 — F-15 CI seed step, F-16 explicit `API_BASE_URL`
+
+**F-15 — the brief's version of this fix was incomplete, and I have the measurements.**
+Adding only the seed step would have left CI red. Evidence (all against local Mongo, the
+same topology CI uses):
+
+| Preconditions | Result |
+|---|---|
+| fresh database | 333 failed / 194 passed — every failure "seed category development-boards is missing" |
+| after `seed` | **19 failed** / 508 passed — index-usage, idempotency, transaction-atomicity, concurrency |
+| after `seed` **+ `indexes:sync`** | **538 / 538 green** |
+
+`autoIndex` is off deliberately (index creation is a release step, not a side effect of
+booting), so a fresh database has no `order_user_history`, `order_admin_queue` or
+`idempotency_key_unique` for the index-usage assertions to observe. `ci.yml` therefore gets
+**two** steps before the gate — `seed`, then `indexes:sync` — each with the measurement that
+justifies it written next to it.
+
+**End-to-end proof of the acceptance criterion** ("green CI from a fresh clone with no local
+state"): ran the exact CI sequence against a brand-new database
+(`nest_ci_proof_1788237488`) — seed → indexes:sync → test → **538/538 green**.
+
+**F-16** — `API_BASE_URL` added explicitly to `apps/storefront/.env.local`. It is
+**gitignored and therefore not in any commit** (verified). The committed `.env.example`
+already documented it correctly, so no example change was needed. The point of the fix: the
+`http://127.0.0.1:3002/api/v1` fallback in `client.ts` is a safety net, not configuration —
+dev worked only by coincidence of the default matching the local port, and moving the API
+would have produced a confusing connection error instead of a missing-config one.
