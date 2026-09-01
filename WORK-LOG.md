@@ -581,3 +581,93 @@ Git, as required:
 
 `HANDOFF.md` written. Six items are recorded under "Needs owner", of which one — ratifying
 the shipping default-rate extension — is the only thing blocking the next phase.
+
+---
+
+# SESSION 2 — adversarial verification of `a7009c1`, plus three corrections
+
+**Baseline before any change:** jest **20 suites / 541 tests green**.
+
+## PART A — findings
+
+Checks run, in order. Every conclusion below has evidence pasted in-session.
+
+### A1 — surviving zero-comparisons on a shipping fee
+
+Grepped `apps/api/{src,test}`, `apps/storefront/{src,e2e}`, `apps/admin/src` and `packages`
+for `=== 0` / `!== 0` / negation / truthiness / ternaries on any shipping-fee value.
+
+Hits triaged:
+- `order-pricing.ts:131,133` — invariant arithmetic. Legitimate.
+- `orders-read.spec.ts:646` — `?? 0` null-safety inside a total assertion. Legitimate.
+- `quote-response.dto.ts:129` — the string *warning clients not to do this*. Legitimate.
+- `CheckoutForm.tsx:99` — `amount === 0` **guarded by `shippingPriced`**, choosing between
+  "Free" and the formatted amount. Not a semantic inference. **Kept** (see report).
+- **`shop/orders/[id]/page.tsx:102` — → FINDING 1.**
+- Email templates — **→ FINDING 2.**
+
+`shippingUnpriced` is **not** a second source of truth: computed in exactly one place
+(`notifications.service.ts:346`) as `!order.pricing.shippingPriced`. Derived, not stored.
+
+Legacy Supabase `shipping_fee` (`packages/services/src/order.service.ts:13` hardcodes `0`;
+account/admin order pages print it raw) is a **different data source**, scheduled for deletion
+under D-6, and contains no two-meanings inference. Out of scope; reported, not touched.
+
+### A2 — every `quote()` caller
+
+Two production call sites (`checkout.service.ts:393` placement, `:687` quote). Both pass the
+object straight into `computeOrderPricing`, which destructures `.fee` / `.priced` immediately.
+`grep` for `...pricing` / `...quote` / `...shipping` / `${…fee}` returns **nothing** — no
+spread, no interpolation, no arithmetic on the object. `ShippingQuote` is referenced only in
+`fulfilment.service.ts` and `order-pricing.ts`. **No object-leak path. Clean.**
+
+### A3/A4 — money math and all three states, live
+
+Drove the real API end to end (register → cart → address → quote → place → detail → history)
+under three configurations, then read the persisted Mongo document directly via `mongosh`.
+
+| State | config | fee | priced | subtotal | grand | formula | persisted matches |
+|---|---|---|---|---|---|---|---|
+| A unpriced | (unset) | 0 | `false` | 530000 | 530000 | ✅ | ✅ identical |
+| B priced-zero | flat 5000 + threshold 1 | 0 | **`true`** | 530000 | 530000 | ✅ | ✅ identical |
+| C normal | flat 5000 | 5000 | `true` | 530000 | 535000 | ✅ | ✅ identical |
+
+All four API views (quote, order response, order detail, order summary) agreed in every
+state. All amounts integers, minor units. **No float introduced, no rounding moved.**
+State B — the case the old code got wrong — is correct at the API layer.
+
+### A5 — persistence vs recomputation
+
+Restarted the API with `SHIPPING_FLAT_FEE=7777` and re-read the state-A order, which was
+placed with no rate at all:
+
+```
+order detail           fee=     0  priced=false  grand=530000   <- persisted snapshot wins
+order history row      fee=     0  priced=false  grand=530000
+fresh quote            fee=  7777  priced= true                 <- new config, for contrast
+```
+
+**Order integrity holds.** A config change does not retroactively alter an existing order.
+
+### A6 — the frozen contract
+
+`git log --follow docs/api/openapi.v1.json` → created in `0908721`, which is **after**
+`a7009c1`. Drift gate run now: `drift gate: OK, the API matches` — **exit 0**.
+`PricingBreakdownDto` carries `shippingPriced` in `required`, referenced by
+`CheckoutQuoteViewDto`, `OrderDto` and `OrderSummaryDto`.
+`docs/api/INTEGRATION.md:66-69` states explicitly that `true` "**including when it is `0`**"
+means show the amount **or "Free"**. A client reading only that cannot reproduce the old bug.
+
+### A7 — missing-field handling, executed not inferred
+
+`$unset` the field on a real order via `mongosh` (bypassing Mongoose, exactly as a
+pre-change document would be), then read it back through the API:
+
+```
+field present in doc? false
+API:  shippingPriced = false (typeof boolean)   key present in JSON? true
+```
+
+The schema default and the DTO `?? false` coercion both work. No `undefined` reaches a
+client. **✅** — but it also produced `priced:false` alongside `fee:5000`, which is
+**→ FINDING 4.**
