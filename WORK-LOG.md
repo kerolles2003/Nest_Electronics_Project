@@ -1319,3 +1319,110 @@ notice.
 
 **16 commits**, all on `phase-1-2-overnight`, nothing pushed, no history
 rewritten, nothing reverted.
+
+---
+
+# SESSION 4 — Phase 5a (additive only)
+
+Baseline before any change: jest **696 passed, 1 failed** (697), Playwright not
+yet run. The one failure was mine and is described below.
+
+## 1 — index enforcement
+
+`GET /health/ready` now refuses traffic when any declared index is absent.
+
+**The check found a real defect on its very first run**, before any test was
+written to look for one: `mediaAssets.media_asset_public_id_unique` and
+`media_asset_unreferenced` did not exist in the development database. They were
+added with the media ledger last session and `indexes:sync` was never run
+afterwards, so the ledger has been running for a session with **no unique
+constraint on `publicId`** — the exact class of silent absence this task is
+about. Fixed by running the sync.
+
+### What it checks, and why `diffIndexes()`
+
+Mongoose's `diffIndexes()` is the primitive `syncIndexes()` itself uses, so the
+probe cannot disagree with the command it recommends. It also catches the case a
+name comparison cannot see. Measured, on a scratch collection:
+
+```
+index `scratch_email_unique` created WITHOUT unique, under the declared name
+  diff        -> toDrop:["scratch_email_unique"], toCreate:[{email:1}]
+  two documents with the same email  -> BOTH STORED
+```
+
+A check asking "does an index of that name exist?" reports healthy there. The
+guarantee is gone.
+
+### Deliberate boundaries
+
+- **Fails on missing, reports on extra.** An index the schemas no longer declare
+  wastes write throughput but breaks no invariant; refusing traffic over it
+  would turn a tidy-up into an outage.
+- **Liveness untouched, and asserted so.** Restarting cannot create an index, so
+  a missing one must drain traffic without triggering a restart loop.
+- **No cache.** A cached healthy verdict would keep reporting green after a drop
+  and — worse — keep reporting red after the remedy was run, sending an operator
+  to reach for a restart. Measured at one round trip for all 13 collections.
+- **Cloudinary is still not a readiness check**, now for a better reason than
+  "it does not exist yet": readiness failing drains traffic, so a Cloudinary
+  outage would take the storefront down because a dependency only *admin upload*
+  needs was unavailable.
+
+### Two bugs found on the way
+
+1. **A leaked timer in `pingMongo`.** `Promise.race` settles on the winner but
+   does not cancel the loser, so every successful readiness probe left a 2-second
+   timer holding the event loop. Invisible in production; visible as "jest did
+   not exit one second after the test run" the moment a suite probed readiness.
+   Cleared in `finally`.
+2. **A test that read a secret.** `media-upload.spec.ts` asserted
+   `process.env.CLOUDINARY_API_KEY` was undefined — encoding one machine's
+   temporary state as a permanent property. It broke the moment the account was
+   supplied, **and printed the API key into the failure output**, from there into
+   any CI log holding it. It now asserts the thing that actually decides whether
+   bytes leave the machine: which adapter the port resolved to.
+
+### The drift gate had to learn a distinction
+
+Adding `checks.indexes` was reported as **BREAKING** — "property newly
+required". The gate's own docstring already called this out as a deliberate
+over-report: newly-required is fatal in a request body and harmless in a
+response, "and this gate does not try to tell which it is looking at".
+
+The alternatives were both worse than fixing it: mark the field optional (a
+permanent lie in the public contract — it is always sent), or regenerate past a
+gate whose message says not to. So the gate now classifies schemas by
+reachability through `$ref`, transitively. A schema is exempt **only** if it is
+reachable from a response and not from a request; reached by both is fatal, and
+so is reached by neither, because "I cannot tell" must resolve to the fatal
+reading.
+
+It had no tests. It has 16 now, weighted towards the direction that costs a
+release: every category it caught before is asserted still caught, and the
+exemption is proven unreachable from a request body, a nested request DTO, a
+`$ref` inside an array, a query parameter, a schema used in both directions, and
+a schema nothing references.
+
+**Other invariants that depend on an index that could be absent** — the answer
+to the question asked, and it is worse than the two named in the brief.
+`CredentialRepository` and `CartRepository` both catch MongoDB error `11000` and
+translate it. **That is their entire concurrency control.** No index, no error,
+no `catch`, and the race silently succeeds:
+
+| Index | What stops being prevented |
+|---|---|
+| `users.user_email_unique` | two accounts on one email address |
+| `orders.order_idempotency_key_unique` | a retried checkout becoming two orders |
+| `orders.order_number_unique` | two orders sharing one customer-facing number |
+| `inventoryEvents.inventory_event_reference_unique` | one order line decrementing stock twice |
+| `carts.cart_user_unique` | a customer holding two carts |
+| `products.product_sku_unique` | catalogue import duplicating instead of upserting |
+| `mediaAssets.media_asset_public_id_unique` | two ledger rows for one asset — **and this one was actually missing** |
+
+TTL indexes (`refresh_token_ttl`, `cart_ttl`, `idempotency_ttl`) are a separate
+class: their absence corrupts nothing, it just means expired documents are never
+reclaimed. Reported, but not what makes this a gate.
+
+Documented in `docs/api/SANDBOX.md` §3 and §7 and a new section of
+`docs/api/INTEGRATION.md`.

@@ -148,10 +148,10 @@ beforeAll(async () => {
   ledger = app.get(MediaAssetRepository);
   config = app.get<MediaConfig>(mediaConfig.KEY);
 
-  // The port resolves to the in-memory adapter because `MEDIA_PROVIDER`
-  // defaults to `memory` and no CLOUDINARY_* value exists. Asserted rather than
-  // assumed: if this ever resolved to the Cloudinary adapter, the suite would
-  // silently start making authenticated network calls, which is the media
+  // The port resolves to the in-memory adapter because `MEDIA_PROVIDER` says
+  // `memory`. Asserted rather than assumed: if this ever resolved to the
+  // Cloudinary adapter, the suite would silently start making authenticated
+  // network calls against the owner's real account, which is the media
   // equivalent of the 225 live email sends F-07 found.
   const port = app.get(MediaStoragePort);
   expect(port).toBeInstanceOf(InMemoryMediaStorage);
@@ -646,10 +646,24 @@ describe('configuration', () => {
     expect(controller.MediaController).toBeDefined();
   });
 
-  it('selects the memory provider when no Cloudinary credentials are present', () => {
-    // The media counterpart of the F-07 guarantee. If this ever failed, the
-    // suite would be making authenticated calls to a real media account.
+  it('runs against the in-memory store even though real credentials now exist', () => {
+    /*
+     * The media counterpart of the F-07 guarantee, restated correctly.
+     *
+     * This test used to assert `process.env.CLOUDINARY_API_KEY` was undefined.
+     * That was wrong twice over. It encoded a temporary fact about one machine
+     * as a permanent property, so it broke the moment the account was supplied
+     * — and when it broke, jest printed the API key into the failure output and
+     * from there into any CI log holding it. A test must never read a secret in
+     * order to assert something about it.
+     *
+     * What actually matters is not whether credentials EXIST but which adapter
+     * is wired, because that alone decides whether bytes leave this machine.
+     * Both halves are checked: the configured provider, and the object the port
+     * really resolved to — a mismatch between those two is exactly the bug this
+     * is here to catch.
+     */
     expect(config.provider).toBe('memory');
-    expect(process.env['CLOUDINARY_API_KEY']).toBeUndefined();
+    expect(app.get(MediaStoragePort)).toBeInstanceOf(InMemoryMediaStorage);
   });
 });

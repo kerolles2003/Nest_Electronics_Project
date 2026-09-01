@@ -26,7 +26,7 @@
     },
     "/api/v1/health/ready": {
       "get": {
-        "description": "Reports whether critical dependencies are reachable. `200` when every check passes,\n`503` when any is down — so a load balancer can drain this instance without restarting it.\n\nCurrently checks MongoDB only. Cloudinary appears here when MediaModule does; reporting a\ndependency that does not exist as `up` would be a lie a load balancer believes.",
+        "description": "Reports whether critical dependencies are reachable. `200` when every check passes,\n`503` when any is down — so a load balancer can drain this instance without restarting it.\n\nChecks that MongoDB answers, and that every index the schemas declare actually exists.\n\nThe index check is not decoration. `autoIndex` is off by design, so a database that has\nnever had `indexes:sync` run against it connects, answers every query, and serves traffic\nwith several unique constraints simply absent - and those constraints are the entire\nenforcement behind \"one account per email\" and \"one order per idempotency key\". An\ninstance in that state must refuse traffic rather than accept it and violate them.",
         "operationId": "HealthController_ready_v1",
         "parameters": [],
         "responses": {
@@ -3351,15 +3351,70 @@
           "detail"
         ]
       },
+      "IndexCheckDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "up",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "example": null,
+            "nullable": true,
+            "description": "A short, non-sensitive reason when `status` is `down`. Never contains a connection string, a credential or a host name."
+          },
+          "missing": {
+            "example": [
+              "users.user_email_unique",
+              "orders.order_idempotency_key_unique"
+            ],
+            "description": "Declared indexes that are absent, or present with the wrong options, as `collection.indexName`. Empty when the check passes.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unexpected": {
+            "example": [],
+            "description": "Indexes present in the database that the schemas no longer declare. Reported for information; these do NOT fail readiness, because an extra index costs write throughput but breaks no invariant.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remedy": {
+            "type": "string",
+            "nullable": true,
+            "example": "pnpm --filter api indexes:sync",
+            "description": "The command that fixes `missing`. `null` when there is nothing to fix."
+          }
+        },
+        "required": [
+          "status",
+          "detail",
+          "missing",
+          "unexpected",
+          "remedy"
+        ]
+      },
       "ReadinessChecksDto": {
         "type": "object",
         "properties": {
           "mongo": {
             "$ref": "#/components/schemas/DependencyCheckDto"
+          },
+          "indexes": {
+            "$ref": "#/components/schemas/IndexCheckDto"
           }
         },
         "required": [
-          "mongo"
+          "mongo",
+          "indexes"
         ]
       },
       "ReadinessResponseDto": {

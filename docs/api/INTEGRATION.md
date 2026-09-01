@@ -180,3 +180,67 @@ knows what the change means, so the policy is a review obligation rather than a 
 
 If you hit something that contradicts this page, quote the `X-Request-Id` from the response:
 the server-side cause can be found directly from it.
+
+---
+
+## Readiness is a deployment gate, not a dashboard
+
+`GET /api/v1/health/ready` returns `503` when any index the schemas declare is absent from
+the database. **Wire it as the readiness probe before the first deploy**, or the guarantee it
+provides is not in force.
+
+### Why an unindexed database is a correctness problem, not a slow one
+
+`autoIndex` is off by design: index creation is an explicit release step, never a side effect
+of booting. The cost of that correct decision is that a database with no indexes is a
+*silent* state — the driver connects, every query returns the right answer, and the service
+serves traffic looking healthy.
+
+Several unique indexes are not optimisations. They are the entire enforcement mechanism
+behind an invariant, and two repositories delegate their concurrency control to them
+completely — `CredentialRepository` and `CartRepository` both catch MongoDB error `11000` and
+translate it into a domain error. **With no index there is no error, the `catch` never runs,
+and the race quietly succeeds.**
+
+| Index | What is no longer prevented |
+|---|---|
+| `users.user_email_unique` | two accounts registered on one email address |
+| `orders.order_idempotency_key_unique` | a retried checkout becoming two orders |
+| `orders.order_number_unique` | two orders sharing one customer-facing number |
+| `inventoryEvents.inventory_event_reference_unique` | one order line decrementing stock twice |
+| `carts.cart_user_unique` | a customer holding two carts at once |
+| `products.product_sku_unique` | catalogue import creating duplicates instead of upserting |
+| `mediaAssets.media_asset_public_id_unique` | two ledger rows for one stored asset |
+
+TTL indexes (`refresh_token_ttl`, `cart_ttl`, `idempotency_ttl`) are a different class: their
+absence corrupts nothing, it just means expired documents are never reclaimed. They are
+reported alongside the rest because unbounded growth is still a fault, but they are not what
+makes this a gate.
+
+### What the check does and does not do
+
+| | |
+|---|---|
+| **Catches** | an index that was never created — a fresh database where `indexes:sync` was skipped |
+| **Catches** | an index present under the declared name but with the **wrong options** — e.g. one created without `unique`. Measured: such a collection accepted two duplicate documents while a name-only check reported it healthy |
+| **Catches** | a schema that declares a new index which no deploy step has created yet |
+| **Reports, does not fail** | an index in the database that the schemas no longer declare. It wastes write throughput but breaks no invariant, and refusing traffic over it would turn a tidy-up into an outage |
+| **Does not catch** | an index that exists and is correct but is not *used* by a query — that is a query-plan question, and the order suites assert `winningPlan` for it |
+| **Does not catch** | data that already violates an invariant because the index was missing earlier. Creating the index later **fails** on the duplicates rather than resolving them; that is a data-repair job, and the failure is loud |
+
+The check uses Mongoose's own `diffIndexes()` — the same primitive `syncIndexes()` uses — so
+the probe can never disagree with the command it tells you to run.
+
+### Operational notes
+
+- **Liveness (`GET /health`) is unaffected**, and must stay that way. A missing index means
+  *stop sending traffic*; it never means *restart*, because restarting cannot create an
+  index. Failing liveness here would put an orchestrator into a restart loop while the actual
+  remedy went unrun.
+- **No cache.** The check is one `listIndexes` per collection, issued in parallel. Caching a
+  healthy verdict would keep reporting green after an index was dropped and — worse — keep
+  reporting red after the remedy was run, sending an operator to reach for a restart.
+- **Cloudinary is deliberately not a readiness check.** Readiness failing drains traffic; a
+  Cloudinary outage would then take the whole storefront down because a dependency that only
+  *admin image upload* needs was unavailable. A dependency belongs in readiness only if the
+  instance genuinely cannot serve without it.

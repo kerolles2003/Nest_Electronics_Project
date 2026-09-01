@@ -579,10 +579,13 @@ describe('health readiness', () => {
   it('reports mongo up while the connection is live', async () => {
     const response = await http().get('/api/v1/health/ready').expect(200);
 
-    expect(response.body).toEqual({
-      status: 'ok',
-      checks: { mongo: { status: 'up', detail: null } },
-    });
+    // The MONGO check specifically, which is what this case is about. The whole
+    // body is asserted exactly in `test/infrastructure/index-health.spec.ts`,
+    // which owns readiness; repeating it here only means two files to edit
+    // every time a check is added, and this one would be edited by whoever was
+    // least expecting to.
+    expect(response.body.status).toBe('ok');
+    expect(response.body.checks.mongo).toEqual({ status: 'up', detail: null });
   });
 
   it('keeps liveness free of dependencies', async () => {

@@ -2,6 +2,7 @@ import { Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import type { Connection } from 'mongoose';
 import { databaseConfig, type DatabaseConfig } from '../config/database.config';
+import { IndexHealthService } from './index-health.service';
 import { TransactionService } from './transaction.service';
 
 /**
@@ -20,9 +21,9 @@ import { TransactionService } from './transaction.service';
  * would be dishonest — adding ceremony while delivering none of the promised
  * replaceability.
  *
- * NOT here yet, by phase:
- *   index-sync step     — nothing declares an index yet
- *   seed scripts        — the database starts clean; there is no data migration
+ * Also here, both for the same reason — index work spans every collection and
+ * so belongs to no module: the `indexes:sync` script, and `IndexHealthService`,
+ * which is the readiness probe's half of the same concern.
  */
 
 const logger = new Logger('Database');
@@ -131,8 +132,8 @@ function registerConnectionLogging(connection: Connection): Connection {
    * prove the REAL infrastructure the domain modules will use, not a
    * test-local imitation of it.
    */
-  providers: [TransactionService],
-  exports: [TransactionService],
+  providers: [TransactionService, IndexHealthService],
+  exports: [TransactionService, IndexHealthService],
 })
 export class DatabaseModule implements OnApplicationShutdown {
   /**

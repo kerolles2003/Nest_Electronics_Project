@@ -93,11 +93,42 @@ mistake.** `autoIndex` is off deliberately (index creation is a release step, no
 effect of booting), so a fresh database has no indexes and behaviour that depends on them
 misbehaves in ways that look like application bugs.
 
+You no longer have to remember. **`GET /health/ready` refuses traffic when an index is
+missing**, names every one of them, and prints the command that fixes it:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3002/api/v1/health/ready
+# 200 -> indexes present   503 -> run indexes:sync
+```
+
+```jsonc
+// 503 Service Unavailable
+{
+  "status": "degraded",
+  "checks": {
+    "mongo": { "status": "up", "detail": null },
+    "indexes": {
+      "status": "down",
+      "detail": "2 of 33 declared indexes are missing or have the wrong options. Run: pnpm --filter api indexes:sync",
+      "missing": ["users.user_email_unique", "orders.order_idempotency_key_unique"],
+      "unexpected": [],
+      "remedy": "pnpm --filter api indexes:sync"
+    }
+  }
+}
+```
+
+Run `indexes:sync` and the **next** probe is green — there is no cache and no restart needed.
+
 Check it is alive:
 
 ```bash
 curl -s http://127.0.0.1:3002/api/v1/health | head -c 200
 ```
+
+Liveness stays `200` throughout, including while readiness is `503`. That is deliberate:
+restarting a process cannot create an index, so a missing index must drain traffic without
+triggering a restart loop.
 
 - Swagger UI — <http://127.0.0.1:3002/api/v1/docs>
 - OpenAPI JSON — <http://127.0.0.1:3002/api/v1/docs-json>
@@ -186,6 +217,8 @@ pnpm --filter api seed && pnpm --filter api indexes:sync
 | `Transaction numbers are only allowed on a replica set member` | standalone mongod, not the compose file | §1 |
 | `seed category development-boards is missing` | never seeded | `pnpm --filter api seed` |
 | Queries behave oddly; index assertions fail | seeded but no indexes | `pnpm --filter api indexes:sync` |
+| `/health/ready` returns `503` with `checks.indexes.status: "down"` | indexes never created, or a schema changed | run the `remedy` in the response body |
+| `/health/ready` is `503` but `checks.mongo` is `down` too | the database, not the indexes | §1 — `indexes` reads `not checked` in this case |
 | Boot fails listing env keys | a required variable is missing or malformed | read the list; values are never echoed for secrets |
 | `429` on register/login | the real rate limits (§4) | wait, or restart the API |
 | No verification link in the terminal | `EMAIL_PROVIDER` is not `console` | set it; no key needed |

@@ -38,10 +38,25 @@ import { buildOpenApiDocumentConfig } from './openapi.document';
  * meaning: a removed path, a removed operation, a removed schema, a removed
  * property, a retyped property, or a property that has newly become required.
  *
- * The last is conservative. Newly-required is harmless in a response and fatal
- * in a request body, and this gate does not try to tell which it is looking at.
- * Over-reporting a breaking change costs a conversation; under-reporting one
- * costs a release.
+ * The last depends on WHERE the schema is used, and the gate works that out
+ * rather than assuming the worst everywhere.
+ *
+ *   in a REQUEST body   fatal      every shipped client now sends an invalid
+ *                                  payload, because it does not know the field
+ *   in a RESPONSE       additive   clients receive one more field, which the
+ *                                  ones already shipped ignore
+ *
+ * Classification is by reachability through `$ref`, transitively: a request
+ * body naming one DTO drags in every nested DTO with it, and a newly-required
+ * field on a nested one breaks exactly as hard as on the outer one.
+ *
+ * A schema is exempt ONLY if it is reachable from a response and not from a
+ * request. Reached by both is fatal, and so is reached by NEITHER — an
+ * unreferenced schema is one this analysis does not understand, and the safe
+ * reading of "I cannot tell" is the fatal one. Over-reporting a breaking change
+ * costs a conversation; under-reporting one costs a release, and that asymmetry
+ * is deliberately unchanged. What has gone is only the over-report the document
+ * itself carries enough information to avoid.
  */
 
 const FROZEN = resolve(__dirname, '../../../../docs/api/openapi.v1.json');
@@ -56,9 +71,100 @@ const isObject = (value: unknown): value is Json =>
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 
-/** Every breaking difference found, each as a sentence a human can act on. */
-function findBreakingChanges(frozen: Json, generated: Json): string[] {
+const SCHEMA_REF_PREFIX = '#/components/schemas/';
+
+/** Which half of an operation a schema was reached from. */
+type Side = 'request' | 'response';
+
+/** Every `#/components/schemas/X` name mentioned anywhere inside `node`. */
+function refsIn(node: unknown, found: Set<string>): Set<string> {
+  if (Array.isArray(node)) {
+    for (const item of node) refsIn(item, found);
+    return found;
+  }
+
+  if (!isObject(node)) return found;
+
+  for (const [key, value] of Object.entries(node)) {
+    if (key === '$ref' && typeof value === 'string' && value.startsWith(SCHEMA_REF_PREFIX)) {
+      found.add(value.slice(SCHEMA_REF_PREFIX.length));
+      continue;
+    }
+
+    refsIn(value, found);
+  }
+
+  return found;
+}
+
+/**
+ * The schema names reachable from one side of every operation in the document.
+ *
+ * `request` seeds from `requestBody` and `parameters` — the two places a
+ * client's own payload is described. `response` seeds from `responses`. Both
+ * then close transitively over the schema graph, because a nested DTO is as
+ * much part of the contract as the one that names it.
+ */
+export function reachableSchemas(document: Json, side: Side): Set<string> {
+  const components = isObject(document['components']) ? document['components'] : {};
+  const schemas = isObject(components['schemas']) ? components['schemas'] : {};
+  const paths = isObject(document['paths']) ? document['paths'] : {};
+
+  const seeds = new Set<string>();
+
+  for (const item of Object.values(paths)) {
+    if (!isObject(item)) continue;
+
+    if (side === 'request') refsIn(item['parameters'], seeds);
+
+    for (const method of HTTP_METHODS) {
+      const operation = item[method];
+      if (!isObject(operation)) continue;
+
+      if (side === 'request') {
+        refsIn(operation['requestBody'], seeds);
+        refsIn(operation['parameters'], seeds);
+      } else {
+        refsIn(operation['responses'], seeds);
+      }
+    }
+  }
+
+  const reachable = new Set<string>();
+  const queue = [...seeds];
+
+  while (queue.length > 0) {
+    const name = queue.pop();
+    if (name === undefined || reachable.has(name)) continue;
+    reachable.add(name);
+
+    for (const nested of refsIn(schemas[name], new Set<string>())) {
+      if (!reachable.has(nested)) queue.push(nested);
+    }
+  }
+
+  return reachable;
+}
+
+/**
+ * Every breaking difference found, each as a sentence a human can act on.
+ *
+ * Exported for `check-openapi-drift.spec.ts`. The rule this encodes is the only
+ * thing standing between a contract change and every shipped client, so it is
+ * tested in both directions — that it still fails what it always failed, and
+ * that the response-only exemption cannot be reached from a request.
+ */
+export function findBreakingChanges(frozen: Json, generated: Json): string[] {
   const breaking: string[] = [];
+
+  /*
+   * Classified from the GENERATED document, not the frozen one. A schema that
+   * moves INTO a request body as part of this very change must be judged by
+   * where it is used now — reading the old document would classify it as
+   * response-only and wave the break straight through.
+   */
+  const requestSide = reachableSchemas(generated, 'request');
+  const responseSide = reachableSchemas(generated, 'response');
 
   const frozenPaths = isObject(frozen['paths']) ? frozen['paths'] : {};
   const generatedPaths = isObject(generated['paths']) ? generated['paths'] : {};
@@ -131,9 +237,15 @@ function findBreakingChanges(frozen: Json, generated: Json): string[] {
       : [];
 
     for (const prop of generatedRequired) {
-      if (!frozenRequired.has(prop)) {
-        breaking.push(`property newly required: ${name}.${prop}`);
-      }
+      if (frozenRequired.has(prop)) continue;
+
+      // Exempt only when the document PROVES the schema is response-only. A
+      // client cannot be broken by being sent a field it does not read. Used in
+      // a request, used in both, or referenced by nothing at all: all fatal.
+      if (responseSide.has(name) && !requestSide.has(name)) continue;
+
+      const where = requestSide.has(name) ? 'used in a request' : 'not reachable from any response';
+      breaking.push(`property newly required: ${name}.${prop} (${where})`);
     }
   }
 
@@ -202,7 +314,15 @@ async function main(): Promise<void> {
   process.exitCode = 1;
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`drift gate failed to run: ${String(error)}\n`);
-  process.exitCode = 1;
-});
+/*
+ * Only when RUN, never when imported. The spec imports this module for
+ * `findBreakingChanges`, and without this guard that import would execute the
+ * whole gate — reading the artifact, hitting the filesystem, and setting
+ * `process.exitCode = 1` on a test run that had passed.
+ */
+if (require.main === module) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`drift gate failed to run: ${String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

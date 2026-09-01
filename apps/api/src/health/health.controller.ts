@@ -4,14 +4,33 @@ import { ApiOkResponse, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import type { Response } from 'express';
 import { Connection } from 'mongoose';
 import { Public } from '../common/decorators/public.decorator';
+import { INDEX_SYNC_REMEDY, IndexHealthService } from '../database/index-health.service';
 import {
   HealthResponseDto,
   ReadinessResponseDto,
   type DependencyCheckDto,
+  type IndexCheckDto,
 } from './health.response.dto';
 
 /** Long enough for a healthy round trip, short enough not to stall a probe. */
 const PING_TIMEOUT_MS = 2_000;
+
+/**
+ * What the index check reports when the database never answered.
+ *
+ * `down`, not `up` — readiness has already failed on Mongo, and reporting the
+ * indexes as fine would assert something nothing verified. The detail says
+ * UNKNOWN rather than naming indexes, because sending someone to run
+ * `indexes:sync` against an unreachable database wastes the one minute they
+ * have to find the real fault.
+ */
+const SKIPPED_INDEX_CHECK = {
+  status: 'down',
+  detail: 'not checked - the database did not answer',
+  missing: [],
+  unexpected: [],
+  remedy: null,
+} as const satisfies IndexCheckDto;
 
 /**
  * The two probes an orchestrator needs, and no more.
@@ -37,7 +56,10 @@ const PING_TIMEOUT_MS = 2_000;
 @Controller('health')
 @Public()
 export class HealthController {
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    private readonly indexHealth: IndexHealthService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -58,22 +80,60 @@ export class HealthController {
       'Reports whether critical dependencies are reachable. `200` when every check passes,',
       '`503` when any is down — so a load balancer can drain this instance without restarting it.',
       '',
-      'Currently checks MongoDB only. Cloudinary appears here when MediaModule does; reporting a',
-      'dependency that does not exist as `up` would be a lie a load balancer believes.',
+      'Checks that MongoDB answers, and that every index the schemas declare actually exists.',
+      '',
+      'The index check is not decoration. `autoIndex` is off by design, so a database that has',
+      'never had `indexes:sync` run against it connects, answers every query, and serves traffic',
+      'with several unique constraints simply absent - and those constraints are the entire',
+      'enforcement behind "one account per email" and "one order per idempotency key". An',
+      'instance in that state must refuse traffic rather than accept it and violate them.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: ReadinessResponseDto })
   @ApiResponse({ status: 503, type: ReadinessResponseDto, description: 'A dependency is down.' })
   async ready(@Res({ passthrough: true }) response: Response): Promise<ReadinessResponseDto> {
     const mongo = await this.pingMongo();
-    const healthy = mongo.status === 'up';
+
+    // Sequential, not parallel, and deliberately so: with no database there is
+    // no catalogue to read, and a second wave of failing commands would only
+    // add noise to the logs of an outage that already has a cause.
+    const indexes = mongo.status === 'up' ? await this.checkIndexes() : { ...SKIPPED_INDEX_CHECK };
+
+    const healthy = mongo.status === 'up' && indexes.status === 'up';
 
     // 503, not 200-with-a-flag: infrastructure routes on the STATUS CODE, and
     // a body saying "degraded" under a 200 keeps traffic arriving at an
     // instance that cannot serve it.
     response.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE);
 
-    return { status: healthy ? 'ok' : 'degraded', checks: { mongo } };
+    return { status: healthy ? 'ok' : 'degraded', checks: { mongo, indexes } };
+  }
+
+  /**
+   * Names every missing index and the one command that creates them.
+   *
+   * `detail` is a sentence rather than a code because this response is what
+   * somebody reads at the moment a deployment refuses to come up, and the whole
+   * point of the check is that the underlying state gives no other clue.
+   */
+  private async checkIndexes(): Promise<IndexCheckDto> {
+    const report = await this.indexHealth.verify();
+    const missing = report.missing.map((index) => `${index.collection}.${index.name}`);
+    const unexpected = report.unexpected.map((index) => `${index.collection}.${index.name}`);
+
+    if (missing.length === 0) {
+      return { status: 'up', detail: null, missing: [], unexpected, remedy: null };
+    }
+
+    return {
+      status: 'down',
+      detail:
+        `${String(missing.length)} of ${String(report.declared)} declared indexes are missing ` +
+        `or have the wrong options. Run: ${INDEX_SYNC_REMEDY}`,
+      missing,
+      unexpected,
+      remedy: INDEX_SYNC_REMEDY,
+    };
   }
 
   /**
@@ -95,12 +155,24 @@ export class HealthController {
       return { status: 'down', detail: 'no database handle' };
     }
 
+    /*
+     * The timer is CLEARED in `finally`, and that is not tidiness.
+     *
+     * `Promise.race` settles on the winner but does not cancel the loser, so a
+     * timer left behind here outlives every successful probe by two seconds. It
+     * holds the event loop open, which means a process asked to shut down waits
+     * for a timeout belonging to a check that already passed — and jest reports
+     * the same thing as "did not exit one second after the test run", which is
+     * how this was found.
+     */
+    let timer: NodeJS.Timeout | undefined;
+
     try {
       await Promise.race([
         db.admin().ping(),
-        new Promise<never>((_resolve, reject) =>
-          setTimeout(() => reject(new Error('ping timed out')), PING_TIMEOUT_MS),
-        ),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('ping timed out')), PING_TIMEOUT_MS);
+        }),
       ]);
 
       return { status: 'up', detail: null };
@@ -112,6 +184,8 @@ export class HealthController {
         status: 'down',
         detail: error instanceof Error ? error.message.slice(0, 120) : 'unreachable',
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
