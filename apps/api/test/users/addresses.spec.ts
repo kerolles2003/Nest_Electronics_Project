@@ -25,7 +25,7 @@ import {
 
 /**
  * The customer address book, its default invariant, and its consumption by
- * checkout — end to end, against the real application and the real Atlas
+ * checkout — end to end, against the real application and the real
  * development replica set.
  *
  * ISOLATION. The suite creates its OWN users, one product and its own orders,

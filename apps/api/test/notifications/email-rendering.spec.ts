@@ -39,8 +39,64 @@ function decodeEntities(html: string): string {
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&#x2F;/g, '/')
+    .replace(/&minus;/g, '\u2212')
+    .replace(/&times;/g, '\u00d7')
     // Last, so a literal `&amp;#x3D;` cannot be double-decoded.
     .replace(/&amp;/g, '&');
+}
+
+/**
+ * The right-hand cell of one labelled row in the totals table.
+ *
+ * ## Why a whole-document `toContain` is not good enough here
+ *
+ * Every value in this block is a money string, and money strings nest: the
+ * discount `50.00 EGP` is a substring of the line total `650.00 EGP`, so
+ * `expect(html).toContain('50.00 EGP')` passed whether or not a Discount row
+ * was ever rendered. Others were satisfied by a DIFFERENT number on the same
+ * page — `735.50 EGP` appears three times (subtotal, total, amount due), so an
+ * assertion aimed at the subtotal was really testing that at least one of the
+ * three survived.
+ *
+ * Naming the row makes each assertion fail for the reason it claims.
+ */
+function summaryRow(html: string, label: string): string {
+  const row = new RegExp(
+    '<td[^>]*>\\s*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)</td>',
+  ).exec(html);
+  return row === null
+    ? '<no ' + label + ' row>'
+    : decodeEntities(row[1] ?? '')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+}
+
+/**
+ * The HTML reduced to the text a reader actually sees, whitespace collapsed.
+ *
+ * Line items are markup, not a table of scalars — the name and the
+ * "qty x unit price" line share one cell, inside nested spans — so the honest
+ * assertion for a line item is the whole composed line, in order. That ties
+ * name, quantity, unit price and line total together; a substring search for
+ * any one of them does not.
+ */
+function visibleText(html: string): string {
+  return decodeEntities(html.replace(/<style[\s\S]*?<\/style>/g, ''))
+    // Each tag becomes a SPACE, not nothing: `</span><br /><span>` carries no
+    // whitespace of its own, so deleting the tags outright would weld the
+    // product name onto the price that follows it.
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The same row, in the plain-text body, where the label starts the line. */
+function textRow(text: string, label: string): string {
+  const line = text
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .find((l) => l.startsWith(label));
+  return line === undefined ? '<no ' + label + ' line>' : line.slice(label.length).trim();
 }
 
 /**
@@ -181,17 +237,33 @@ describe('orders/order-placed', () => {
 
     for (const item of ORDER.items) {
       expect(rendered.html).toContain(item.name);
-      expect(rendered.html).toContain(item.lineTotal);
       expect(rendered.text).toContain(item.name);
+
+      // The WHOLE line, not just the line total. `85.50 EGP` occurs twice for a
+      // quantity-1 item — once as the unit price and once as the line total —
+      // so asserting that substring alone still passed if the Total column were
+      // dropped entirely.
+      expect(rendered.text).toContain(
+        `${String(item.quantity)} x ${item.unitPrice}  =  ${item.lineTotal}`,
+      );
+      expect(visibleText(rendered.html)).toContain(
+        `${item.name} ${String(item.quantity)} \u00d7 ${item.unitPrice} ${item.lineTotal}`,
+      );
     }
-    expect(rendered.html).toContain('735.50 EGP');
+
+    // Named, because `735.50 EGP` is ALSO the grand total and the amount due.
+    expect(summaryRow(rendered.html, 'Subtotal')).toBe('735.50 EGP');
+    expect(textRow(rendered.text, 'Subtotal')).toBe('735.50 EGP');
   });
 
   it('renders the delivery address from the snapshot', async () => {
     const rendered = await renderer.render('orders/order-placed', ORDER, 'en');
 
     expect(rendered.html).toContain('12 Sherif Street, Apartment 4');
-    expect(rendered.html).toContain('Cairo');
+    // The composed line, not the bare governorate: 'Cairo' is a short word a
+    // footer or a marketing line could reintroduce at any time, and this would
+    // then pass without the address block rendering at all.
+    expect(rendered.html).toContain('Downtown, Cairo');
     expect(rendered.html).toContain('01012345678');
   });
 
@@ -209,7 +281,10 @@ describe('orders/order-placed', () => {
     );
 
     expect(rendered.html).toContain('Discount');
-    expect(rendered.html).toContain('50.00 EGP');
+    // VACUOUS BEFORE: '50.00 EGP' is a substring of the line total
+    // '650.00 EGP', so this passed with no Discount row rendered at all.
+    // The minus sign is asserted too — it never was.
+    expect(summaryRow(rendered.html, 'Discount')).toBe('\u221250.00 EGP');
   });
 
   it('says delivery is not yet priced rather than claiming it is free', async () => {
@@ -218,7 +293,7 @@ describe('orders/order-placed', () => {
     // business has not agreed to.
     const rendered = await renderer.render('orders/order-placed', ORDER, 'en');
 
-    expect(rendered.html).toContain('Calculated before dispatch');
+    expect(summaryRow(rendered.html, 'Delivery')).toBe('Calculated before dispatch');
   });
 
   it('prints the real fee once delivery is priced', async () => {
@@ -228,7 +303,7 @@ describe('orders/order-placed', () => {
       'en',
     );
 
-    expect(rendered.html).toContain('45.00 EGP');
+    expect(summaryRow(rendered.html, 'Delivery')).toBe('45.00 EGP');
     expect(rendered.html).not.toContain('Calculated before dispatch');
     expect(rendered.html).not.toContain('Free');
   });
@@ -256,10 +331,10 @@ describe('orders/order-placed', () => {
 
     const rendered = await renderer.render('orders/order-placed', free, 'en');
 
-    expect(rendered.html).toContain('Free');
+    expect(summaryRow(rendered.html, 'Delivery')).toBe('Free');
     expect(rendered.html).not.toContain('Calculated before dispatch');
 
-    expect(rendered.text).toContain('Free');
+    expect(textRow(rendered.text, 'Delivery')).toBe('Free');
     expect(rendered.text).not.toContain('Calculated before dispatch');
   });
 
@@ -267,16 +342,21 @@ describe('orders/order-placed', () => {
     // The two flags are mutually exclusive by construction in
     // NotificationsService; this pins the template so a future edit cannot
     // render both branches.
-    for (const variant of [
-      { shippingUnpriced: true, shippingFree: false },
-      { shippingUnpriced: false, shippingFree: true },
-      { shippingUnpriced: false, shippingFree: false },
-    ]) {
+    // Asserted as ONE row with ONE value rather than as two independent
+    // whole-document searches. "Never both" is implied by "is exactly this",
+    // and the stronger form also catches a row that renders NEITHER — which the
+    // old assertion scored as a pass.
+    for (const [variant, expected] of [
+      [{ shippingUnpriced: true, shippingFree: false }, 'Calculated before dispatch'],
+      [{ shippingUnpriced: false, shippingFree: true }, 'Free'],
+      [{ shippingUnpriced: false, shippingFree: false }, '0.00 EGP'],
+    ] as const) {
       const rendered = await renderer.render('orders/order-placed', { ...ORDER, ...variant }, 'en');
-      const saysUnpriced = rendered.html.includes('Calculated before dispatch');
-      const saysFree = rendered.html.includes('Free');
 
-      expect(saysUnpriced && saysFree).toBe(false);
+      expect({ variant, delivery: summaryRow(rendered.html, 'Delivery') }).toEqual({
+        variant,
+        delivery: expected,
+      });
     }
   });
 

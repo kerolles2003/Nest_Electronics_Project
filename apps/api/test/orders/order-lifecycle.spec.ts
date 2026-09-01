@@ -32,7 +32,7 @@ import { Role, User, type UserLean } from '../../src/modules/users/infrastructur
 
 /**
  * The order LIFECYCLE and customer cancellation, end to end, against the real
- * application and the real Atlas development database.
+ * application and the real development database.
  *
  * Orders are placed through the REAL `POST /orders`, so the stock that gets
  * restored is stock the real placement path actually took.

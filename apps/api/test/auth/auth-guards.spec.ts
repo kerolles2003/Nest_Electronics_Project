@@ -38,7 +38,7 @@ function http(): request.Agent {
  *
  * `compile()` is called exactly ONCE. An earlier version compiled twice — once
  * to read the real configuration and once with the override — and each compile
- * opens its own Atlas connection, so the discarded one leaked a handle that
+ * opens its own database connection, so the discarded one leaked a handle that
  * kept Jest alive until the suite timed out.
  */
 async function bootTestApp(overrideConfig?: Partial<AuthConfig>): Promise<INestApplication> {

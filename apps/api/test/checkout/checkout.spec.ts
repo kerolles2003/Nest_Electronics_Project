@@ -20,7 +20,7 @@ import { Role, User, type UserLean } from '../../src/modules/users/infrastructur
 
 /**
  * Checkout and order placement, end to end, against the real application and
- * the real Atlas development replica set.
+ * the real development replica set.
  *
  * ISOLATION. The suite creates its OWN products, users, carts and orders, and
  * removes them by tracked id in `afterAll`. There is no `dropDatabase`, no

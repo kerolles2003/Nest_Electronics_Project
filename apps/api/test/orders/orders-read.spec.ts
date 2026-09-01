@@ -19,7 +19,7 @@ import { Role, User, type UserLean } from '../../src/modules/users/infrastructur
 
 /**
  * The customer Orders READ API, end to end, against the real application and
- * the real Atlas development database.
+ * the real development database.
  *
  * Orders here are placed through the REAL `POST /orders`, not inserted by
  * hand — a read test that fabricates its own rows proves the reader agrees with

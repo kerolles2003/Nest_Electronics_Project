@@ -16,7 +16,7 @@ import { Product } from '../../src/modules/catalog/infrastructure/schemas/produc
 import { Role, User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
 
 /**
- * Cart end-to-end, against the real application and the real Atlas development
+ * Cart end-to-end, against the real application and the real development
  * database.
  *
  * ISOLATION. This suite creates its OWN products rather than using the seeded
@@ -445,8 +445,13 @@ describe('POST /cart/items', () => {
       .expect(409);
 
     expect(response.body.error.code).toBe('OUT_OF_STOCK');
-    expect(response.body.error.details[0].message).toContain('CART-TEST-EMPTY');
-    expect(response.body.error.details[0].message).toContain('0 available');
+    // The whole sentence, not two substrings of it. `'0 available'` is a
+    // substring of `'10 available'` and `'100 available'`, so the old pair
+    // passed for a product that had stock — and could not tell whether the SKU
+    // and the quantity were even talking about the same line.
+    expect(response.body.error.details[0].message).toBe(
+      `${`CART-TEST-EMPTY-${RUN_ID}`.toUpperCase()} has 0 available`,
+    );
   });
 });
 

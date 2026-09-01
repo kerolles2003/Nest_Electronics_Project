@@ -24,7 +24,7 @@ import { Role, User, type UserLean } from '../../src/modules/users/infrastructur
 
 /**
  * ADMIN order operations and the full operational lifecycle, end to end,
- * against the real application and the real Atlas development database.
+ * against the real application and the real development database.
  *
  * Every order is placed through the REAL `POST /orders` and every transition
  * goes through the REAL admin HTTP endpoints. No lifecycle state is hand-written
@@ -1143,7 +1143,7 @@ describe('admin work queue', () => {
 });
 
 describe('index usage', () => {
-  /** The exact query the admin queue issues, explained against real Atlas. */
+  /** The exact query the admin queue issues, explained against the real database. */
   async function explainQueue(filter: Record<string, unknown>) {
     return orders
       .find(filter)
@@ -1152,10 +1152,24 @@ describe('index usage', () => {
       .explain('executionStats');
   }
 
+  /**
+   * The WINNING plan only.
+   *
+   * `JSON.stringify(explain)` includes `queryPlanner.rejectedPlans`, so
+   * `toContain('order_admin_queue')` against the whole document passed when the
+   * queue was served by a DIFFERENT index and `order_admin_queue` appeared only
+   * among the plans the planner threw away — which is exactly the regression
+   * these tests exist to catch. `orders-read.spec.ts` already scoped its
+   * equivalent to `queryPlanner.winningPlan`; these did not.
+   */
+  function winningPlanOf(explain: unknown): string {
+    return JSON.stringify((explain as { queryPlanner: { winningPlan: unknown } }).queryPlanner.winningPlan);
+  }
+
   it('serves the UNFILTERED queue with an index scan and no blocking sort', async () => {
     await placeSimpleOrder(1);
 
-    const plan = JSON.stringify((await explainQueue({})) as unknown);
+    const plan = winningPlanOf(await explainQueue({}));
 
     expect(plan).toContain('order_admin_queue');
     expect(plan).toContain('IXSCAN');
@@ -1167,8 +1181,8 @@ describe('index usage', () => {
   });
 
   it('serves the STATUS-FILTERED queue from the same index', async () => {
-    const plan = JSON.stringify(
-      (await explainQueue({ status: { $in: [OrderStatus.PLACED, OrderStatus.CONFIRMED] } })) as unknown,
+    const plan = winningPlanOf(
+      await explainQueue({ status: { $in: [OrderStatus.PLACED, OrderStatus.CONFIRMED] } }),
     );
 
     // `status` rides along as a residual predicate rather than needing an index
@@ -1180,12 +1194,12 @@ describe('index usage', () => {
   });
 
   it('still serves the CUSTOMER history from its own index', async () => {
-    const plan = JSON.stringify(
-      (await orders
+    const plan = winningPlanOf(
+      await orders
         .find({ userId: alice.id })
         .sort({ placedAt: -1, _id: -1 })
         .limit(24)
-        .explain('executionStats')) as unknown,
+        .explain('executionStats'),
     );
 
     // The admin index must not have displaced the customer one.

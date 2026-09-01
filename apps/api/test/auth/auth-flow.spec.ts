@@ -17,7 +17,7 @@ import {
 import { User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
 
 /**
- * Authentication end-to-end, against the REAL application and the REAL Atlas
+ * Authentication end-to-end, against the REAL application and the REAL
  * development database.
  *
  * Two deliberate choices:

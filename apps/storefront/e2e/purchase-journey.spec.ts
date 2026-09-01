@@ -122,10 +122,18 @@ test('a customer can register, order and see it in their history', async ({ page
 
     await expect(page.getByRole('heading', { name: 'Checkout' })).toBeVisible();
     // Every amount on this page is the server's own `formatted` string; the
-    // page does no arithmetic. Asserting the currency proves a real quote came
-    // back rather than a placeholder.
+    // page does no arithmetic.
+    //
+    // Asserted on the TOTAL ROW, not on the page. This was
+    // `getByText(/EGP/).first()`, which any cart line's price satisfied — so
+    // the quote's own total could have rendered blank, or "-", or "NaN EGP",
+    // and the step still passed. Matching the `<dd>` beside "Total to pay"
+    // against a complete money string is what "a real quote came back" means.
     await expect(page.getByText('Total to pay')).toBeVisible();
-    await expect(page.getByText(/EGP/).first()).toBeVisible();
+    const total = page
+      .locator('dt', { hasText: 'Total to pay' })
+      .locator('xpath=following-sibling::dd[1]');
+    await expect(total).toHaveText(/^[\d,]+\.\d{2} EGP$/);
   });
 
   await test.step('place the order', async () => {

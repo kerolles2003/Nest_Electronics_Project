@@ -20,13 +20,16 @@ import { Category } from '../../src/modules/catalog/infrastructure/schemas/categ
 import { Product } from '../../src/modules/catalog/infrastructure/schemas/product.schema';
 import { InventoryEvent } from '../../src/modules/inventory/infrastructure/schemas/inventory-event.schema';
 import { IdempotencyKeyRecord } from '../../src/modules/orders/infrastructure/schemas/idempotency-key.schema';
+import { MoneyDto } from '../../src/common/dto/money.dto';
 import { Order, type OrderLean } from '../../src/modules/orders/infrastructure/schemas/order.schema';
 import { User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
 
 /**
- * Transactional email against the REAL application and the REAL Atlas
- * development replica set — with the transport, and only the transport,
- * replaced.
+ * Transactional email against the REAL application and the REAL development
+ * MongoDB replica set — with the transport, and only the transport, replaced.
+ *
+ * (That replica set is the local `rs0` container since B1 made local Mongo the
+ * documented development default; it was Atlas before.)
  *
  * ## What is faked and what is not
  *
@@ -455,7 +458,24 @@ describe('order confirmation', () => {
     expect(message?.subject).toBe(`We received your order ${stored?.orderNumber ?? ''}`);
     // The address in the email is the order's immutable copy.
     expect(message?.text).toContain(ADDRESS.street);
-    expect(message?.text).toContain('325.00 EGP');
+
+    /*
+     * Read off the STORED pricing, on the named row.
+     *
+     * This was `toContain('325.00 EGP')` — a literal, against the whole body.
+     * The fixture product costs 32500, so that one string is simultaneously the
+     * unit price, the line total, the subtotal, the grand total and the amount
+     * due: the assertion could not tell which row it had found, and would have
+     * passed with four of the five missing. It also contradicted the test's own
+     * claim, which is that the email is built from the PERSISTED snapshot —
+     * a hardcoded literal proves nothing about the stored document.
+     */
+    const totalLine = (message?.text ?? '')
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .find((line) => line.startsWith('Total'));
+
+    expect(totalLine).toBe(`Total             ${MoneyDto.of(stored?.pricing.grandTotal ?? -1).formatted}`);
     expect(message?.to).toEqual([{ email: stored?.customer.email, name: 'Mina Kerolles' }]);
   });
 
