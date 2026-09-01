@@ -2171,3 +2171,74 @@ they run, they assert, and they fail on purpose — the suite goes red the day t
 Nothing would catch a `.only` committed by accident. It is a small guard and it
 belongs to whoever decides it is worth having; item 4 asked for verification, so
 this is reported rather than built.
+
+## 5 — the index-dependent invariants, verified rather than assumed
+
+**I under-reported this in session 4.** I said two repositories catch error
+`11000` as their entire concurrency control. Verified: there are **five call
+sites**, of which **four are genuinely at risk** and one is not — and there are
+**eight** invariants, not seven.
+
+### The eight, and the index each depends on
+
+| # | Invariant | Index | Where the catch is | Consequence if the index is absent |
+|---|---|---|---|---|
+| 1 | one account per email | `users.user_email_unique` | `CredentialRepository.create` | two accounts on one address; login resolves to whichever row returns first |
+| 2 | one cart per customer | `carts.cart_user_unique` | `CartRepository.addLine` | two carts; which one the customer sees depends on the query |
+| 3 | one order per idempotency key | `idempotencyKeys.idempotency_key_unique` | `IdempotencyRepository.reserve` | **`reserve()` always returns `true` and a retried checkout places a second order** |
+| 4 | the same, one layer deeper | `orders.order_idempotency_key_unique` | `CheckoutService.place` | the belt behind #3 |
+| 5 | one number per order | `orders.order_number_unique` | *no catch* — the daily counter allocates it | two orders share a customer-facing number |
+| 6 | one stock movement per order line | `inventoryEvents.inventory_event_reference_unique` | *no catch* — the write fails outright | a double SALE or RESTORE moves stock twice |
+| 7 | one product per SKU | `products.product_sku_unique` | `ImportRunner` reports the errored row | an import duplicates instead of upserting |
+| 8 | one ledger row per stored asset | `mediaAssets.media_asset_public_id_unique` | `MediaAssetRepository.record` | the upsert stops being atomic |
+
+**#3 is the one I had wrong.** I listed `orders.order_idempotency_key_unique`,
+but the catch that actually decides whether a checkout is a replay is on
+`idempotencyKeys.idempotency_key_unique`. It is also the most expensive of the
+eight: without it a retried checkout charges the customer twice, and nothing
+anywhere raises.
+
+### The one that looks identical and is safe
+
+`OrderCounterRepository` catches `11000` in the same shape. It is **not** at
+risk: its key is the document's `_id`, the one index MongoDB always creates and
+`syncIndexes()` cannot drop. Recorded at the site, because the pattern is
+indistinguishable from the four that are.
+
+### All eight are covered by the probe — proven, not asserted
+
+The probe walks `schema.indexes()` for every registered model, so coverage is
+automatic rather than a list somebody maintains. `it.each` over the table above
+checks that each index is genuinely declared, so a renamed or removed
+declaration fails here instead of silently leaving an invariant unguarded. A
+ninth entry added to the code and not to the table trips a length assertion.
+
+### The comments
+
+Every `catch (11000)` site now says the index **is** the concurrency control,
+what breaks without it, and where the table lives. The shared header on each
+`DUPLICATE_KEY = 11000` constant says it once more:
+
+> Every `catch` on this code below is a CONCURRENCY CONTROL, not error handling.
+> Drop the index and the error never arrives, the catch never runs, and the race
+> silently succeeds — no exception, no log line, nothing to notice.
+
+That is the whole problem in three lines: the code reads as ordinary defensive
+error handling, which is exactly why the index under it looks removable.
+
+### The probe's own guarantee is now tested
+
+Two new cases, on `users.user_email_unique` — the most consequential of the
+eight rather than the safest:
+
+- **dropped → `GET /health/ready` answers 503**, names `users.user_email_unique`,
+  prints the remedy, and **liveness stays 200** (restarting cannot create an
+  index). Restored, then 200 again.
+- **recreated WITHOUT `unique`, under the same name** → still reported missing.
+  A name comparison would call that healthy; `diffIndexes()` does not.
+
+Restored in `finally` and again in `afterEach`, and verified afterwards outside
+the suite: the index is present, `unique: true`, and **refuses a real duplicate
+insert** — checked by inserting one rather than by reading `listIndexes`.
+
+jest **813 passed, 15 skipped** (828). Drift gate green.

@@ -260,9 +260,21 @@ export class CheckoutService {
       );
     } catch (error) {
       if (error instanceof DuplicateCheckoutError || isDuplicateKeyError(error)) {
-        // Another request won the key, or won `orders.idempotencyKey`. Our
-        // transaction rolled back completely — no stock moved, no order exists,
-        // the cart is untouched — so the only thing left is to return theirs.
+        /*
+         * TWO unique indexes are the concurrency control here, not this catch:
+         * `idempotencyKeys.idempotency_key_unique` and
+         * `orders.order_idempotency_key_unique`. The second is a deliberate
+         * belt on the first — the reservation and the order are written in one
+         * transaction, and the order's own index is what holds if that ever
+         * stops being true.
+         *
+         * With neither, this branch is unreachable and a retried checkout
+         * commits a second order. See `test/infrastructure/index-health.spec.ts`.
+         *
+         * Another request won the key, or won `orders.idempotencyKey`. Our
+         * transaction rolled back completely — no stock moved, no order exists,
+         * the cart is untouched — so the only thing left is to return theirs.
+         */
         return { order: await this.resolveContested(command, requestHash), replayed: true };
       }
 

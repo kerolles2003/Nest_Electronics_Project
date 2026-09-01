@@ -8,6 +8,19 @@ import {
   type IdempotencyKeyLean,
 } from '../schemas/idempotency-key.schema';
 
+/**
+ * MongoDB's duplicate-key error code.
+ *
+ * **Every `catch` on this code below is a CONCURRENCY CONTROL, not error
+ * handling.** The unique index is what makes the operation correct under
+ * concurrency; the catch is only how the refusal is translated. Drop the
+ * index and the error never arrives, the catch never runs, and the race
+ * silently succeeds — no exception, no log line, nothing to notice.
+ *
+ * `GET /health/ready` refuses traffic when a declared index is missing, and
+ * `test/infrastructure/index-health.spec.ts` lists every invariant that
+ * depends on one. Do not remove an index named there.
+ */
 const DUPLICATE_KEY = 11000;
 
 export function isDuplicateKeyError(error: unknown): boolean {
@@ -74,6 +87,17 @@ export class IdempotencyRepository {
 
       return true;
     } catch (error) {
+      /*
+       * `idempotencyKeys.idempotency_key_unique` IS the idempotency guarantee.
+       *
+       * `false` means "another request already reserved this key", and the only
+       * thing that can tell us so is the insert being refused. Without the
+       * index every reservation succeeds, this always returns `true`, and a
+       * retried checkout places a SECOND ORDER against the customer's card.
+       *
+       * That is the most expensive consequence of a missing index in this
+       * system, and it produces no error anywhere.
+       */
       if (isDuplicateKeyError(error)) {
         return false;
       }

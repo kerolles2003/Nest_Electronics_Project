@@ -21,16 +21,29 @@ import { Connection, type Model } from 'mongoose';
  * several unique indexes are not optimisations at all — they are the mechanism
  * by which an invariant is enforced:
  *
- *   `user_email_unique`                 two accounts on one address
- *   `order_idempotency_key_unique`      a retried checkout becomes two orders
- *   `inventory_event_reference_unique`  one order line decrements stock twice
- *   `cart_user_unique`                  a customer holding two carts
+ *   `user_email_unique`                  two accounts on one address
+ *   `idempotency_key_unique`             a retried checkout becomes two orders
+ *   `order_idempotency_key_unique`       the same, one layer deeper
+ *   `order_number_unique`                two orders sharing one number
+ *   `inventory_event_reference_unique`   one order line decrements stock twice
+ *   `cart_user_unique`                   a customer holding two carts
+ *   `product_sku_unique`                 an import duplicates instead of upserting
+ *   `media_asset_public_id_unique`       two ledger rows for one stored asset
  *
- * `CredentialRepository` and `CartRepository` both CATCH MongoDB error 11000
- * and translate it into a domain error. That is their entire concurrency
- * control. Without the index the error never arrives, the `catch` never runs,
- * and the race silently succeeds. A guarantee that can be absent without
- * anything saying so is not a guarantee, so readiness asserts it.
+ * **FOUR call sites CATCH MongoDB error 11000 and translate it** —
+ * `CredentialRepository`, `CartRepository`, `IdempotencyRepository` and
+ * `CheckoutService`. That catch is their entire concurrency control, and it
+ * reads exactly like ordinary error handling, which is why removing the index
+ * looks harmless. Without it the error never arrives, the `catch` never runs,
+ * and the race silently succeeds.
+ *
+ * (`OrderCounterRepository` catches the same code and is NOT at risk: its key
+ * is the document's `_id`, the one index MongoDB always creates and
+ * `syncIndexes()` can never drop.)
+ *
+ * A guarantee that can be absent without anything saying so is not a guarantee,
+ * so readiness asserts it. The full table, with the site that depends on each,
+ * is in `test/infrastructure/index-health.spec.ts`.
  *
  * ## Why `diffIndexes()` rather than comparing names
  *

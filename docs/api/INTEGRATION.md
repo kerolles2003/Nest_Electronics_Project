@@ -199,20 +199,29 @@ of booting. The cost of that correct decision is that a database with no indexes
 serves traffic looking healthy.
 
 Several unique indexes are not optimisations. They are the entire enforcement mechanism
-behind an invariant, and two repositories delegate their concurrency control to them
-completely — `CredentialRepository` and `CartRepository` both catch MongoDB error `11000` and
-translate it into a domain error. **With no index there is no error, the `catch` never runs,
-and the race quietly succeeds.**
+behind an invariant, and **four call sites delegate their concurrency control to them
+completely** — `CredentialRepository`, `CartRepository`, `IdempotencyRepository` and
+`CheckoutService` each catch MongoDB error `11000` and translate it. **With no index there is
+no error, the `catch` never runs, and the race quietly succeeds** — no exception, no log line,
+nothing to notice.
 
-| Index | What is no longer prevented |
-|---|---|
-| `users.user_email_unique` | two accounts registered on one email address |
-| `orders.order_idempotency_key_unique` | a retried checkout becoming two orders |
-| `orders.order_number_unique` | two orders sharing one customer-facing number |
-| `inventoryEvents.inventory_event_reference_unique` | one order line decrementing stock twice |
-| `carts.cart_user_unique` | a customer holding two carts at once |
-| `products.product_sku_unique` | catalogue import creating duplicates instead of upserting |
-| `mediaAssets.media_asset_public_id_unique` | two ledger rows for one stored asset |
+That catch reads exactly like ordinary defensive error handling, which is why the index
+underneath it looks removable. Each site now says so in a comment.
+
+| Index | Enforced at | What is no longer prevented |
+|---|---|---|
+| `users.user_email_unique` | `CredentialRepository.create` | two accounts registered on one email address |
+| `idempotencyKeys.idempotency_key_unique` | `IdempotencyRepository.reserve` | **a retried checkout placing a second order** |
+| `orders.order_idempotency_key_unique` | `CheckoutService.place` | the same, one layer deeper |
+| `orders.order_number_unique` | the daily counter | two orders sharing one customer-facing number |
+| `inventoryEvents.inventory_event_reference_unique` | the write itself | one order line decrementing stock twice |
+| `carts.cart_user_unique` | `CartRepository.addLine` | a customer holding two carts at once |
+| `products.product_sku_unique` | `ImportRunner` | catalogue import creating duplicates instead of upserting |
+| `mediaAssets.media_asset_public_id_unique` | `MediaAssetRepository.record` | two ledger rows for one stored asset |
+
+`OrderCounterRepository` catches the same error code and is deliberately absent from this
+table: its key is the document's `_id`, the one index MongoDB always creates and
+`syncIndexes()` cannot drop.
 
 TTL indexes (`refresh_token_ttl`, `cart_ttl`, `idempotency_ttl`) are a different class: their
 absence corrupts nothing, it just means expired documents are never reclaimed. They are

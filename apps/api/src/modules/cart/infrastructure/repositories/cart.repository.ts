@@ -5,7 +5,19 @@ import type { ClientSession } from 'mongoose';
 import { CART_TTL_MS } from '../../application/cart-line';
 import { Cart, type CartItemSnapshot, type CartLean } from '../schemas/cart.schema';
 
-/** MongoDB's duplicate-key error code. */
+/**
+ * MongoDB's duplicate-key error code.
+ *
+ * **Every `catch` on this code below is a CONCURRENCY CONTROL, not error
+ * handling.** The unique index is what makes the operation correct under
+ * concurrency; the catch is only how the refusal is translated. Drop the
+ * index and the error never arrives, the catch never runs, and the race
+ * silently succeeds — no exception, no log line, nothing to notice.
+ *
+ * `GET /health/ready` refuses traffic when a declared index is missing, and
+ * `test/infrastructure/index-health.spec.ts` lists every invariant that
+ * depends on one. Do not remove an index named there.
+ */
 const DUPLICATE_KEY = 11000;
 
 /**
@@ -202,9 +214,17 @@ export class CartRepository {
         if (!isDuplicateKey(error)) {
           throw error;
         }
-        // Another request created this user's cart between C's filter and its
-        // insert. Fall through and retry — the line may now exist, so the next
-        // pass starts again at A.
+        /*
+         * `carts.cart_user_unique` IS what makes this loop terminate correctly.
+         *
+         * Another request created this user's cart between C's filter and its
+         * insert. Fall through and retry — the line may now exist, so the next
+         * pass starts again at A.
+         *
+         * Without the index both upserts succeed, the customer has two carts,
+         * and which one they see depends on which document the query returns.
+         * The loop would never notice: it is waiting for exactly this error.
+         */
       }
     }
 

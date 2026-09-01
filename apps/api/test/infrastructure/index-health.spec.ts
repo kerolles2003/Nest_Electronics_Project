@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/globals';
 import { INestApplication, VersioningType } from '@nestjs/common';
-import { getModelToken } from '@nestjs/mongoose';
+import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import { getStorageToken, type ThrottlerStorage } from '@nestjs/throttler';
 import mongoose, { Connection, Model, Schema } from 'mongoose';
@@ -13,6 +13,7 @@ import {
   IndexHealthService,
 } from '../../src/database/index-health.service';
 import { Brand } from '../../src/modules/catalog/infrastructure/schemas/brand.schema';
+import { User } from '../../src/modules/users/infrastructure/schemas/user.schema';
 
 /**
  * Readiness refuses traffic when a declared index is absent.
@@ -24,9 +25,9 @@ import { Brand } from '../../src/modules/catalog/infrastructure/schemas/brand.sc
  * `autoIndex` is off by design, so a database that never had `indexes:sync` run
  * against it connects, answers every query, and serves traffic — with several
  * unique constraints simply absent. That is not slower; it is WRONG, because
- * `CredentialRepository` and `CartRepository` catch MongoDB error 11000 and
- * translate it, and that is their entire concurrency control. No index, no
- * error, no `catch`, and the race quietly succeeds.
+ * Four call sites catch MongoDB error 11000 and translate it, and that catch is
+ * their entire concurrency control. No index, no error, no `catch`, and the
+ * race quietly succeeds. The `INVARIANTS` table below names each one.
  *
  * A previous session opened with 19 red tests on a clean tree for exactly this
  * reason, and the tests were the only thing that noticed. A runbook step is not
@@ -194,6 +195,188 @@ describe('GET /health/ready', () => {
 
     const recovered = await http().get('/api/v1/health/ready').expect(200);
     expect(recovered.body.checks.indexes.status).toBe('up');
+  });
+});
+
+/**
+ * The invariants that exist ONLY because a unique index does.
+ *
+ * Each of these is enforced by MongoDB and by nothing else. Four repositories
+ * catch error `11000` and translate it — that `catch` is not defensive error
+ * handling, it IS the concurrency control, and it reads like the former, which
+ * is exactly why dropping the index would look harmless.
+ *
+ * The readiness probe compares every index the schemas DECLARE against what the
+ * database holds, so covering these is automatic rather than a list somebody
+ * maintains. This table is the check that the automatic thing actually reaches
+ * all of them: a schema that stopped declaring one, or a renamed index, fails
+ * here.
+ */
+const INVARIANTS: readonly {
+  readonly invariant: string;
+  readonly collection: string;
+  readonly index: string;
+  readonly enforcedAt: string;
+}[] = [
+  {
+    invariant: 'one account per email address',
+    collection: 'users',
+    index: 'user_email_unique',
+    enforcedAt: 'CredentialRepository.create — catch 11000 -> duplicateEmail()',
+  },
+  {
+    invariant: 'one cart per customer',
+    collection: 'carts',
+    index: 'cart_user_unique',
+    enforcedAt: 'CartRepository.addLine — catch 11000 -> retry the convergence loop',
+  },
+  {
+    invariant: 'one order per idempotency key',
+    collection: 'idempotencyKeys',
+    index: 'idempotency_key_unique',
+    enforcedAt: 'IdempotencyRepository.reserve — catch 11000 -> return false (key taken)',
+  },
+  {
+    invariant: 'one order per idempotency key, second line of defence',
+    collection: 'orders',
+    index: 'order_idempotency_key_unique',
+    enforcedAt: 'CheckoutService.place — catch isDuplicateKeyError -> return the winner',
+  },
+  {
+    invariant: 'one customer-facing number per order',
+    collection: 'orders',
+    index: 'order_number_unique',
+    enforcedAt: 'no catch — the daily counter allocates it; the index is what proves the counter right',
+  },
+  {
+    invariant: 'one stock movement per order line',
+    collection: 'inventoryEvents',
+    index: 'inventory_event_reference_unique',
+    enforcedAt: 'no catch — a double SALE or RESTORE fails the write outright (INVENTORY-MODEL.md §5.2)',
+  },
+  {
+    invariant: 'one product per SKU',
+    collection: 'products',
+    index: 'product_sku_unique',
+    enforcedAt: 'ImportRunner — the failed write is reported as an errored row',
+  },
+  {
+    invariant: 'one ledger row per stored asset',
+    collection: 'mediaAssets',
+    index: 'media_asset_public_id_unique',
+    enforcedAt: 'MediaAssetRepository.record — upsert by publicId, which the index makes atomic',
+  },
+];
+
+describe('the invariants that depend on an index existing', () => {
+  /** Every index name the schemas declare, by collection. */
+  function declaredIndexes(): Map<string, Set<string>> {
+    const byCollection = new Map<string, Set<string>>();
+
+    for (const model of Object.values(app.get<Connection>(getConnectionToken()).models)) {
+      const names = new Set<string>();
+
+      for (const [, options] of model.schema.indexes()) {
+        const name: unknown = options?.['name'];
+        if (typeof name === 'string') names.add(name);
+      }
+
+      byCollection.set(model.collection.name, names);
+    }
+
+    return byCollection;
+  }
+
+  it.each(INVARIANTS)(
+    'the probe covers "$invariant" via $collection.$index',
+    ({ collection, index }) => {
+      /*
+       * Declared, therefore checked. `IndexHealthService` walks every model's
+       * `schema.indexes()`, so an index that appears here is one the readiness
+       * probe would report missing — and one that stops appearing here fails
+       * this case rather than silently leaving an invariant unguarded.
+       */
+      const names = declaredIndexes().get(collection);
+
+      expect(names).toBeDefined();
+      expect([...(names ?? [])]).toContain(index);
+    },
+  );
+
+  it('names every collection that has one, and no more', () => {
+    // A guard on the table itself: if a NINTH invariant is added to the code
+    // and not to this list, the count here is the thing that notices.
+    expect(INVARIANTS).toHaveLength(8);
+  });
+
+  it('is not fooled by an index that exists without `unique`', async () => {
+    /*
+     * The case that matters most, on a REAL invariant index rather than the
+     * scratch collection below.
+     *
+     * `user_email_unique` is recreated without `unique` — the same name, the
+     * same key, no enforcement. Anything checking "is there an index called
+     * user_email_unique?" is satisfied. The probe must not be.
+     *
+     * Restored in `finally`, and again by `afterEach`, because a users
+     * collection that accepts two accounts on one address is not a state to
+     * leave behind.
+     */
+    const users = app.get<Model<unknown>>(getModelToken(User.name));
+
+    await users.collection.dropIndex('user_email_unique');
+    await users.collection.createIndex({ email: 1 }, { name: 'user_email_unique' });
+
+    try {
+      const report = await app.get(IndexHealthService).verify();
+
+      expect(report.missing).toContainEqual({
+        collection: 'users',
+        name: 'user_email_unique',
+      });
+    } finally {
+      await users.syncIndexes();
+    }
+
+    // And it is genuinely enforcing again.
+    const restored = await app.get(IndexHealthService).verify();
+    expect(restored.missing.map((entry) => entry.name)).not.toContain('user_email_unique');
+  });
+
+  it('FAILS READINESS when a real invariant index is dropped', async () => {
+    /*
+     * The probe's own guarantee, proven end to end on the index whose absence
+     * costs the most: without `user_email_unique`, `CredentialRepository`'s
+     * `catch (11000)` never fires and two people register the same address.
+     *
+     * The window is a few milliseconds, jest runs single-threaded
+     * (`maxWorkers: 1`), the restore is in `finally`, and `afterEach` repeats
+     * it. If the process were killed in between, the recovery is exactly what
+     * this endpoint now tells you to run.
+     */
+    const users = app.get<Model<unknown>>(getModelToken(User.name));
+
+    await users.collection.dropIndex('user_email_unique');
+
+    try {
+      const response = await http().get('/api/v1/health/ready').expect(503);
+
+      expect(response.body.checks.indexes.missing).toContain('users.user_email_unique');
+      expect(response.body.checks.indexes.remedy).toBe(INDEX_SYNC_REMEDY);
+
+      // Liveness stays green: restarting cannot create an index.
+      await http().get('/api/v1/health').expect(200);
+    } finally {
+      await users.syncIndexes();
+    }
+
+    await http().get('/api/v1/health/ready').expect(200);
+  });
+
+  afterEach(async () => {
+    // Belt and braces. Whatever the cases above did, the users collection
+    // leaves this file with its unique index.
+    await app.get<Model<unknown>>(getModelToken(User.name)).syncIndexes();
   });
 });
 

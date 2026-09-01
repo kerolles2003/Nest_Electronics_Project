@@ -4,7 +4,15 @@ import type { ClientSession, Model } from 'mongoose';
 import { AppException } from '../../../../common/errors/app.exception';
 import { OrderCounter } from '../schemas/order-counter.schema';
 
-/** MongoDB's duplicate-key error code. */
+/**
+ * MongoDB's duplicate-key error code.
+ *
+ * The catch below is the ONE in this codebase that is NOT at risk from a
+ * missing index: the day key is the document's `_id`, and `_id_` is the one
+ * index MongoDB always creates and `syncIndexes()` can never drop. Recorded
+ * here because the pattern looks identical to the four that ARE at risk, and
+ * the difference is worth being able to see.
+ */
 const DUPLICATE_KEY = 11000;
 
 function isDuplicateKey(error: unknown): boolean {

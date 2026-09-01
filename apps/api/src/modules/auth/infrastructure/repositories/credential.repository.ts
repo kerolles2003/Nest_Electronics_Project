@@ -4,7 +4,19 @@ import { ClientSession, Model, Types } from 'mongoose';
 import { AppException } from '../../../../common/errors/app.exception';
 import { Role, User, type UserLean } from '../../../users/infrastructure/schemas/user.schema';
 
-/** MongoDB's duplicate-key error code. */
+/**
+ * MongoDB's duplicate-key error code.
+ *
+ * **Every `catch` on this code below is a CONCURRENCY CONTROL, not error
+ * handling.** The unique index is what makes the operation correct under
+ * concurrency; the catch is only how the refusal is translated. Drop the
+ * index and the error never arrives, the catch never runs, and the race
+ * silently succeeds — no exception, no log line, nothing to notice.
+ *
+ * `GET /health/ready` refuses traffic when a declared index is missing, and
+ * `test/infrastructure/index-health.spec.ts` lists every invariant that
+ * depends on one. Do not remove an index named there.
+ */
 const DUPLICATE_KEY = 11000;
 
 /**
@@ -104,8 +116,21 @@ export class CredentialRepository {
 
       return created.toObject<UserLean>();
     } catch (error) {
-      // The index name is inspected SERVER-SIDE only; the client sees a stable
-      // code and a safe message, never a constraint name.
+      /*
+       * `users.user_email_unique` IS the check for "is this address taken".
+       *
+       * There is deliberately no `findOne` before the insert: two registrations
+       * racing would both see "available" and both proceed. The index is the
+       * only thing that serialises them, so this catch is the concurrency
+       * control and not a fallback for one.
+       *
+       * Without the index, both inserts succeed and the account has two rows.
+       * Login then resolves to whichever the query returns first, and a password
+       * reset fixes one of them.
+       *
+       * The index name is inspected SERVER-SIDE only; the client sees a stable
+       * code and a safe message, never a constraint name.
+       */
       if (
         typeof error === 'object' &&
         error !== null &&
