@@ -207,6 +207,14 @@ jobs:
       - name: Start MongoDB replica set
         run: docker compose -f docker-compose.dev.yml up -d --wait
 
+      # WHAT THIS GATE CANNOT DO — see docs/api/INTEGRATION.md, "What the gate
+      # does NOT catch". It compares two JSON documents, so it sees names,
+      # types, required flags and structure, and nothing else. An enum
+      # narrowing, a tightened validator, a newly-enforced constraint, or a
+      # change in what an existing value MEANS all pass it green while breaking
+      # a working client. A green gate is not a compatibility guarantee; it is
+      # the absence of one specific class of mistake. The review obligation that
+      # covers the rest is in the same section.
       - name: Check the OpenAPI artifact against the live API
         run: pnpm --filter api openapi:check
 

@@ -144,5 +144,39 @@ committed file on every pull request:
 The gate protects *shape*. It cannot see a value whose **meaning** changes — which is exactly
 why `shippingPriced` was added before this contract froze rather than after.
 
+### What the gate does NOT catch
+
+Worth stating plainly, because "the drift gate is green" is easy to read as "nothing that
+affects you changed". The gate compares two JSON documents. It sees names, types, required
+flags and structure. It does not run your client, and it has no idea what any value means.
+
+Four classes of change break a working client while the gate stays green:
+
+| Change | Why the gate is blind to it | What it does to you |
+|---|---|---|
+| **Enum narrowing** — a value is removed from an allowed set | The property still exists, with the same name and the same type. Removing a member of an enum makes the document *smaller*, and the gate's additive/breaking split is about *properties*, not about the domain of a property. It classifies this as **additive**. | Requests you were making yesterday start returning `400`. |
+| **Tightened validation** on an existing field | Length limits, regexes, `@IsIn`, trimming and normalisation are behaviour, not shape. Most never reach the document at all. | Same: a previously accepted payload is rejected. |
+| **Changed meaning of an existing value** | Nothing about the field changes — not its name, not its type, not its presence. | The worst class: no error, no failure, wrong information shown to a customer. `shippingFee: 0` meaning "unpriced" and later "free" is the canonical example, and the reason `shippingPriced` exists. |
+| **Newly-enforced constraints** — a field that was optional in practice becoming genuinely required, a uniqueness rule, a rate limit | Enforcement lives in the service, not the schema. | Intermittent failures under conditions your tests do not reproduce. |
+
+**Worked example — the governorate narrowing.** `CreateAddressDto.governorate` was free text
+and became a 27-value enum ([above](#governorate-is-a-closed-list-of-27-values)). The
+regenerated artifact gained an `enum` array on an existing `string` property: no property
+removed, no type changed, nothing newly required. **The gate classified it as additive and
+the build passed** — while any client sending `"cairo"`, `"Cairo "` or `"Kairo"` went from
+`201` to `400` on the same request. That is a breaking change by every definition that
+matters to a caller, and the gate could not have known.
+
+We are not building a semantic differ for this. The tool that catches it is a person who
+knows what the change means, so the policy is a review obligation rather than a check:
+
+> **Contract policy checklist — required on any pull request that touches an enum, a
+> validator, or the meaning of an existing field.** The description must state the client
+> impact explicitly: which previously-valid inputs stop being valid, which previously-correct
+> client interpretations stop being correct, and what a consumer has to change. "The drift
+> gate passed" is not an answer to this — the gate cannot see any of it. If the impact is
+> non-trivial, it also belongs in this document before the PR merges.
+
+
 If you hit something that contradicts this page, quote the `X-Request-Id` from the response:
 the server-side cause can be found directly from it.
