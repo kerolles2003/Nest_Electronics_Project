@@ -78,6 +78,9 @@ export type ProductInput = z.infer<typeof productSchema>;
 
 // ---- Coupon Schemas ----
 export const couponSchema = z.object({
+
+
+
   code: z.string().min(3).max(50).toUpperCase(),
   type: z.enum(['percentage', 'fixed']),
   value: z.number().positive(),
@@ -89,3 +92,27 @@ export const couponSchema = z.object({
   is_active: z.boolean().default(true),
 });
 export type CouponInput = z.infer<typeof couponSchema>;
+
+// ---- Order Lookup Schema (guest tracking) ----
+export const orderLookupSchema = z.object({
+  order_number: z.string().min(1, 'Order number required'),
+  phone: z
+    .string()
+    .regex(/^([+]?20|0)?1[0-2,5]{1}[0-9]{8}$/, 'Invalid Egyptian phone number')
+    .min(1, 'Phone required'),
+});
+export type OrderLookupInput = z.infer<typeof orderLookupSchema>;
+
+export const cartItemSchema = z.object({
+  productId: z.string().uuid(),
+  variantId: z.string().uuid().nullable().optional(),
+  quantity: z.number().int().positive().max(99),
+  name: z.string().optional(),
+  price: z.number().min(0).optional(),
+  imageUrl: z.string().optional(),
+  slug: z.string().optional(),
+  sku: z.string().optional(),
+  maxStock: z.number().int().min(0).optional(),
+});
+
+export const cartSyncSchema = z.array(cartItemSchema);

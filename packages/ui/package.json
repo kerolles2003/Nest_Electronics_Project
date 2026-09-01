@@ -7,9 +7,6 @@
     "./*": "./src/*.tsx",
     "./utils": "./src/utils.ts"
   },
-  "scripts": {
-    "lint": "eslint src/"
-  },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

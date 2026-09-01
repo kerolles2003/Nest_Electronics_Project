@@ -42,4 +42,23 @@ export const ROUTES = {
     addresses: '/account/addresses',
     notifications: '/account/notifications',
   },
+  contact: '/contact',
+  about: '/about',
+  faq: '/faq',
 } as const;
+
+export const TOP_NAV_LINKS = [
+  { label: 'Track Order', href: '/order-tracking' },
+  { label: 'About', href: '/about' },
+  { label: 'Contact', href: '/contact' },
+  { label: 'FAQs', href: '/faq' },
+] as const;
+
+export const MAIN_NAV_LINKS = [
+  { label: 'Home', href: ROUTES.home },
+  { label: 'Shop', href: ROUTES.products },
+  { label: 'Vendors', href: '/vendors' },
+  { label: 'Blog', href: ROUTES.blog },
+  { label: 'Contact', href: '/contact' },
+] as const;
+

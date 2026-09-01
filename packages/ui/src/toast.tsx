@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import * as React from "react"
 import { CheckCircle, XCircle, Info, X } from "lucide-react"
@@ -17,6 +17,7 @@ interface ToastContextValue {
 }
 
 const ToastContext = React.createContext<ToastContextValue | null>(null)
+export { ToastContext }
 
 const iconMap: Record<Toast["type"], React.ComponentType<{ className?: string }>> = {
   success: CheckCircle,
@@ -63,21 +64,28 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 space-y-2 w-80">
+      <div className="fixed top-4 right-4 z-[9999] space-y-3 w-80 pointer-events-none">
         {toasts.map((toast) => {
           const Icon = iconMap[toast.type]
           return (
             <div
               key={toast.id}
               role="alert"
+              style={{
+                backgroundColor: 'white',
+                color: '#1a1a2e',
+                opacity: 1,
+                zIndex: 9999,
+                pointerEvents: 'auto'
+              }}
               className={cn(
-                "flex items-start gap-3 bg-card border border-border rounded-md shadow-lg px-4 py-3 border-l-4",
+                "flex items-start gap-3 border border-border rounded-md shadow-2xl px-4 py-3 border-l-4 transition-all duration-300",
                 borderColorMap[toast.type]
               )}
             >
               <Icon className={cn("w-5 h-5 shrink-0 mt-0.5", iconColorMap[toast.type])} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground">
+                <p className="text-sm font-semibold" style={{ color: 'inherit' }}>
                   {toast.title ?? defaultTitleMap[toast.type]}
                 </p>
                 {toast.message && (
@@ -103,6 +111,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 export function useToast() {
   const ctx = React.useContext(ToastContext)
   if (!ctx) {
+    // Return a dummy object on the server to prevent SSR crashes
+    // On the client, we still want to warn/error if the provider is missing
+    if (typeof window === "undefined") {
+      return {
+        addToast: () => {},
+        removeToast: () => {},
+      }
+    }
     throw new Error("useToast must be used within a ToastProvider")
   }
   return ctx

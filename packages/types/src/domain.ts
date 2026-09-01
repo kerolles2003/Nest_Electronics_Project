@@ -245,6 +245,34 @@ export interface ReviewImage {
   sort_order: number;
 }
 
+// ---- Blog Domain ----
+export interface BlogPost {
+  id: string;
+  title_en: string;
+  title_ar: string | null;
+  slug: string;
+  excerpt: string | null;
+  content_en: string | null;
+  content_ar: string | null;
+  cover_image: string | null;
+  category: string | null;
+  tags: string[] | null;
+  is_published: boolean | null;
+  published_at: string | null;
+  author_id: string;
+  created_at: string | null;
+  deleted_at: string | null;
+  updated_at: string | null;
+  // Joined
+  author?: Pick<Profile, 'full_name' | 'avatar_url'>;
+}
+
+export interface BlogFilters {
+  category?: string;
+  tag?: string;
+  search?: string;
+}
+
 // ---- Search Domain ----
 export interface SearchOptions {
   filters?: Record<string, string[]>;
@@ -263,4 +291,27 @@ export interface SearchResult {
   total: number;
   facetCounts: Record<string, FacetCount[]>;
   processingTimeMs: number;
+}
+
+// ---- Blog Domain ----
+export interface BlogPost {
+  id: string;
+  title_en: string;
+  slug: string;
+  excerpt: string | null;
+  content_en: string | null;
+  cover_image: string | null;
+  category: string | null;
+  tags: string[] | null;
+  is_published: boolean | null;
+  published_at: string | null;
+  author_id: string;
+  created_at: string | null;
+  author?: Pick<Profile, 'full_name' | 'avatar_url'>;
+}
+
+export interface BlogFilters {
+  category?: string;
+  tag?: string;
+  search?: string;
 }

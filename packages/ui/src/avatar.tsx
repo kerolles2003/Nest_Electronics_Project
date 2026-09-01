@@ -19,12 +19,16 @@ const sizeClasses = {
 const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
   ({ className, src, alt, fallback, size = "md", ...props }, ref) => {
     const [error, setError] = React.useState(false)
+
+    // Reset error state whenever the image source changes.
+    React.useEffect(() => { setError(false) }, [src])
+
     const initials = fallback
       ?.split(" ")
       .map((n) => n[0])
       .slice(0, 2)
       .join("")
-      .toUpperCase()
+      .toUpperCase() || "?"
 
     return (
       <div

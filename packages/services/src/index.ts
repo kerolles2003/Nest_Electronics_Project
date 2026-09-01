@@ -3,3 +3,4 @@ export * from './cart.service';
 export * from './order.service';
 export * from './storage.service';
 export * from './search.service';
+export * from './blog.service';

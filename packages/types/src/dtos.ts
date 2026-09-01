@@ -13,6 +13,7 @@ export interface ProductCardDTO {
   rating: number;
   reviewCount: number;
   inStock: boolean;
+  availableStock: number;
   isFeatured: boolean;
 }
 
