@@ -2097,3 +2097,77 @@ what a row saying `0` means against a global saying `50 000`. PLAN Phase 5 and
 changelog **29** carry the same.
 
 38 fulfilment tests pass.
+
+## 4 — the 15 skipped tests, verified
+
+**All 15 are the opt-in live Cloudinary suite. Nothing is accidentally disabled
+and nothing was left skipped after debugging.**
+
+Taken from jest's own JSON report rather than by reading files, so the list is
+what the runner actually did:
+
+```
+suites: 33 passed, 0 failed, 34 total
+tests:  802 passed, 15 pending, 0 todo, 0 failed, 817 total
+
+every pending test is in test/media/cloudinary-integration.spec.ts
+```
+
+| # | Test | Why it skips |
+|---|---|---|
+| 1 | upload › stores the bytes and answers with the fields the ledger records | live account |
+| 2 | upload › returns NO absolute URL, anywhere in the response | live account |
+| 3 | upload › stores a provider-relative identifier in the ledger, not a URL | live account |
+| 4 | upload › is RETRIEVABLE from Cloudinary under exactly that identifier | live account |
+| 5 | upload › strips EXIF, and bakes the orientation in first | live account |
+| 6 | upload › downscales an image above the maximum edge | live account |
+| 7 | refuses a JPEG that claims to be a PNG, and stores nothing | live account |
+| 8 | refuses an SVG, and stores nothing | live account |
+| 9 | refuses an oversized file, and stores nothing | live account |
+| 10 | refuses an image below the minimum edge, and stores nothing | live account |
+| 11 | refuses a signed-in CUSTOMER, and stores nothing | live account |
+| 12 | delete › removes the asset from Cloudinary, not only from the ledger | live account |
+| 13 | delete › treats an already-destroyed asset as success, so a retry is safe | live account |
+| 14 | catalogue import › uploads once, and a second run uploads nothing and orphans nothing | live account |
+| 15 | reconciliation › names an asset that exists in Cloudinary with no ledger row | live account |
+
+### The one skip mechanism, and how it is opted into
+
+```ts
+const suite = INTEGRATION ? describe : describe.skip;
+```
+
+`INTEGRATION` is `process.env.CLOUDINARY_INTEGRATION === '1'`, set only by
+`pnpm --filter api test:cloudinary`. Run that and all 15 execute against the
+real account; **verified this session — 15/15 pass.**
+
+The file also prints a line on every default run saying it was skipped and how
+to run it, so it cannot be quietly forgotten.
+
+### Why they are opt-in rather than always-on
+
+Real, authenticated, billable calls. In the default suite they would upload from
+every developer's machine on every run and fail wherever there is no network —
+the media form of the 225 live email sends F-07 found. The same pipeline IS
+exercised on every run against the in-memory adapter; only the vendor half is
+opt-in.
+
+### Also checked: nothing is disabled by a mechanism jest does not report
+
+`.only` is the dangerous one — a single stray `it.only` silently disables every
+other test in its file and the run still goes green.
+
+```
+jest       .only  .skip  .todo  xit  xdescribe   -> the one describe.skip above, nothing else
+playwright .only  .skip  .fixme                  -> none
+```
+
+Playwright's three `test.fail()` calls in `not-found.spec.ts` are **not** skips:
+they run, they assert, and they fail on purpose — the suite goes red the day the
+404 body starts rendering, which is the point of them.
+
+### One observation, not fixed
+
+Nothing would catch a `.only` committed by accident. It is a small guard and it
+belongs to whoever decides it is worth having; item 4 asked for verification, so
+this is reported rather than built.
