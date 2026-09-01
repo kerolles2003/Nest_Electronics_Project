@@ -436,7 +436,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 
 **Goal** — the mobile developer integrates today against a stable, documented v1.
 **Why** — unblocks a parallel workstream immediately; the API is already safe, and the dev email recipe (console provider) is proven `[V]` — delivery is a production concern (Phase E), not an integration blocker.
-**Current state** — Swagger live with conventions text `[V]`; no frozen artifact, no drift gate.
+**Current state (2026-09-02)** — **DONE.** Swagger live with conventions text `[V]`; frozen artifact at `docs/api/openapi.v1.json` (37 paths, 43 operations, 84 schemas) `[V]`; CI `contract-gate` job runs the drift check `[V]`; `docs/api/SANDBOX.md` and `docs/api/INTEGRATION.md` written `[V]`. The `DocumentBuilder` chain was extracted from `main.ts` into `src/openapi/openapi.document.ts` so the served document and the frozen artifact cannot diverge.
 **Files/systems involved** — `apps/api` Swagger config, `docs/api/` (new artifact), CI.
 **Work required** — export OpenAPI JSON to `docs/api/openapi.v1.json`; CI job diffing generated vs frozen (breaking = fail, additive = update artifact in the same PR); sandbox recipe doc (compose + seed + console mail + verification toggle); a short safe/unstable/forbidden integration page (§19).
 **Dependencies** — Phase 1 (test/provider hygiene; honest recipe) **and Phase 2's `shippingPriced` decision** — freezing the money block while `shippingFee === 0` is still ambiguous would export the ambiguity to every mobile client.

@@ -506,3 +506,58 @@ rather than assumed, and it was **rate limiting from my own repeated runs** — 
 capped at 3/hour per IP and the throttler is in-memory, so it had accumulated across three
 journey runs. Restarting the API reset it and all 4 passed. **Not a regression**, and worth
 knowing before someone hits it in the morning.
+
+---
+
+## TASK 5 — Phase 3 (Flutter contract freeze)
+
+Unlocked only because Tasks 1–4 were all complete and green first — 541/541 jest, 4/4
+Playwright, and the root pipeline green.
+
+**Frozen artifact — `docs/api/openapi.v1.json`.** 37 paths, 43 operations, 84 schemas.
+**It contains `shippingPriced`**, which is the whole point of having done 2c first: the
+contract froze around the honest representation rather than around the ambiguous zero.
+
+**The extraction that makes the artifact meaningful.** The `DocumentBuilder` chain lived
+inline in `main.ts`. A second copy in an export script would drift, and the gate would then
+be comparing a copy to a copy. It now lives once in `src/openapi/openapi.document.ts` and has
+two consumers: `main.ts` (serves `/api/v1/docs`) and `export-openapi.ts` (writes the file).
+The server port in the artifact is pinned to 3002 rather than read from config, so a
+developer with `PORT=3005` cannot produce spurious drift.
+
+Two scripts: `pnpm --filter api openapi:export` and `openapi:check`. Both build the **real**
+`AppModule` (so they need Mongo) and never listen on a port — an artifact generated from a
+half-booted app would describe an API that does not exist.
+
+**Drift gate — `check-openapi-drift.ts`.** Any difference fails; the two outcomes are
+reported differently because the required human response differs. Breaking = path, operation,
+schema or property removed / retyped / newly required. "Newly required" is deliberately
+conservative: harmless in a response, fatal in a request body, and the gate does not guess —
+over-reporting costs a conversation, under-reporting costs a release.
+
+**I proved all four behaviours rather than asserting them:**
+
+| Scenario | Result |
+|---|---|
+| clean tree | `OK, the API matches` — **exit 0** |
+| frozen claims a path the API lacks | `BREAKING … path removed: /api/v1/auth/google` — **exit 1** |
+| generated has a newly-required property | `BREAKING … property newly required: PricingBreakdownDto.shippingPriced` — **exit 1** |
+| purely additive drift | `changed additively, but … is stale` + the regenerate command — **exit 1** |
+| restored | `OK` — **exit 0** |
+
+**CI:** a **separate `contract-gate` job**, not a step in the transaction gate, so a red CI
+already names which contract broke. It starts the same compose Mongo.
+
+**Docs.** `docs/api/SANDBOX.md` — compose (replica set, and why a standalone fails), env,
+seed **+ `indexes:sync`** (called out as the classic mistake), the console-mail verification
+walkthrough with real curl commands, the verification toggle and why it cannot be set in
+production, reset, and a troubleshooting table including the **real rate limits** (3
+registrations/hour) that cost me a debugging cycle tonight.
+`docs/api/INTEGRATION.md` — the §19 safe / unstable / forbidden lists, the v1 conventions,
+the refresh-and-reuse auth sequence, and a dedicated section on **reading `shippingPriced`
+instead of `shippingFee.amount === 0`**, stating plainly that a client branching on the
+amount keeps compiling and starts lying.
+
+PLAN.md Phase 3 "Current state" updated to DONE with the evidence.
+
+**Verification after this task:** 541/541 jest; root `type-check`, `lint`, `build` all green.

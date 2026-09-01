@@ -1,6 +1,7 @@
-# Nest Electronics — CI (Phase 2.1 foundation + Phase 2.5 transaction gate)
+# Nest Electronics — CI (workspace checks + MongoDB transaction gate + API contract gate)
 #
-# Scope: the pnpm + Turborepo workspace, plus the MongoDB transaction hard gate.
+# Scope: the pnpm + Turborepo workspace, the MongoDB transaction hard gate, and the
+# frozen OpenAPI v1 contract gate.
 # Deliberately NOT included:
 #   - no deploy / CD : still out of scope
 #   - no secrets     : no job requires a credential, and none is referenced.
@@ -163,6 +164,52 @@ jobs:
 
       # Cleanup only. `if: always()` releases the container after a failure; it
       # does not affect the job outcome, and no step above can be skipped by it.
+      - name: Stop MongoDB
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v
+
+  # ---------------------------------------------------------------------------
+  # The API CONTRACT gate (Phase 3).
+  #
+  # docs/api/openapi.v1.json is what the mobile developer builds against. Once
+  # frozen, an endpoint that quietly changes shape becomes a broken app in a
+  # store somewhere, found by users rather than by CI. This job regenerates the
+  # document from the live decorators and refuses any difference:
+  #
+  #   breaking (removed / retyped / newly required) -> fail, do not regenerate
+  #   additive                                      -> fail, commit the artifact
+  #
+  # A separate job from the transaction gate on purpose: when CI goes red, the
+  # job name should already say which contract broke.
+  #
+  # It needs MongoDB because the document is generated from the REAL module
+  # graph — an artifact produced from a half-booted application would describe
+  # an API that does not exist.
+  # ---------------------------------------------------------------------------
+  contract-gate:
+    name: API contract drift gate
+    runs-on: ubuntu-latest
+
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/nest_electronics_contract
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start MongoDB replica set
+        run: docker compose -f docker-compose.dev.yml up -d --wait
+
+      - name: Check the OpenAPI artifact against the live API
+        run: pnpm --filter api openapi:check
+
       - name: Stop MongoDB
         if: always()
         run: docker compose -f docker-compose.dev.yml down -v

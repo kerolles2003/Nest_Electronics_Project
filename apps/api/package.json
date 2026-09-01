@@ -10,7 +10,9 @@
     "type-check": "tsc --noEmit",
     "test": "jest",
     "indexes:sync": "nest build && node dist/database/sync-indexes.js",
-    "seed": "nest build && node dist/database/seed/seed.js"
+    "seed": "nest build && node dist/database/seed/seed.js",
+    "openapi:export": "nest build && node dist/openapi/export-openapi.js",
+    "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",
