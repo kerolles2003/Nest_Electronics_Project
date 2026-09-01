@@ -76,6 +76,35 @@ export function flattenCategoryTree(nodes: readonly CategoryTreeNode[]): LegacyC
   return nodes.flatMap((node) => [toLegacyCategory(node), ...flattenCategoryTree(node.children)]);
 }
 
+/**
+ * The tree kept NESTED, with `children` populated.
+ *
+ * ## Why both shapes exist, and why that is not indecision
+ *
+ * The legacy `findTree()` returned roots carrying `children`, and the
+ * components were split on which shape they read:
+ *
+ *   `/categories`     reads `cat.children` — needs the NESTED tree
+ *   `BrowseCategories` filters `!c.parent_id` — a no-op on a nested tree, so it
+ *                     worked by accident
+ *   `MobileMenu`      reads `categories.some(c => c.parent_id === category.id)`
+ *                     — which is FALSE for every category when the children are
+ *                     not top-level. **No subcategory has ever appeared in the
+ *                     mobile menu**, because it was written for a flat list and
+ *                     always received a nested one.
+ *
+ * So each consumer is now given the shape its own code reads. That fixes the
+ * mobile menu as a side effect, which is a user-visible change and is recorded
+ * as one — but the alternative is knowingly feeding a component data it cannot
+ * interpret in order to preserve a bug.
+ */
+export function toLegacyCategoryTree(nodes: readonly CategoryTreeNode[]): LegacyCategory[] {
+  return nodes.map((node) => ({
+    ...toLegacyCategory(node),
+    children: toLegacyCategoryTree(node.children),
+  }));
+}
+
 export function toLegacyBrand(brand: Brand): LegacyBrand {
   return {
     id: brand.id,

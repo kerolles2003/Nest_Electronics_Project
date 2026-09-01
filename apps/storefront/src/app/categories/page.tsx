@@ -1,4 +1,5 @@
-import { getServices } from "@/lib/services";
+import * as api from "@/lib/api/endpoints";
+import { toLegacyCategoryTree } from "@/lib/api/view-model";
 import Link from "next/link";
 import Image from "next/image";
 import { Cpu, ArrowRight, Layers } from "lucide-react";
@@ -11,9 +12,21 @@ export const metadata: Metadata = {
 
 export const revalidate = 3600;
 
+/**
+ * Every category, on the API.
+ *
+ * The NESTED tree, because this page renders each root's children beneath it —
+ * `toLegacyCategoryTree` keeps `children` populated rather than flattening as
+ * the navbar does. Same component, same markup, same `revalidate`; only the
+ * source moved.
+ *
+ * `image_url` comes through as null and the design's own icon fallback renders,
+ * which is what happened before too: no category has ever had a cover image.
+ * They become managed assets in Phase 7 (MEDIA-MODEL.md §10).
+ */
 export default async function CategoriesPage() {
-  const { productService } = await getServices();
-  const categories = await productService.getCategoryTree();
+  const response = await api.getCategoryTree();
+  const categories = toLegacyCategoryTree(response.data);
 
   return (
     <div className="bg-muted min-h-screen pb-16">
