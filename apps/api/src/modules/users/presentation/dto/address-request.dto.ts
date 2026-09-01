@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -9,6 +10,10 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import {
+  EGYPTIAN_GOVERNORATES,
+  GOVERNORATE_VALUES,
+} from '../../../../common/constants/governorates';
 import { EGYPTIAN_PHONE } from '../../../../common/dto/egyptian-phone';
 import { OBJECT_ID_PATTERN } from '../../../../common/dto/object-id';
 
@@ -131,18 +136,21 @@ export class CreateAddressDto {
 
   @ApiProperty({
     example: 'Cairo',
-    minLength: 2,
-    maxLength: 80,
+    enum: EGYPTIAN_GOVERNORATES,
     description:
-      'Egyptian governorate. Free text, NOT an enum: the governorate list belongs to the ' +
-      'shipping rate table, which is unresolved business input (OPEN-001). Constraining it to a ' +
-      'guessed list now would reject valid addresses and would have to be widened later, which ' +
-      'within v1 is a breaking change.',
+      'Egyptian governorate. A CLOSED list of the 27 governorates — send one of these exact ' +
+      'strings, case-sensitive and untrimmed of internal spacing. ' +
+      'This was previously free text because the governorate vocabulary belonged to an ' +
+      'unresolved shipping rate table (OPEN-001). D-8 resolved it: the rate table is seeded ' +
+      'one row per governorate with NO fallback row, so an unrecognised value would reach a ' +
+      'rate lookup with nothing to find, at checkout. Rejecting it here is what makes that ' +
+      'design safe.',
   })
   @IsString()
   @Transform(trim)
-  @MinLength(2, { message: 'governorate must be at least 2 characters' })
-  @MaxLength(80, { message: 'governorate must not exceed 80 characters' })
+  @IsIn(GOVERNORATE_VALUES, {
+    message: 'governorate must be one of the 27 Egyptian governorates',
+  })
   governorate!: string;
 
   @ApiPropertyOptional({
@@ -227,12 +235,16 @@ export class UpdateAddressDto {
   @MaxLength(80, { message: 'city must not exceed 80 characters' })
   city?: string;
 
-  @ApiPropertyOptional({ example: 'Cairo', minLength: 2, maxLength: 80 })
+  @ApiPropertyOptional({ example: 'Cairo', enum: EGYPTIAN_GOVERNORATES })
   @IsOptional()
   @IsString()
   @Transform(trim)
-  @MinLength(2, { message: 'governorate must be at least 2 characters' })
-  @MaxLength(80, { message: 'governorate must not exceed 80 characters' })
+  // Same closed list as creation. An update path that accepted free text would
+  // reopen the hole the create path closes — an address could be edited into an
+  // unquotable state after it was accepted.
+  @IsIn(GOVERNORATE_VALUES, {
+    message: 'governorate must be one of the 27 Egyptian governorates',
+  })
   governorate?: string;
 
   /**

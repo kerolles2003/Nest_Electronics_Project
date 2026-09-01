@@ -104,7 +104,10 @@ test('a customer can register, order and see it in their history', async ({ page
     await page.getByLabel('Phone').fill('01012345678');
     await page.getByLabel('Street, building and apartment').fill('12 Sherif Street, Apt 4');
     await page.getByLabel('City').fill('Downtown');
-    await page.getByLabel('Governorate').fill('Cairo');
+    // A closed list now, not free text: the API refuses any governorate outside
+    // the 27, so the form offers exactly those (B3). `selectOption` also fails
+    // loudly if the value ever stops being offered, which `fill` would not.
+    await page.getByLabel('Governorate').selectOption('Cairo');
     await page.getByRole('button', { name: 'Save address' }).click();
 
     // Asserted on the STREET, not on the label "Home": the root layout wraps

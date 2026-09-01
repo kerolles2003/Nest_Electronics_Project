@@ -7,6 +7,7 @@ import { getStorageToken, type ThrottlerStorage } from '@nestjs/throttler';
 import { Connection, Model, Types } from 'mongoose';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { EGYPTIAN_GOVERNORATES } from '../../src/common/constants/governorates';
 import { validationExceptionFactory } from '../../src/common/pipes/validation-exception.factory';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { Cart } from '../../src/modules/cart/infrastructure/schemas/cart.schema';
@@ -714,6 +715,104 @@ describe('the default-address invariant', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('the governorate is a closed list (D-8 precondition)', () => {
+  /*
+   * Why this is a security-shaped rule and not a tidy-input rule.
+   *
+   * D-8 seeds `shippingRates` with one row per governorate and NO fallback
+   * row, so a lookup miss must raise rather than invent a fee. That is only
+   * safe if a miss cannot happen, and a miss cannot happen only if every
+   * stored governorate is one the table knows. A value accepted here is a
+   * value that reaches a rate lookup later, at checkout, with an order
+   * half-placed.
+   *
+   * The storefront dropdown is a suggestion. This is the guarantee.
+   */
+  /*
+   * ONE account for the whole block.
+   *
+   * `createCustomer` derives the email from its label, so calling it per case
+   * would collide on 409, and creating seven accounts would also walk into the
+   * 3-per-hour registration limit these suites deliberately leave in place.
+   */
+  let govCustomer: Customer;
+
+  beforeAll(async () => {
+    govCustomer = await createCustomer('gov');
+  });
+
+  /*
+   * Walked by UPDATE rather than by creating 27 addresses.
+   *
+   * `MAX_ADDRESSES_PER_USER` is 10, so creating one per governorate hits a
+   * real business rule (422) that has nothing to do with what is under test.
+   * Patching one address through all 27 values exercises the same `@IsIn` on
+   * the same closed list while only ever holding a single address.
+   */
+  it('accepts every one of the 27 governorates', async () => {
+    const id = await createAddress(govCustomer, {
+      label: 'all-governorates',
+      governorate: 'Cairo',
+    });
+
+    for (const governorate of EGYPTIAN_GOVERNORATES) {
+      const response = await http()
+        .patch(`${ADDRESSES}/${id}`)
+        .set(...bearer(govCustomer))
+        .send({ governorate })
+        .expect(200);
+
+      expect(response.body.data.governorate).toBe(governorate);
+    }
+  });
+
+  it.each([
+    ['unknown governorate', 'Atlantis'],
+    ['wrong case', 'cairo'],
+    ['trailing space inside the value', 'Cai ro'],
+    ['transliteration variant', 'Kairo'],
+    ['empty', ''],
+    ['a $-prefixed field path', '$role'],
+    ['a mongo operator', '$ne'],
+  ])('refuses %s', async (_label, governorate) => {
+    const response = await create(govCustomer, { governorate }).expect(400);
+
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(
+      response.body.error.details.some(
+        (d: { field: string }) => d.field === 'governorate',
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses an unknown governorate on UPDATE too, not just on create', async () => {
+    // An update path that accepted free text would reopen the hole the create
+    // path closes: an address could be edited into an unquotable state after
+    // it had already been accepted.
+    const created = await create(govCustomer, {
+      label: 'patch-target',
+      governorate: 'Cairo',
+    }).expect(201);
+
+    await http()
+      .patch(`${ADDRESSES}/${created.body.data.id}`)
+      .set(...bearer(govCustomer))
+      .send({ governorate: 'Atlantis' })
+      .expect(400);
+  });
+
+  it('still trims surrounding whitespace before matching', async () => {
+    // `@Transform(trim)` runs before `@IsIn`, so a value a user pasted with a
+    // stray space is accepted rather than being an unexplained rejection.
+    const response = await create(govCustomer, {
+      label: 'trim-target',
+      governorate: '  Giza  ',
+    }).expect(201);
+
+    expect(response.body.data.governorate).toBe('Giza');
+  });
+});
+
 describe('validation', () => {
   it('rejects a malformed addressId with 400, not 404 and not 500', async () => {
     const response = await http()
@@ -885,19 +984,27 @@ describe('validation', () => {
   it('stores a $-prefixed value literally instead of resolving it as a field path', async () => {
     const customer = await createCustomer('injection');
 
+    /*
+     * `governorate` no longer carries a `$` value here, because it is now a
+     * CLOSED list and `$role` is refused before it can reach Mongo at all.
+     *
+     * That is a stronger guarantee than this test was making for that field,
+     * not a weaker one — the coverage moves to `refuses a $-prefixed
+     * governorate outright` below. The four genuinely free-text fields still
+     * carry the injection payloads, which is what this test is for.
+     */
     const response = await create(customer, {
       label: '$passwordHash',
       fullName: '$$ROOT',
       street: '$passwordHash and $email',
       city: '$$CURRENT.email',
-      governorate: '$role',
+      governorate: 'Cairo',
     }).expect(201);
 
     expect(response.body.data.label).toBe('$passwordHash');
     expect(response.body.data.fullName).toBe('$$ROOT');
     expect(response.body.data.street).toBe('$passwordHash and $email');
     expect(response.body.data.city).toBe('$$CURRENT.email');
-    expect(response.body.data.governorate).toBe('$role');
 
     // And nothing from the credential fields reached the document.
     const raw = JSON.stringify(await storedAddresses(customer));

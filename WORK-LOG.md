@@ -826,3 +826,44 @@ recognise appears here, or a count grows, that is the signal to look.
 ```
 
 20 suppressions across 4 tests — previously invisible.
+
+### B3 — governorate is now a closed list on both sides
+
+**Audit result — one side of three was already correct:**
+
+| Surface | Before | After |
+|---|---|---|
+| API `CreateAddressDto` / update DTO | ❌ **free text**, `@MinLength(2) @MaxLength(80)` | ✅ `@IsIn` over the 27 |
+| `/shop` `AddressBook` (API-backed) | ❌ **free-text `<input>`** | ✅ `<select>` from `EGYPTIAN_GOVERNORATES` |
+| legacy `account/addresses` page | ✅ already a `<select>` from the constant | unchanged |
+| admin | *no address form exists* | nothing to fix |
+
+The DTO's old docstring explained itself honestly: free text *because* "the governorate list
+belongs to the shipping rate table, which is unresolved business input (OPEN-001)". **D-8
+removed that premise** — 27 rows, no fallback, a miss must raise — so the closed list is now
+the precondition that makes the no-fallback design safe.
+
+**Source of truth — a decision I did NOT take unilaterally.** `apps/api` has **zero
+workspace-package dependencies** (verified: no `@nest/*` in its `package.json`, no `@nest/`
+import in `src` or `test`). Importing `@nest/config` for a string array would spend that
+property. So the API keeps its own copy in `src/common/constants/governorates.ts`, and
+`test/users/governorates.spec.ts` **reads `packages/config/src/constants.ts` as text** and
+fails if the two differ in content or order — drift is impossible, neither side gains a
+dependency. The parser is itself sanity-checked (asserts it found 27) so the comparison
+cannot pass against an empty list.
+
+**Tests added** (`addresses.spec.ts`): all 27 accepted; refusals for unknown, wrong case,
+internal spacing, transliteration, empty, `$role` and `$ne`; refusal **on update as well as
+create** (an update path accepting free text would reopen the hole); and trimming still
+applied before matching.
+
+**Two existing tests had to change, and neither lost coverage:**
+- the `$`-injection test used `governorate: '$role'` as one of five payloads. Governorate is
+  now refused outright — a *stronger* guarantee — so it carries `'Cairo'` and the payload
+  coverage moved to the new explicit refusal case.
+- "accepts every one of the 27" first hit `MAX_ADDRESSES_PER_USER = 10` (422). Rewritten to
+  PATCH one address through all 27 values, which exercises the same `@IsIn` without fighting
+  an unrelated business rule.
+
+Artifact regenerated; drift gate green. `INTEGRATION.md` documents the enum and tells clients
+to build their picker **from the artifact** rather than hardcoding a list.

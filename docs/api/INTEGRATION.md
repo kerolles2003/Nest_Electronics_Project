@@ -56,6 +56,21 @@ running server's `/docs-json`, which is whatever happens to be deployed at that 
    suspected theft. Clear stored tokens and send the user to sign in. Do not retry.
 4. The whole catalogue is public and needs no token.
 
+### `governorate` is a closed list of 27 values
+
+`CreateAddressDto.governorate` and its update counterpart are an **enum**, not free text.
+Send one of the 27 strings exactly as the schema spells them — case-sensitive. Surrounding
+whitespace is trimmed for you; internal spelling is not corrected.
+
+This changed after the first freeze. It was free text while the shipping rate table was
+unresolved; D-8 settled that table as **one row per governorate with no fallback row**, so an
+unrecognised value would reach a rate lookup at checkout with nothing to find. Rejecting it at
+the address form is what makes that design safe.
+
+**Build your picker from the enum in the artifact**, not from a hardcoded list — that way a
+future governorate arrives with the contract instead of with a support ticket. A rejected
+value returns `400 VALIDATION_ERROR` with `details[0].field === 'governorate'`.
+
 ### Read `shippingPriced`, never `shippingFee.amount === 0`
 
 The one place where the obvious client-side shortcut is wrong.

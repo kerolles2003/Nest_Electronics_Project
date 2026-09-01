@@ -7,6 +7,7 @@ import {
   setDefaultAddressAction,
 } from '@/actions/api-shop.actions';
 import { emptyActionState } from '@/lib/api/action-state';
+import { EGYPTIAN_GOVERNORATES } from '@nest/config/constants';
 import type { Address } from '@/lib/api/types';
 
 /** The saved address list plus the create form. */
@@ -106,7 +107,7 @@ function AddressForm() {
       <Field label="Phone" name="phone" error={state.fieldErrors['phone']} />
       <Field label="Street, building and apartment" name="street" error={state.fieldErrors['street']} />
       <Field label="City" name="city" error={state.fieldErrors['city']} />
-      <Field label="Governorate" name="governorate" error={state.fieldErrors['governorate']} />
+      <GovernorateField error={state.fieldErrors['governorate']} />
       <Field
         label="Postal code (optional)"
         name="postalCode"
@@ -132,6 +133,47 @@ function AddressForm() {
         {pending ? 'Saving…' : 'Save address'}
       </button>
     </form>
+  );
+}
+
+/**
+ * A closed list, not a text box.
+ *
+ * The API refuses any governorate outside the 27 (D-8: the shipping rate table
+ * is seeded one row per governorate with no fallback, so an unrecognised value
+ * would reach a rate lookup with nothing to find). A free-text input here
+ * turned that server rule into a form error the customer had to guess their way
+ * out of — "Cairo" works, "cairo" and "Kairo" do not, with nothing on screen
+ * saying so.
+ *
+ * The list comes from `@nest/config` so the dropdown and the legacy account
+ * page cannot disagree; `apps/api` keeps its own copy for dependency reasons
+ * and a test asserts the two stay identical.
+ *
+ * This is a convenience, not the guarantee — the server still validates.
+ */
+function GovernorateField({ error }: { error?: string }) {
+  return (
+    <label className="block text-sm">
+      <span className="block text-black/60">Governorate</span>
+      <select
+        name="governorate"
+        defaultValue=""
+        required
+        aria-invalid={error ? true : undefined}
+        className="mt-1 w-full rounded border border-black/20 bg-white px-3 py-2"
+      >
+        <option value="" disabled>
+          Select a governorate
+        </option>
+        {EGYPTIAN_GOVERNORATES.map((governorate) => (
+          <option key={governorate} value={governorate}>
+            {governorate}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="mt-1 block text-xs text-red-700">{error}</span> : null}
+    </label>
   );
 }
 
