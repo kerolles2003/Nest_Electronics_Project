@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import { emailConfig, type EmailConfig } from '../../src/config/email.config';
+import { mediaConfig, type MediaConfig } from '../../src/config/media.config';
+import { MediaStoragePort } from '../../src/modules/media/application/ports/media-storage.port';
 import { EmailSenderPort } from '../../src/modules/notifications/application/ports/email-sender.port';
 import { BrevoEmailSender } from '../../src/providers/email/brevo/brevo-email-sender';
 import { brevoConfig, type BrevoConfig } from '../../src/providers/email/brevo/brevo.config';
 import { ConsoleEmailSender } from '../../src/providers/email/console/console-email-sender';
 import { ResendEmailSender } from '../../src/providers/email/resend/resend-email-sender';
 import { resendConfig, type ResendConfig } from '../../src/providers/email/resend/resend.config';
+import { CloudinaryMediaStorage } from '../../src/providers/media/cloudinary/cloudinary-media-storage';
+import {
+  cloudinaryConfig,
+  type CloudinaryConfig,
+} from '../../src/providers/media/cloudinary/cloudinary.config';
+import { InMemoryMediaStorage } from '../../src/providers/media/memory/in-memory-media-storage';
 import { ProvidersModule } from '../../src/providers/providers.module';
 
 /**
@@ -14,9 +22,13 @@ import { ProvidersModule } from '../../src/providers/providers.module';
  *
  * `PROVIDER-ARCHITECTURE.md` §4 makes one claim above all others: the provider
  * is replaceable by changing ONE value in ONE file. This suite is the evidence
- * for that claim — it resolves `EmailSenderPort` from the real
- * `ProvidersModule` under every setting and checks which implementation comes
- * out.
+ * for that claim — it resolves each port from the real `ProvidersModule` under
+ * every setting and checks which implementation comes out.
+ *
+ * There are TWO switches now, email and media, and both are covered. The media
+ * one was added in Phase 4 and shipped shaped exactly like the email one; a
+ * second switch that behaved differently would be the first sign that the
+ * pattern had become a coincidence rather than a design.
  *
  * ## No network, under any setting
  *
@@ -29,16 +41,33 @@ import { ProvidersModule } from '../../src/providers/providers.module';
 let moduleRef: Awaited<ReturnType<ReturnType<typeof Test.createTestingModule>['compile']>> | null =
   null;
 
-async function resolvePort(
-  provider: EmailConfig['provider'],
-  apiKey: string,
-): Promise<EmailSenderPort> {
+/**
+ * Compiles the real module with every namespace supplied.
+ *
+ * ALL FOUR are overridden on every call, even when a test only cares about one
+ * of them. `ProvidersModule` instantiates every namespace it imports, and an
+ * un-overridden one reads the process environment through `env()` — which
+ * throws outside a validated `ConfigModule`. Supplying them all is what lets
+ * this suite compile the module in genuine isolation rather than against
+ * whatever `.env` happens to say on the machine running it.
+ *
+ * (Adding the media switch broke this suite for exactly that reason: eight
+ * tests failed with "Configuration accessed before validateEnv() ran", none of
+ * them about email.)
+ */
+async function compileProviders(options: {
+  email: EmailConfig['provider'];
+  apiKey: string;
+  media?: MediaConfig['provider'];
+}) {
+  const media: MediaConfig['provider'] = options.media ?? 'memory';
+
   moduleRef = await Test.createTestingModule({ imports: [ProvidersModule] })
     // Overriding the namespaces is possible only because ProvidersModule
     // imports them rather than relying on the global ConfigModule.
     .overrideProvider(emailConfig.KEY)
     .useValue({
-      provider,
+      provider: options.email,
       fromAddress: 'orders@nestelectronics.test',
       fromName: 'Nest Electronics',
       replyTo: null,
@@ -47,12 +76,43 @@ async function resolvePort(
     // is constructed, so the other value is never read — which is itself part
     // of what these tests assert.
     .overrideProvider(resendConfig.KEY)
-    .useValue({ apiKey } satisfies ResendConfig)
+    .useValue({ apiKey: options.apiKey } satisfies ResendConfig)
     .overrideProvider(brevoConfig.KEY)
-    .useValue({ apiKey } satisfies BrevoConfig)
+    .useValue({ apiKey: options.apiKey } satisfies BrevoConfig)
+    .overrideProvider(mediaConfig.KEY)
+    .useValue({
+      provider: media,
+      maxBytes: 5 * 1024 * 1024,
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+      minEdge: 200,
+      maxEdge: 4000,
+      maxImagesPerProduct: 8,
+      folderRoot: 'nest',
+    } as MediaConfig)
+    .overrideProvider(cloudinaryConfig.KEY)
+    .useValue({
+      cloudName: 'fake-cloud-never-called',
+      apiKey: 'fake',
+      apiSecret: 'fake',
+    } satisfies CloudinaryConfig)
     .compile();
 
-  return moduleRef.get<EmailSenderPort>(EmailSenderPort);
+  return moduleRef;
+}
+
+async function resolvePort(
+  provider: EmailConfig['provider'],
+  apiKey: string,
+): Promise<EmailSenderPort> {
+  const compiled = await compileProviders({ email: provider, apiKey });
+
+  return compiled.get<EmailSenderPort>(EmailSenderPort);
+}
+
+async function resolveMediaPort(provider: MediaConfig['provider']): Promise<MediaStoragePort> {
+  const compiled = await compileProviders({ email: 'console', apiKey: '', media: provider });
+
+  return compiled.get<MediaStoragePort>(MediaStoragePort);
 }
 
 afterEach(async () => {
@@ -139,5 +199,68 @@ describe('vendor adapters refuse to run unauthenticated', () => {
 
   it('Brevo throws at construction when the API key is empty', async () => {
     await expect(resolvePort('brevo', '')).rejects.toThrow(/BREVO_API_KEY/);
+  });
+});
+
+describe('MEDIA_PROVIDER selects the implementation', () => {
+  /**
+   * The second switch, asserted the same way as the first.
+   *
+   * Constructing the Cloudinary adapter calls `cloudinary.config(...)`, which
+   * stores credentials in the SDK and makes no request. Nothing here calls
+   * `upload`, `destroy` or `list`, so no byte reaches a media account under any
+   * setting — the same property the email cases rely on.
+   */
+  it("binds the in-memory store when the value is 'memory'", async () => {
+    const storage = await resolveMediaPort('memory');
+
+    expect(storage).toBeInstanceOf(InMemoryMediaStorage);
+    expect(storage).toBeInstanceOf(MediaStoragePort);
+  });
+
+  it("binds the Cloudinary store when the value is 'cloudinary'", async () => {
+    const storage = await resolveMediaPort('cloudinary');
+
+    expect(storage).toBeInstanceOf(CloudinaryMediaStorage);
+    expect(storage).toBeInstanceOf(MediaStoragePort);
+  });
+
+  it('constructs no vendor client at all when memory is selected', async () => {
+    // The reason every developer machine today — none of which has a
+    // Cloudinary account — holds no Cloudinary client and reads no credential.
+    const storage = await resolveMediaPort('memory');
+
+    expect(storage).not.toBeInstanceOf(CloudinaryMediaStorage);
+  });
+
+  it('exports both under the same token, satisfying the same contract', async () => {
+    const memory = await resolveMediaPort('memory');
+    expect([typeof memory.upload, typeof memory.destroy, typeof memory.list]).toEqual([
+      'function',
+      'function',
+      'function',
+    ]);
+    await moduleRef?.close();
+    moduleRef = null;
+
+    const cloudinary = await resolveMediaPort('cloudinary');
+    expect([typeof cloudinary.upload, typeof cloudinary.destroy, typeof cloudinary.list]).toEqual([
+      'function',
+      'function',
+      'function',
+    ]);
+  });
+
+  it('chooses the two ports INDEPENDENTLY', async () => {
+    // A single `provider` value driving both would be the obvious wrong
+    // shortcut, and it would tie a mail vendor change to a CDN change.
+    const compiled = await compileProviders({
+      email: 'brevo',
+      apiKey: 'fake-key-never-used',
+      media: 'memory',
+    });
+
+    expect(compiled.get<EmailSenderPort>(EmailSenderPort)).toBeInstanceOf(BrevoEmailSender);
+    expect(compiled.get<MediaStoragePort>(MediaStoragePort)).toBeInstanceOf(InMemoryMediaStorage);
   });
 });
