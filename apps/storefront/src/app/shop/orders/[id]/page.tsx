@@ -97,9 +97,28 @@ export default async function OrderDetailPage({
             <dt>Subtotal</dt>
             <dd>{order.pricing.itemsSubtotal.formatted}</dd>
           </div>
+          {/*
+            Reads `shippingPriced`, exactly as the checkout summary does.
+
+            This line used to print `shippingFee.formatted` unconditionally,
+            which meant an order whose delivery had never been priced rendered
+            as "0.00 EGP" — telling the customer their delivery was free. Every
+            order placed to date is in that state, and the checkout page they
+            had just come from said "Not yet calculated" for the same order.
+
+            The order carries its own answer in the persisted snapshot, so this
+            reports what was true when the order was placed rather than what the
+            configuration says today.
+          */}
           <div className="flex justify-between text-black/70">
             <dt>Delivery</dt>
-            <dd>{order.pricing.shippingFee.formatted}</dd>
+            <dd>
+              {order.pricing.shippingPriced
+                ? order.pricing.shippingFee.amount === 0
+                  ? 'Free'
+                  : order.pricing.shippingFee.formatted
+                : 'Not yet calculated'}
+            </dd>
           </div>
           <div className="flex justify-between border-t border-black/10 pt-2 text-base font-black">
             <dt>Total</dt>

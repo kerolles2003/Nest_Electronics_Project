@@ -671,3 +671,20 @@ API:  shippingPriced = false (typeof boolean)   key present in JSON? true
 The schema default and the DTO `?? false` coercion both work. No `undefined` reaches a
 client. **✅** — but it also produced `priced:false` alongside `fee:5000`, which is
 **→ FINDING 4.**
+
+## FINDING 1 (highest severity) — the order-detail page ignored the flag
+
+`apps/storefront/src/app/shop/orders/[id]/page.tsx:102` rendered
+`order.pricing.shippingFee.formatted` unconditionally.
+
+**Failure scenario:** every order placed today is unpriced (`SHIPPING_FLAT_FEE` is unset), so
+the page rendered **"Delivery — 0.00 EGP"**, telling the customer delivery was *free* when it
+had never been priced. The checkout page they had just left said "Not yet calculated" for the
+same order. Confirmed live on the state-A order: `shippingPriced:false`,
+`shippingFee.formatted:"0.00 EGP"`.
+
+This is the exact bug class `a7009c1` exists to remove, surviving in a **third** consumer.
+The commit updated two (checkout form, order email); the brief said "both consumers", but
+`OrderDto` carries `shippingPriced` and this page was already receiving it and discarding it.
+
+**Fixed** — same three states as the checkout summary, reading the persisted flag.
