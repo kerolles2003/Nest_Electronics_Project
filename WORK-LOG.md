@@ -341,3 +341,52 @@ Server copy is authored customer-safe, and silently transforming it in the clien
 of hidden rewrite that surprises people later.
 
 538/538 green; storefront `tsc` clean, eslint 0 errors (57 pre-existing warnings unchanged).
+
+---
+
+## TASK 4 — Phase 2 (crash class + CI truthfulness)
+
+**Project instruction honoured:** `apps/storefront/AGENTS.md` says this is not the Next.js I
+know and to read `node_modules/next/dist/docs/` first. I did. **Next 16.2.4** — `middleware`
+is now `proxy`; the proxy guide states it "should not be used as a full session management or
+authorization solution" and is for **optimistic checks** only, which is precisely the
+argument for the F-05 fix. I also read the action-header constant out of the installed
+runtime rather than trusting memory: `node_modules/next/dist/client/components/app-router-headers.js`
+→ `ACTION_HEADER = 'next-action'`.
+
+### Item 1 — F-05 proxy + defensive error states
+
+**`proxy.ts`** — a first branch, before every route rule: a request carrying `next-action`
+returns `NextResponse.next()` and is never redirected. Placed first deliberately so no future
+route rule can reintroduce a redirect on that path.
+
+**Curl probe — three cases, run against the live dev server:**
+
+| Case | Result | Meaning |
+|---|---|---|
+| `GET /checkout`, no session | **307** → `/login?redirect=%2Fcheckout` | navigation guard intact |
+| `POST /checkout`, no session, **no** `Next-Action` | **307** → `/login?redirect=%2Fcheckout` | guard intact |
+| `POST /checkout`, no session, **with** `Next-Action` | **404 `x-nextjs-action-not-found: 1`** | ✅ **no redirect** — reached the action dispatcher, which correctly rejected my fake action id |
+
+The third case is the acceptance criterion and it passes. The first two are the control: they
+prove the guard was narrowed, not removed, and that the running server really is executing
+this change (otherwise case 3 would also be 307).
+
+*Note:* a storefront dev server was **already running on :3000 from this same working tree**
+(the owner's). Next 16 refuses a second dev server for the same directory, so I probed the
+existing one rather than killing it. It hot-reloads `proxy.ts`, and the control cases prove
+the new code was live.
+
+**`app/login/form.tsx`** — the genuinely dangerous site. `await syncCartToDatabase(...)` had
+**no catch**, so the thrown "unexpected response" left `loading === true` for ever: a spinning
+button, no message, nothing to click. Now the whole handler is wrapped (error state +
+`setLoading(false)` on every non-navigating path), with the cart sync in its own **nested,
+non-fatal** catch — authentication has already succeeded by then, and a convenience feature
+must not cost the customer the sign-in they just completed. The local cart is left intact so
+nothing is lost.
+
+**`CheckoutStepper`** — already had `try/catch/finally` and an error state, so it was never
+stranded; the defect was a **bare `catch {}`** that discarded the error and showed
+"An unexpected error occurred". Now it logs the error and gives an actionable message naming
+the recoverable cause. The "your cart has not been changed" reassurance is verifiable:
+`clearCart()` is only on the success branch.

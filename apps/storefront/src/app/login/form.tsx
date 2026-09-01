@@ -33,32 +33,74 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
 
     setLoading(true);
 
-    const supabase = getSupabaseBrowserClient();
+    /*
+     * F-05 — every await below is inside a handler that cannot be allowed to
+     * reject.
+     *
+     * `syncCartToDatabase` is a Server Action. Before the proxy fix, submitting
+     * this form with an expired session had the action POST answered with a 307
+     * to `/login`; the React runtime received an HTML document where an action
+     * result belonged and threw "An unexpected response was received from the
+     * server." Nothing here caught it, so `loading` stayed `true` for ever and
+     * the customer was left on a spinning button with no message and nothing to
+     * click.
+     *
+     * The proxy no longer produces that response, but this handler is hardened
+     * anyway: the proxy fix removes one cause, and an unguarded `await` in a
+     * submit handler is a stranded form for EVERY other cause too — an offline
+     * network, a deploy mid-submit, a 500 from the action.
+     */
+    try {
+      const supabase = getSupabaseBrowserClient();
 
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (authError) {
-      setError(authError.message);
+      if (authError) {
+        setError(authError.message);
+        setLoading(false);
+        return;
+      }
+
+      if (data.user && cartItems.length > 0) {
+        /*
+         * Deliberately non-fatal, and deliberately nested.
+         *
+         * Authentication has already SUCCEEDED at this point. Merging the guest
+         * cart is a convenience layered on top of it, so a failure here must not
+         * cost the customer the sign-in they just completed — it must not block
+         * navigation and must not surface as a login error, which would be a
+         * lie. The local cart is left untouched, so nothing is lost: it merges
+         * on the next attempt.
+         */
+        try {
+          await syncCartToDatabase(
+            cartItems.map((item) => ({
+              productId: item.product_id,
+              quantity: item.quantity,
+              name: item.product.name_en,
+              price: item.product.sale_price ?? item.product.base_price,
+            }))
+          );
+        } catch (syncError) {
+          console.error('cart sync after login failed; the local cart is kept', syncError);
+        }
+      }
+
+      router.push(redirectTo ?? ROUTES.account.orders);
+      router.refresh();
+    } catch (unexpected) {
+      /*
+       * The stranded-form guard. `loading` is cleared on every path out of this
+       * handler except a successful navigation, so the form is always usable
+       * again and always says something.
+       */
+      console.error('sign-in failed unexpectedly', unexpected);
+      setError('We could not complete sign-in. Please check your connection and try again.');
       setLoading(false);
-      return;
     }
-
-    if (data.user && cartItems.length > 0) {
-      await syncCartToDatabase(
-        cartItems.map((item) => ({
-          productId: item.product_id,
-          quantity: item.quantity,
-          name: item.product.name_en,
-          price: item.product.sale_price ?? item.product.base_price,
-        }))
-      );
-    }
-
-    router.push(redirectTo ?? ROUTES.account.orders);
-    router.refresh();
   };
 
   const handleGoogleLogin = async () => {

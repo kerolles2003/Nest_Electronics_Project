@@ -81,8 +81,32 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
       } else {
         setOrderError(result.error ?? 'Failed to create order. Please try again.');
       }
-    } catch {
-      setOrderError('An unexpected error occurred. Please try again.');
+    } catch (unexpected) {
+      /*
+       * F-05 — the second live trigger of the crash class.
+       *
+       * The structure here was already correct: a `catch` and a `finally` mean
+       * this form was never stranded the way the login form was. What it did
+       * NOT do was keep the error or say anything useful about it — a bare
+       * `catch {}` discarded the only evidence of what went wrong, and "An
+       * unexpected error occurred" is not something a customer can act on.
+       *
+       * The common cause is an expired session: `createOrderAction` is a Server
+       * Action, and the proxy used to answer its POST with a 307, which the
+       * React runtime reports as "An unexpected response was received from the
+       * server". The proxy no longer does that, but the same throw still
+       * reaches here from a dropped connection or a deploy mid-submit, so the
+       * message names the recoverable cause and the log keeps the detail.
+       *
+       * The reassurance is verifiable, not padding: `clearCart()` runs only on
+       * the success branch above, so reaching this point genuinely leaves the
+       * cart intact.
+       */
+      console.error('order placement failed unexpectedly', unexpected);
+      setOrderError(
+        'We could not reach the server to place your order. Your session may have expired — ' +
+          'please refresh, sign in if asked, and try again. Your cart has not been changed.',
+      );
     } finally {
       setIsSubmitting(false);
     }
