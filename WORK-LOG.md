@@ -1989,3 +1989,70 @@ and no value. `WORK-LOG.md` was restored to zero diff afterwards.
 **It deliberately does not** parse test sources for risky-looking expressions.
 The original defect asserted `toBeUndefined()`, which looks entirely harmless;
 checking the outcome rather than the shape is the check that cannot be fooled.
+
+## 2 — password-reset paths adopt the frozen document
+
+`POST /auth/password-reset/request` → **`POST /auth/forgot-password`**
+`POST /auth/password-reset/confirm` → **`POST /auth/reset-password`**
+
+`AUTHORIZATION-MODEL.md` §2.8 is the authority. `PLAN.md` §9 named them wrongly,
+the 5a brief took the names from §9, and I built them that way without noticing
+that a planning document was overruling a frozen one — the same mistake 26b
+already caught for `shippingRates`. §9 is corrected **at the source**, so the
+wrong names cannot propagate a third time.
+
+The DTOs went with the paths: `ForgotPasswordDto`, `ResetPasswordDto`. **The
+behaviour is untouched** — every one of the 19 tests passes unchanged apart from
+the URL they post to.
+
+What deliberately did NOT change: the template id `auth/password-reset` (the
+frozen `TEMPLATE-ARCHITECTURE.md` §3 inventory names that file), the
+`PasswordResetService`, and the `passwordReset` schema field. §2.8 governs URLs,
+and its own title is "Password reset" — the concept keeps its name.
+
+### The gate said BREAKING, correctly
+
+```
+drift gate: BREAKING CHANGE. This removes or changes something clients already use.
+  - path removed: /api/v1/auth/password-reset/request
+  - path removed: /api/v1/auth/password-reset/confirm
+  - schema removed: PasswordResetRequestDto
+  - schema removed: PasswordResetConfirmDto
+```
+
+Accepted for one reason with an expiry date: **nothing consumes them.** Verified
+rather than assumed — `apps/storefront/src/app/forgot-password/form.tsx` still
+calls `supabase.auth.resetPasswordForEmail`, there is no admin auth client, and
+the Flutter application does not exist. The endpoints had existed for hours.
+
+Recorded in `docs/api/INTEGRATION.md` beside the gate's own rules, including the
+part that matters most: **this does not generalise.** Once 5b wires
+`/forgot-password` to the API, the same rename breaks a shipped client and the
+answer becomes "add a path, deprecate the old one".
+
+## 2.1 — every other path §9 names, audited
+
+§9 named only two things concretely: the reset pair (wrong, now fixed) and
+`PATCH /users/me` (correct — it agrees with `AUTHORIZATION-MODEL.md` and
+`BEHAVIOR-DECISIONS.md`). Everything else in §9 is prose.
+
+So the audit was widened to **every endpoint path named in any frozen document,
+against the 49 operations actually served**. Five disagreements, recorded in a
+new **§9.1** and deliberately **not fixed**:
+
+| # | Frozen document | Served | Why it is listed, not changed |
+|---|---|---|---|
+| 1 | `GET /users/me` (`AUTHORIZATION-MODEL.md` §12) | `GET /auth/me` | Same payload, different path; `INTEGRATION.md` already documents the deviation |
+| 2 | `PATCH /orders/:id/cancel` (`ORDER-LIFECYCLE.md` §6) | `POST /orders/{id}/cancel` | Method only — a cancellation is an action |
+| 3 | `PATCH /admin/orders/:id/status` (§6) | seven `POST /admin/orders/{id}/<action>` | The biggest: separate actions make the permitted edges the URL space itself, and `transition()` is still the single enforcement point §6 requires |
+| 4 | `DELETE /admin/products/:id/images/:publicId` (`MEDIA-MODEL.md` §7) | `DELETE /admin/media?publicId=…` | The endpoint is entity-agnostic, and a `publicId` contains slashes so it cannot be a path segment |
+| 5 | `PATCH /cart/items/:id` (`BUSINESS-RULES.md`) **vs** `PATCH /cart/items/:product` (`CART-MODEL.md`) | `{productId}` | **Two frozen documents disagree with each other**; the code follows the one that owns the cart |
+
+Two apparent disagreements dissolved on inspection and are not listed:
+`DELETE /orders/:id` appears in `API-CONTRACT.md` inside a table of endpoints
+that must NOT exist, and both `GET /users/me` and `GET /auth/google` appear in
+`INTEGRATION.md` only in sentences saying they do not exist.
+
+Everything else a document names and the API does not serve belongs to a later
+phase — coupons, reviews, wishlist, blog, audit logs, admin CRUD, guest order
+tracking, `POST /cart/merge` — or is deferred by D-3.

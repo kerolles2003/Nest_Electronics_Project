@@ -102,11 +102,11 @@ async function createAccount(label: string): Promise<Account> {
 }
 
 function requestReset(email: string): request.Test {
-  return http().post('/api/v1/auth/password-reset/request').send({ email });
+  return http().post('/api/v1/auth/forgot-password').send({ email });
 }
 
 function confirmReset(token: string, newPassword: string): request.Test {
-  return http().post('/api/v1/auth/password-reset/confirm').send({ token, newPassword });
+  return http().post('/api/v1/auth/reset-password').send({ token, newPassword });
 }
 
 /**
@@ -188,7 +188,7 @@ afterAll(async () => {
   await app.close();
 });
 
-describe('POST /auth/password-reset/request', () => {
+describe('POST /auth/forgot-password', () => {
   it('emails a link and stores only the digest', async () => {
     const account = await createAccount('happy');
 
@@ -300,7 +300,7 @@ describe('POST /auth/password-reset/request', () => {
     await requestReset('not-an-address').expect(400);
 
     const injected = await http()
-      .post('/api/v1/auth/password-reset/request')
+      .post('/api/v1/auth/forgot-password')
       .send({ email: `x.${RUN_ID}@example.test`, redirectTo: 'https://evil.example' })
       .expect(400);
 
@@ -310,7 +310,7 @@ describe('POST /auth/password-reset/request', () => {
   });
 });
 
-describe('POST /auth/password-reset/confirm', () => {
+describe('POST /auth/reset-password', () => {
   it('sets the new password, and the old one stops working', async () => {
     const account = await createAccount('confirm');
     await requestReset(account.email).expect(200);

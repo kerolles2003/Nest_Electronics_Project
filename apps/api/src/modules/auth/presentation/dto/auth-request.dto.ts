@@ -119,13 +119,13 @@ export class ResendVerificationDto {
 }
 
 /**
- * `POST /auth/password-reset/request`.
+ * `POST /auth/forgot-password`.
  *
  * One field, and deliberately no others. A "redirect back to" or "client id"
  * parameter here would be an open-redirect handed to an unauthenticated caller,
  * with the resulting link mailed to a real customer by us.
  */
-export class PasswordResetRequestDto {
+export class ForgotPasswordDto {
   @ApiProperty({ example: 'maker@example.com', format: 'email' })
   @Transform(normaliseEmailInput)
   @IsEmail({}, { message: 'email must be a valid email address' })
@@ -134,14 +134,14 @@ export class PasswordResetRequestDto {
 }
 
 /**
- * `POST /auth/password-reset/confirm`.
+ * `POST /auth/reset-password`.
  *
  * The password is checked against the full server-side policy in the SERVICE,
  * not here, because the policy also refuses a password containing the account's
  * email address and this DTO cannot know it. What the decorators do is bound
  * the input before it reaches bcrypt.
  */
-export class PasswordResetConfirmDto {
+export class ResetPasswordDto {
   @ApiProperty({ description: 'The single-use token from the password-reset email.' })
   @IsString()
   @MinLength(20, { message: 'token is not a valid token' })

@@ -206,12 +206,33 @@ The existing 40-endpoint surface `[V]` is sound and consumed by `/shop` (verifie
 
 | Consumer | Needed endpoints | Notes |
 |---|---|---|
-| ~~Storefront T2~~ | ~~`PATCH /users/me`; password reset pair~~ **LANDED (5a) `[V]`** — all three endpoints exist with the §2.8 discipline: hashed at rest, single-use, 1-hour TTL, neutral responses, `tokenVersion` bump and full refresh-token revocation in one transaction. | The API half of `/account/profile` and `/forgot-password` is done; the PAGES are 5b. **Path note:** `AUTHORIZATION-MODEL.md` §2.8 sketches these as `/auth/forgot-password` and `/auth/reset-password`; the paths built are the ones named here and in the 5a brief. Behaviour is §2.8's exactly — only the two URLs differ. |
+| ~~Storefront T2~~ | ~~`PATCH /users/me`; `POST /auth/forgot-password`; `POST /auth/reset-password`~~ **LANDED (5a) `[V]`** — all three exist with the §2.8 discipline: hashed at rest, single-use, 1-hour TTL, neutral responses, `tokenVersion` bump and full refresh-token revocation in one transaction. | The API half of `/account/profile` and `/forgot-password` is done; the PAGES are 5b. **This row named the reset pair wrongly** — `password-reset/request` and `/confirm` — and the wrong names were built before the mistake was caught. **`AUTHORIZATION-MODEL.md` §2.8 is the authority and the paths above are its.** Corrected in the source rather than aliased: see changelog 28. |
 | Storefront T2 (D-8) | Shipping-rate read inside the existing quote (no new public endpoint — `FulfilmentService` body change + the frozen Mongo **`shippingRates`** collection) | See §3 shipping row and Phase 5. **Name and field shape are taken from the frozen `MONEY-MODEL.md` §6 / `MONGODB-DESIGN.md` §11, not invented here.** |
 | Storefront (frozen promise) | Guest order tracking endpoint per `GUEST-CHECKOUT.md` (“secure server-side endpoint”) `[P]` — order number + email/phone proof, heavily throttled | `/order-tracking` page exists with a client store today `[V]`. Built in Phase 8. |
 | Admin | products/categories/brands CRUD (+slug rules per `CATALOG-MODEL.md`); media upload (§13, ADR-MEDIA-001); inventory adjustment/restock (§14); customers list/detail/role change; **shipping-rules CRUD (D-8)**; admin audit trail per `AUDIT-MODEL.md` | The admin/orders lifecycle surface already exists `[V]` — the admin UI just doesn’t call it. |
 | Rebuild domains (D-5 — required) | coupons (per the already-frozen `DISCOUNT-MODEL.md` spec `[V]`: model, redemptions collection, validation codes, checkout apply/remove), reviews (+ moderation endpoints), wishlist, blog | Phase 8; the discount envelope already exists in pricing (`discountTotal` `[V]`). |
 | Deferred | ~~Google OAuth~~ — **post-launch by D-3** | Recorded, not scheduled. |
+
+### 9.1 Where the implemented surface disagrees with a frozen document
+
+Audited in Phase 5a cleanup: every endpoint path named in any frozen document,
+against the 49 operations the API actually serves. **These five are listed, not
+fixed** — each is a deliberate earlier decision or a conflict between two frozen
+documents, and changing any of them is a contract break that needs a reason
+better than tidiness.
+
+| # | Frozen document says | Implemented as | Note |
+|---|---|---|---|
+| 1 | `GET /users/me` — `AUTHORIZATION-MODEL.md` §12 RLS-mapping table | `GET /auth/me` | Same payload, different path. `docs/api/INTEGRATION.md` documents the deviation explicitly, so no client is misled. A second read endpoint would be a second thing to keep in step. |
+| 2 | `PATCH /api/v1/orders/:id/cancel` — `ORDER-LIFECYCLE.md` §6 | `POST /orders/{id}/cancel` | Method only. A cancellation is an action, not a partial update of a field the client names. |
+| 3 | `PATCH /api/v1/admin/orders/:id/status` — `ORDER-LIFECYCLE.md` §6 | seven `POST /admin/orders/{id}/<action>` endpoints (`confirm`, `ship`, `deliver`, `delivery-failed`, `retry-shipment`, `return`) | The largest of the five. One status-patch endpoint would let a client name any target status and rely on the server to refuse; separate action endpoints make the permitted edges the URL space itself. `OrdersService.transition()` is still the single enforcement point §6 requires. |
+| 4 | `DELETE /admin/products/:id/images/:publicId` — `MEDIA-MODEL.md` §7 | `DELETE /admin/media?publicId=…` | The media endpoint is entity-agnostic (products, categories, brands, blog), and a `publicId` contains slashes, so it cannot be a path segment. |
+| 5 | `PATCH /cart/items/:id` — `BUSINESS-RULES.md` vs `PATCH /cart/items/:product` — `CART-MODEL.md` | `PATCH /cart/items/{productId}` | **Two frozen documents disagree with each other.** The implementation follows `CART-MODEL.md`, which owns the cart. Worth reconciling in the documents rather than the code. |
+
+Nothing else disagrees: every other doc-named path that is not served belongs to
+a later phase (coupons, reviews, wishlist, blog, audit logs, admin CRUD, guest
+order tracking, `POST /cart/merge`) or is deferred by decision (`/auth/google`,
+D-3).
 
 Rules for all additions: additive within `/api/v1`, same envelope, DTO validation with unknown-field rejection, OpenAPI annotations, tests at the HTTP boundary, and idempotency where a retry could duplicate money/stock effects — **coupon redemption explicitly included** (D-5 classifies it money-touching; `DISCOUNT-MODEL.md`’s unique `{couponId, orderId}` index is the structural guard `[V]`).
 
@@ -694,6 +715,27 @@ Phase 7 to **Phase 4**. It **ships empty and is exercised only by tests** — no
 no images are loaded, because the real catalogue does not exist yet. **The admin upload UI
 stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
 on Phase 7 is now satisfied earlier** and is recorded as such.
+
+**28 — The plan contradicted a frozen document on the password-reset paths, and lost.**
+§9 named the reset pair `POST /auth/password-reset/request` and `/confirm`. The
+frozen **`AUTHORIZATION-MODEL.md` §2.8** specifies **`POST /auth/forgot-password`**
+and **`POST /auth/reset-password`**. The Phase 5a brief took the names from §9 —
+a planning document, not a governing one — and they were built that way.
+
+**The frozen document wins, exactly as it did for `shippingRates` (26b).** The
+endpoints are renamed, §9 is corrected at the source so the wrong names cannot
+propagate again, and the DTOs went with them (`ForgotPasswordDto`,
+`ResetPasswordDto`). The BEHAVIOUR was already §2.8's and is unchanged.
+
+**This is a BREAKING contract change and the gate said so** — two paths removed,
+two schemas removed. It is safe only because nothing consumes them: the
+storefront's `/forgot-password` page still calls Supabase, and no admin or
+Flutter client exists. That window closes in 5b. Recorded in
+`docs/api/INTEGRATION.md` beside the gate's own rules.
+
+Added **§9.1**, an audit of every endpoint path any frozen document names
+against the 49 operations actually served. Five disagreements are recorded there
+— listed deliberately, not fixed.
 
 **27 — Phase 5a: the additive half of Phase 5. No cutover; the session cluster is untouched.**
 The additive half of Phase 5. Readiness (`GET /health/ready`) now **refuses traffic when a

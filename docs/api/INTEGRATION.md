@@ -19,7 +19,7 @@ running server's `/docs-json`, which is whatever happens to be deployed at that 
 | Catalogue | products (list, detail, search, suggestions, related), categories (list, tree, detail), brands |
 | Identity | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
 | Verification | `POST /auth/verify-email`, `/auth/resend-verification` |
-| Password reset | `POST /auth/password-reset/request`, `/auth/password-reset/confirm` |
+| Password reset | `POST /auth/forgot-password`, `POST /auth/reset-password` |
 | Profile | `PATCH /users/me` — `fullName` and `phone` only |
 | Cart | the signed-in cart; re-priced on every read |
 | Addresses | the address book, including the single-default invariant |
@@ -233,6 +233,38 @@ makes this a gate.
 The check uses Mongoose's own `diffIndexes()` — the same primitive `syncIndexes()` uses — so
 the probe can never disagree with the command it tells you to run.
 
+### A breaking change was accepted once, deliberately
+
+The gate exists to stop exactly this, so the one time it was overruled is
+recorded here rather than left in a commit message.
+
+**Phase 5a cleanup renamed two endpoints**, and the gate reported it correctly:
+
+```
+drift gate: BREAKING CHANGE. This removes or changes something clients already use.
+
+  - path removed: /api/v1/auth/password-reset/request
+  - path removed: /api/v1/auth/password-reset/confirm
+  - schema removed: PasswordResetRequestDto
+  - schema removed: PasswordResetConfirmDto
+```
+
+It was accepted for one reason, and it is a reason with an expiry date:
+**nothing consumes those endpoints.** Verified rather than assumed — the
+storefront's `/forgot-password` page still calls Supabase, there is no admin
+client for auth, and the Flutter application does not exist yet. The endpoints
+had existed for hours.
+
+The alternative was leaving a public contract that contradicts a frozen
+architecture document, or serving both pairs forever — two URLs for one
+operation, which is worse contract design than one rename made before anyone
+was watching.
+
+**This does not generalise.** Once `/forgot-password` calls the API in Phase 5b,
+the same rename would break a shipped client and the answer becomes "add a new
+path, deprecate the old one". The gate is not advisory; this was a window, and
+it is closed.
+
 ### Operational notes
 
 - **Liveness (`GET /health`) is unaffected**, and must stay that way. A missing index means
@@ -252,9 +284,9 @@ the probe can never disagree with the command it tells you to run.
 ## Password reset, end to end
 
 ```
-POST /api/v1/auth/password-reset/request   { "email" }
+POST /api/v1/auth/forgot-password   { "email" }
     -> ALWAYS 200, with the same body, whether or not the address has an account
-POST /api/v1/auth/password-reset/confirm   { "token", "newPassword" }
+POST /api/v1/auth/reset-password    { "token", "newPassword" }
     -> 200, and the account is signed out on EVERY device
 ```
 
@@ -303,12 +335,12 @@ until tomorrow. Requesting a second link invalidates the first.
 Both endpoints are throttled at 3 requests per hour per IP **and** per email
 (request) and 10 per hour (confirm).
 
-> **Path note.** `AUTHORIZATION-MODEL.md` §2.8 sketches these as
-> `POST /auth/forgot-password` and `POST /auth/reset-password`. The paths built
-> are the ones `PLAN.md` §9 names, which is what the implementation brief
-> specified. **The behaviour is §2.8's, exactly** — neutral responses, hashed at
-> rest, single-use, 1-hour TTL, `tokenVersion` bump and full revocation. Only the
-> two URLs differ, and this document is the authority on the URL.
+> **These paths were renamed once, before anything consumed them.** They shipped
+> briefly as `/auth/password-reset/request` and `/auth/password-reset/confirm`,
+> which `PLAN.md` §9 named and which contradicted the frozen
+> `AUTHORIZATION-MODEL.md` §2.8. The frozen document won. If you integrated
+> against the old pair in the few hours they existed, the bodies and behaviour
+> are identical — only the two URLs changed.
 
 ---
 

@@ -1009,17 +1009,17 @@
         ]
       }
     },
-    "/api/v1/auth/password-reset/request": {
+    "/api/v1/auth/forgot-password": {
       "post": {
         "description": "**Always returns 200**, with the same body, whether or not the address has an account.\nAnything else would make this a password-free account-existence oracle — an attacker with\na list of addresses would learn which ones are registered here.\n\nThe token is 32 random bytes, stored only as a SHA-256 digest, single-use, and valid for\none hour. Requesting again invalidates the previous link.\n\nRate limited to 3 requests per hour, per IP **and** email — the same limit as registration,\nbecause this endpoint also causes an email to be sent to an address the caller names.",
-        "operationId": "AuthController_requestPasswordReset_v1",
+        "operationId": "AuthController_forgotPassword_v1",
         "parameters": [],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PasswordResetRequestDto"
+                "$ref": "#/components/schemas/ForgotPasswordDto"
               }
             }
           }
@@ -1062,17 +1062,17 @@
         ]
       }
     },
-    "/api/v1/auth/password-reset/confirm": {
+    "/api/v1/auth/reset-password": {
       "post": {
         "description": "Consumes the single-use token and sets the new password. Unknown, expired and\nalready-used tokens are reported identically.\n\nOn success this **signs the account out everywhere**: `tokenVersion` is incremented,\nwhich invalidates every outstanding access token, and every refresh token is revoked.\nBoth happen in one transaction with the credential change — a reset that left an\nattacker's session alive would not have reset anything.\n\nThe new password must satisfy the full server-side policy, including not containing the\naccount's own email address.",
-        "operationId": "AuthController_confirmPasswordReset_v1",
+        "operationId": "AuthController_resetPassword_v1",
         "parameters": [],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PasswordResetConfirmDto"
+                "$ref": "#/components/schemas/ResetPasswordDto"
               }
             }
           }
@@ -4420,7 +4420,7 @@
           "email"
         ]
       },
-      "PasswordResetRequestDto": {
+      "ForgotPasswordDto": {
         "type": "object",
         "properties": {
           "email": {
@@ -4433,7 +4433,7 @@
           "email"
         ]
       },
-      "PasswordResetConfirmDto": {
+      "ResetPasswordDto": {
         "type": "object",
         "properties": {
           "token": {

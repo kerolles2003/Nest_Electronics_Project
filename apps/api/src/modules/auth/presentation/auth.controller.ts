@@ -28,9 +28,9 @@ import {
   LoginDto,
   RefreshTokenDto,
   RegisterDto,
-  PasswordResetConfirmDto,
-  PasswordResetRequestDto,
+  ForgotPasswordDto,
   ResendVerificationDto,
+  ResetPasswordDto,
   VerifyEmailDto,
 } from './dto/auth-request.dto';
 import {
@@ -305,7 +305,7 @@ export class AuthController {
     };
   }
 
-  @Post('password-reset/request')
+  @Post('forgot-password')
   @Header('Cache-Control', NO_STORE)
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -328,7 +328,7 @@ export class AuthController {
   @ApiOkResponse({ type: MessageResponseDto })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: 'VALIDATION_ERROR' })
   @ApiTooManyRequestsResponse({ type: ErrorResponseDto, description: 'RATE_LIMIT_EXCEEDED' })
-  async requestPasswordReset(@Body() dto: PasswordResetRequestDto): Promise<MessageResponseDto> {
+  async forgotPassword(@Body() dto: ForgotPasswordDto): Promise<MessageResponseDto> {
     await this.passwordReset.request(dto.email);
 
     /*
@@ -341,7 +341,7 @@ export class AuthController {
     };
   }
 
-  @Post('password-reset/confirm')
+  @Post('reset-password')
   @Header('Cache-Control', NO_STORE)
   @Public()
   @HttpCode(HttpStatus.OK)
@@ -367,7 +367,7 @@ export class AuthController {
     description: 'VALIDATION_ERROR — token invalid or expired, or the password is refused.',
   })
   @ApiTooManyRequestsResponse({ type: ErrorResponseDto, description: 'RATE_LIMIT_EXCEEDED' })
-  async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto): Promise<MessageResponseDto> {
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<MessageResponseDto> {
     await this.passwordReset.confirm(dto.token, dto.newPassword);
 
     return {

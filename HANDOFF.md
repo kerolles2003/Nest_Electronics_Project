@@ -487,18 +487,16 @@ the drift gate green.** The 15 skipped are the Cloudinary suite, which is opt-in
 
 ## What needs you
 
-### 1. The password-reset paths contradict a frozen document
+### 1. ~~The password-reset paths contradict a frozen document~~ RESOLVED
 
-`AUTHORIZATION-MODEL.md` §2.8 sketches `POST /auth/forgot-password` and
-`POST /auth/reset-password`. `PLAN.md` §9 and your 5a brief both say
-`POST /auth/password-reset/request` and `/confirm`.
+**Fixed in the 5b cleanup.** The endpoints are now `POST /auth/forgot-password`
+and `POST /auth/reset-password`, as `AUTHORIZATION-MODEL.md` §2.8 specifies.
+`PLAN.md` §9 named them wrongly and has been corrected at the source; the
+behaviour never changed.
 
-I built the pair you named, and honoured §2.8's actual requirements exactly —
-neutral responses, hashed at rest, single-use, 1-hour TTL, `tokenVersion` bump,
-full session revocation. **Only the two URLs differ.**
-
-Changing them is cheap right now because nothing consumes them. It stops being
-cheap in 5b, when `/forgot-password` starts calling them.
+The rename was a **breaking** contract change and the gate reported it as one.
+Accepted because nothing consumes them — verified, not assumed: `/forgot-password`
+still calls Supabase. That window closes the moment 5b wires the page up.
 
 ### 2. A shipping-rate row may carry its own free-shipping threshold
 
