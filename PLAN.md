@@ -1,7 +1,7 @@
 # Nest Electronics — Completion Plan
 
 **Date:** 2026-09-01 · **Baseline commit:** `b344173` (`main`, dirty tree: 64 staged / 119 modified / 166 untracked)
-**Revision:** updated 2026-09-01 with owner decisions D-1…D-10 (all RESOLVED — §25). Changelog in §26.
+**Revision:** updated 2026-09-01 with owner decisions D-1…D-10 (all RESOLVED — §25); **corrected 2026-09-02** (media→Phase 4, frozen `shippingRates` model, `shippingFee` semantics into Phase 2, catalogue timing). Changelogs in §26 (latest) and §27.
 **Phase:** forensic audit + planning only. No product code was modified to produce or revise this document.
 
 **Evidence tags used throughout:**
@@ -85,7 +85,7 @@ Cross-cutting, all observed live: `/api/v1` URI versioning; `{data}` / `{error:{
 
 | Store | Domains | Written by | Read by | Verdict |
 |---|---|---|---|---|
-| **MongoDB Atlas** (replica set) | users (+embedded addresses), refresh tokens, products, categories, brands, carts, orders (+counter), idempotency keys, inventory events `[V]` (schema files) | API only | API only | **Authoritative target** for every commerce domain. Current contents are seed/dev data `[O]`; the seed remains dev/test tooling (§26 note 2). |
+| **MongoDB Atlas** (replica set) | users (+embedded addresses), refresh tokens, products, categories, brands, carts, orders (+counter), idempotency keys, inventory events `[V]` (schema files) | API only | API only | **Authoritative target** for every commerce domain. Current contents are seed/dev data `[O]`; the seed remains dev/test tooling (§27 open question 1). |
 | **Supabase Postgres** | 19 tables in active source: `orders, order_items, order_status_history, products, product_images, product_attribute_values, profiles, coupons, reviews, categories, brands, admin_audit_logs, blog_posts, wishlists, carts, cart_items, addresses, inventory_transactions, slug_redirects` `[V]` | legacy storefront actions + admin actions + `create_order_v2` RPC | legacy storefront + admin | **Legacy. All contents are disposable mock data** `[O]` — decommission is code deletion, not migration (§18). |
 | **Supabase Auth** | users, sessions, Google OAuth | legacy storefront + admin | same | Legacy; population disposable `[O]` |
 | **Supabase Storage** | buckets `products/avatars/blog/reviews` — 2 objects, ~204 KB total `[P]` docs/storage | admin product image upload | storefront image URLs | Legacy; objects disposable `[O]`; replacement is Cloudinary (D-4), pipeline only, **no migration** |
@@ -107,7 +107,7 @@ Classification values: `AUTHORITATIVE` / `LEGACY` / `TEMPORARY COMPATIBILITY` / 
 | Inventory | **DUPLICATED** — Supabase `inventory_transactions` (admin) vs Mongo `inventoryEvents` + `stock.onHand` (API, transactional) `[V]` | API/Mongo | The API side is the engineered one (events, transactions, idempotent replay). |
 | Cart | **DUPLICATED** — Zustand+Supabase (`carts`, `cart_items`, merge-on-login `syncCartToDatabase`) vs Mongo cart (auth-only, re-priced per read) `[V]` | API/Mongo (+ client-side guest cart that merges at login) | API cart is bearer-auth only `[V]`; guest checkout is FROZEN-removed (`GUEST-CHECKOUT.md` `[P]`), guest *browsing* cart remains a UX requirement. |
 | Addresses | **DUPLICATED** — Supabase `addresses` vs Mongo embedded addresses with default-invariant `[V]` | API/Mongo | |
-| Shipping | `FulfilmentService` exists; flat fee currently configured at 0 → UI shows “Not yet calculated” `[V]` | API/Mongo — **rule DECIDED (D-8)**: 50 EGP (5 000 pt) Cairo & Giza, 100 EGP (10 000 pt) all other governorates; admin-editable rule model | Quote-side lookup ships with Phase 5 (closes F-13); admin editor ships with Phase 7. Free-shipping threshold already implemented, config-driven `[V]` — stays off until the owner sets it. |
+| Shipping | `FulfilmentService` exists; flat fee currently configured at 0 → UI shows “Not yet calculated” `[V]` | API/Mongo — **rate DECIDED (D-8)**: 50 EGP (5 000 pt) Cairo & Giza, 100 EGP (10 000 pt) all other governorates; admin-editable via the **frozen `shippingRates` collection** (`MONEY-MODEL.md` §6, `MONGODB-DESIGN.md` §11 — one row per governorate, `fee` in int64 minor units) | Quote-side lookup ships with Phase 5 (closes F-13); admin editor ships with Phase 7. Free-shipping threshold already implemented, config-driven `[V]` — stays off until the owner sets it. |
 | Checkout | **DUPLICATED** — legacy `supabase.rpc('create_order_v2')` + `reservations` vs API quote + transactional order placement `[V]` | API | |
 | Orders | **DUPLICATED — the most dangerous one.** Legacy+admin on Supabase `orders`; `/shop`+Flutter on Mongo `orders` `[V]` | API/Mongo | Admin cannot see or fulfil a Mongo order today. Legacy Supabase orders are discarded outright (D-6) — no archive, no read-only view. |
 | Payments | Nowhere — no provider code in any app (`stripe/paymob/paytabs/fawry/paypal` grep: no source hits) `[V]` | **COD at launch — CONFIRMED (D-7)**, a time-driven interim choice; provider integration is a recorded future project | “Cash on delivery” is asserted in checkout UI `[V]`. |
@@ -163,7 +163,7 @@ IDs are stable and referenced across the document. New column records the effect
 | F-10 | P2 | `EmailVerificationService.deliver()` logs “dispatched” after a failed send | API log `[V]` | OPEN — Phase 1. |
 | F-11 | P2 | Expired/replayed verification link shows generic “Validation failed.”; useful detail unused in `error.details` | browser + `customerMessage()` `[V]` | OPEN — Phase 1. |
 | F-12 | P2 | Two nested `<main>` landmarks on every `/shop` page; legacy chrome (incl. server-side Supabase queries) wraps the API slice | browser count + layout source `[V]` | OPEN — Phase 5 route-group split. |
-| F-13 | P2 | Checkout shows “Delivery — Not yet calculated” + “Total to pay” excluding delivery | browser `[V]` | OPEN — now closes **properly** via the D-8 shipping rule in Phase 5, not via wording. Note: `shippingFee === 0` currently doubles as “unpriced” in UI and email (`shippingUnpriced` `[V]`); once real fees exist, 0 means “free” — both consumers updated in Phase 5. |
+| F-13 | P2 | Checkout shows “Delivery — Not yet calculated” + “Total to pay” excluding delivery | browser `[V]` | OPEN — now closes **properly** via the D-8 shipping rule in Phase 5, not via wording. Note: `shippingFee === 0` currently doubles as “unpriced” in UI and email (`shippingUnpriced` `[V]`); once real fees exist, 0 means “free”. **The representation decision moved to Phase 2 (was Phase 5)** — it must land *before* the Phase 3 contract freeze, because changing the meaning of an existing value is a silent break no drift gate can catch. Consumers updated in Phase 2; the real fees that make it matter still arrive in Phase 5. |
 | F-14 | P2 | e2e suite: zero console/pageerror listeners; `/shop`-only; runs with `AUTH_REQUIRE_EMAIL_VERIFICATION=false` so the “Check your email” assertion proves nothing about email | grep + config `[V]` | OPEN — fixture built in Phase 2, adoption completed in Phase 10. |
 | F-15 | P2 | CI has **no seed step**; `pnpm --filter api test` includes specs requiring seeded catalogue → the pipeline cannot pass as written | ci.yml grep `[V]` + prior root-cause `[P]` | OPEN — Phase 2. |
 | F-16 | P3 | Storefront `.env.local` lacks `API_BASE_URL`; works only via the `127.0.0.1:3002` code fallback | env + client.ts `[V]` | OPEN — Phase 2. |
@@ -207,7 +207,7 @@ The existing 40-endpoint surface `[V]` is sound and consumed by `/shop` (verifie
 | Consumer | Needed endpoints | Notes |
 |---|---|---|
 | Storefront T2 | `PATCH /users/me` (profile); password reset pair (`POST /auth/password-reset/request`, `POST /auth/password-reset/confirm`) with the same token discipline as verification (hashed at rest, single-use, neutral responses) | Without these, `/account/profile` and `/forgot-password` cannot migrate. |
-| Storefront T2 (D-8) | Shipping-rule read inside the existing quote (no new public endpoint — `FulfilmentService` body change + Mongo `shippingRules` collection) | See §3 shipping row and Phase 5. |
+| Storefront T2 (D-8) | Shipping-rate read inside the existing quote (no new public endpoint — `FulfilmentService` body change + the frozen Mongo **`shippingRates`** collection) | See §3 shipping row and Phase 5. **Name and field shape are taken from the frozen `MONEY-MODEL.md` §6 / `MONGODB-DESIGN.md` §11, not invented here.** |
 | Storefront (frozen promise) | Guest order tracking endpoint per `GUEST-CHECKOUT.md` (“secure server-side endpoint”) `[P]` — order number + email/phone proof, heavily throttled | `/order-tracking` page exists with a client store today `[V]`. Built in Phase 8. |
 | Admin | products/categories/brands CRUD (+slug rules per `CATALOG-MODEL.md`); media upload (§13, ADR-MEDIA-001); inventory adjustment/restock (§14); customers list/detail/role change; **shipping-rules CRUD (D-8)**; admin audit trail per `AUDIT-MODEL.md` | The admin/orders lifecycle surface already exists `[V]` — the admin UI just doesn’t call it. |
 | Rebuild domains (D-5 — required) | coupons (per the already-frozen `DISCOUNT-MODEL.md` spec `[V]`: model, redemptions collection, validation codes, checkout apply/remove), reviews (+ moderation endpoints), wishlist, blog | Phase 8; the discount envelope already exists in pricing (`discountTotal` `[V]`). |
@@ -252,10 +252,10 @@ Capability classification (pages exist and are wired; production-grade depth unv
 | Orders view/filter/detail/transitions | Supabase-backed legacy (transition maps in `order.actions.ts` `[V]`) | **MIGRATE first** — API `admin/orders` endpoints already exist and are tested `[V]`; swap the data layer, drive UI state from the API’s allowed transitions. No legacy-orders view of any kind — Supabase orders are discarded (D-6). |
 | Admin auth + roles | Supabase | **MIGRATE with orders** — JWT login + `ADMIN/SUPER_ADMIN` guard; needs staff provisioning (§10) |
 | Products / categories / brands CRUD | Supabase | **MIGRATE** after API CRUD exists (§9), Phase 7 |
-| Images | Supabase Storage | **REPLACE** with the Cloudinary pipeline (§13) — no object migration (D-4) |
+| Images | Supabase Storage | **REPLACE** with the Cloudinary pipeline (§13) — no object migration (D-4). **Split `[O]`: the upload API lands in Phase 4 (empty, test-exercised only); this admin upload UI stays in Phase 7.** |
 | Inventory | Supabase `inventory_transactions` | **MIGRATE** onto API inventory ops (§14) |
 | Customers | Supabase profiles | **MIGRATE** onto API customers endpoints |
-| Shipping rules | *(does not exist)* | **BUILD** — editor for the D-8 rule model, Phase 7 |
+| Shipping rates | *(does not exist)* | **BUILD** — editor over the frozen `shippingRates` collection (one row per governorate, `fee` in minor units), Phase 7 |
 | Coupons / reviews | Supabase | **REBUILD on the API models** (D-5) — management screens re-pointed in Phase 8 |
 | Blog authoring | *(storefront-only legacy render; no admin screen found `[A]` — confirm in Phase 8)* | **BUILD** with the blog model (D-5), Phase 8 |
 | Audit log | Supabase `admin_audit_logs` | **MIGRATE** to API audit trail (`AUDIT-MODEL.md`); old rows discarded (D-6) |
@@ -266,8 +266,11 @@ The admin app itself (Next.js shell, components, validation UX): **KEEP**. Only 
 ## 13. Product and Image Management Plan
 
 - **Decision — D-4 CONFIRMED:** Cloudinary, via the already-frozen **ADR-MEDIA-001**: `Client → NestJS → Cloudinary`, not signed direct upload — the server sees every byte, validates, sniffs magic bytes, strips EXIF, captures dimensions `[V]` (MEDIA-MODEL.md).
-- **No migration (D-4/D-6):** the 2 existing Supabase Storage objects are disposable dev data. The work is the pipeline only.
-- **Work (Phase 7):** API media endpoint per ADR-MEDIA-001; server-side rules adopted from the admin’s existing client-side validation (5 MB, jpeg/png/webp `[V]`); ordering + primary-image invariant; delete/replace with orphan cleanup; store provider-relative identifiers, not absolute URLs — MEDIA-MODEL.md records the legacy baked-URL defect explicitly `[V]`.
+- **No migration (D-4/D-6):** the 2 existing Supabase Storage objects are disposable dev data. The work is the pipeline only — and, per the owner’s Phase-4 decision `[O]`, **the pipeline is built before there is any content for it to carry.** That is deliberate: the endpoint is unblocked engineering, the catalogue is owner content work (§25 risk 1).
+- **Work — SPLIT ACROSS TWO PHASES `[O]`.** The owner moved the *upload API* earlier; the *admin UI* stays put.
+  - **Phase 4 — the API endpoint only, and it ships EMPTY.** API media endpoint per ADR-MEDIA-001 (`Client → NestJS → Cloudinary`); server-side validation rules adopted from the admin’s existing client-side validation (5 MB, jpeg/png/webp `[V]`); **magic-byte sniffing** (never trust the declared MIME); **EXIF strip** + real-dimension capture via sharp; ordering + primary-image invariant; delete/replace with orphan cleanup; **store provider-relative identifiers, not absolute URLs** — MEDIA-MODEL.md records the legacy baked-URL defect explicitly `[V]`.
+    **No products and no images are loaded `[O]`: the real catalogue does not exist yet.** The endpoint ships with an empty `mediaAssets` collection and is **exercised only by tests** (fixture bytes, not business content). Building it early buys the capability without pretending there is anything to put in it.
+  - **Phase 7 — the admin upload UI**, which is the half that needs an operator and a catalogue to attach images to.
 - **Slug management:** admin `check-slug` behaviour re-implemented against Mongo. Legacy `slug_redirects` are **dropped** (D-6) — mock catalogue URLs have no SEO equity to preserve.
 
 ## 14. Inventory Management Plan
@@ -319,10 +322,11 @@ Each step is a reviewable diff; the only irreversible act is the final project d
 
 ## 19. Flutter / Mobile API Readiness Plan
 
-- **Safe to integrate now** `[V]`: catalogue, login/refresh/logout/me, cart, addresses, checkout quote, orders + idempotent placement, error envelope (`code`-switching), rate-limit + request-id headers. Contract conventions are documented in Swagger (`/api/v1/docs`, OpenAPI JSON at `/docs-json`) `[V]`.
+- **Safe to integrate now** `[V]`: catalogue, login/refresh/logout/me, cart, addresses, checkout quote, orders + idempotent placement, error envelope (`code`-switching), rate-limit + request-id headers.
+  - **⚠ One carve-out, closed in Phase 2:** `pricing.shippingFee` was **not** safe to integrate against as shipped, because `0` currently means **“not priced”** and would have come to mean **“free”** after Phase 5 `[V]`. A client that coded `0 → "not calculated"` at Phase 3 would misreport every free-shipping order, and **no drift gate can catch it — the field, its type and its name never change.** Phase 2 therefore lands the explicit representation (`shippingPriced`) *before* this contract freezes, so “safe to integrate now” is true of the money block as well. Contract conventions are documented in Swagger (`/api/v1/docs`, OpenAPI JSON at `/docs-json`) `[V]`.
 - **Register / verify / resend**: shapes stable; in development the documented recipe is `EMAIL_PROVIDER=console` (+ optional verification toggle) — the audit proved the console-emitted link completes the chain `[V]`. Real delivery arrives with Phase E and is a **production** concern, not an integration blocker.
 - **Must not integrate**: anything Supabase; the legacy web flows.
-- **Coming additions** (password reset, shipping-fee-bearing quotes, coupons/reviews/wishlist/blog) are additive within v1 and enter the same doc + drift gate as they land.
+- **Coming additions** (password reset, real shipping-fee *values* in quotes — the *representation* is already final as of Phase 2 — coupons/reviews/wishlist/blog) are additive within v1 and enter the same doc + drift gate as they land.
 - **Work (Phase 3):** export a **frozen OpenAPI v1 artifact** into `docs/api/openapi.v1.json`; declare the additive-only policy as the compatibility contract; CI drift gate (generated vs frozen; breaking = fail); sandbox recipe doc; a short safe/unstable/forbidden integration page.
 
 ## 20. Testing and CI Plan
@@ -332,11 +336,12 @@ What exists `[V]`: 19 jest suites (527 tests) mixing unit and real-Mongo integra
 Gaps → work items:
 
 1. **Provider isolation (F-07)** — Phase 1, before a valid key exists. Acceptance: a full jest run makes zero vendor calls (asserting fake or blackholed network).
-2. **CI seed step (F-15)** — run `pnpm --filter api seed` (script exists `[V]`) against the CI Mongo before `pnpm --filter api test`. Acceptance: green CI from a fresh clone with no local state.
+2. **CI seed step (F-15)** — run `pnpm --filter api seed` (script exists `[V]`) against the CI Mongo before `pnpm --filter api test`. Acceptance: green CI from a fresh clone with no local state. **Measured correction:** seeding alone is *not* sufficient — a fresh database also needs `pnpm --filter api indexes:sync`, without which 19 tests fail (index-usage, idempotency, transaction-atomicity and concurrency suites) because `autoIndex` is off. The CI step is therefore **seed + indexes:sync**.
+2b. **Shipping-fee representation (from open question 2)** — an explicit `shippingPriced` boolean, shipped in **Phase 2** before the Phase 3 freeze, with both consumers (checkout UI, order email) updated. Acceptance: a priced `0` renders as free, an unpriced fee renders as not-calculated, and the two are distinguishable without inspecting the amount.
 3. **Browser-health assertions (F-14)** — shared Playwright fixture failing any test on `pageerror`, `console.error`, unhandled rejection, or unexpected ≥500; adopted by the existing journey and every new spec. This fixture would have caught the reported production bug class.
 4. **Real-verification e2e** — one spec that runs with `AUTH_REQUIRE_EMAIL_VERIFICATION=true` + console provider, harvests the emitted link (the audit proved this technique), and completes verify→login.
 5. **Cutover regression specs** — as each T1/T2 route migrates, a journey spec on the *canonical* URL joins the suite; the audit’s browser matrix (auth, store, failure paths incl. 401/404/409/429) is the checklist.
-6. **New-domain specs (D-5/D-8)** — shipping-fee table tests (Cairo/Giza 5 000 pt, default 10 000 pt, threshold interplay, coupon-then-fee ordering per the frozen formula); coupon validation table from `DISCOUNT-MODEL.md` incl. double-redemption; review moderation gating (unmoderated content never publicly readable); wishlist auth boundaries; blog rendering; import-tool report tests.
+6. **New-domain specs (D-5/D-8)** — shipping-fee table tests over the frozen `shippingRates` collection (Cairo/Giza 5 000 pt, every other governorate 10 000 pt, an unlisted-governorate miss, threshold interplay, coupon-then-fee ordering per the frozen formula) **plus explicit `shippingPriced` tests — a priced-zero fee must render as free, never as “not calculated”**; coupon validation table from `DISCOUNT-MODEL.md` incl. double-redemption; review moderation gating (unmoderated content never publicly readable); wishlist auth boundaries; blog rendering; import-tool report tests.
 7. **Test isolation debt** `[A→low]`: suites share one database; parallel runs collide (observed when audit runs raced). Either enforce `--runInBand` in CI (current reality) or per-run database names.
 8. Full pipeline target (CI’s shape + seed): `fresh clone → pnpm install --frozen-lockfile → env per .env.example → seed → type-check → lint → build → test → e2e`.
 
@@ -411,17 +416,19 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 
 ### Phase 2 — Kill the crash class + CI truthfulness
 
-**Goal** — no route can produce “An unexpected response was received from the server”; CI can actually pass.
-**Why** — F-05 is the reported production bug class; F-15 makes CI a false signal.
+**Goal** — no route can produce “An unexpected response was received from the server”; CI can actually pass; **and the checkout money block says what it means before anyone freezes a contract against it.**
+**Why** — F-05 is the reported production bug class; F-15 makes CI a false signal; and the `shippingFee === 0` ambiguity (open question 2) must be resolved **here**, because Phase 3 freezes the contract and a change of meaning in an existing value is invisible to a drift gate.
 **Current state** — proxy 307s action POSTs (proven `[V]`); two live triggers; CI lacks seed `[V]`.
-**Files/systems involved** — `apps/storefront/src/proxy.ts`, `app/login/form.tsx`, `components/CheckoutStepper.tsx`, `.github/workflows/ci.yml`, dev env files.
-**Work required** — proxy passes requests bearing `Next-Action` through untouched (per-page/per-action auth answers instead); defensive `.catch` + error state at both trigger sites (they live until T2); CI seed step (F-15); explicit `API_BASE_URL` in dev env files (F-16); build the shared **browser-health Playwright fixture** (used from here on, completed in Phase 10). *The former “optional F-04 interim patch” is dropped — D-6 removed its value; F-04 dies with the page at T2.*
+**Files/systems involved** — `apps/storefront/src/proxy.ts`, `app/login/form.tsx`, `components/CheckoutStepper.tsx`, `.github/workflows/ci.yml`, dev env files; **for the fee representation:** `fulfilment.service.ts` / checkout pricing DTOs, `components/shop/CheckoutForm.tsx` (`:88` `[V]`), `notifications.service.ts` (`:299` `shippingUnpriced` `[V]`) and the `price-summary` email partial.
+**Work required** — proxy passes requests bearing `Next-Action` through untouched (per-page/per-action auth answers instead); defensive `.catch` + error state at both trigger sites (they live until T2); CI seed step (F-15); explicit `API_BASE_URL` in dev env files (F-16); build the shared **browser-health Playwright fixture** (used from here on, completed in Phase 10); **and implement the open-question-2 decision — an explicit `shippingPriced` representation — updating both consumers (checkout UI and the order-email `shippingUnpriced` flag).** *The former “optional F-04 interim patch” is dropped — D-6 removed its value; F-04 dies with the page at T2.*
+
+**On the fee representation (why it is in this phase and not Phase 5):** adding a field is additive and a drift gate reports it. **Redefining `0` from “not priced” to “free” changes no field, no name and no type — the gate sees nothing, and every client that already shipped `0 → "not calculated"` silently misreports free-shipping orders.** The bug is also *already reachable*: `FulfilmentService.quote` returns `0` on a met free-shipping threshold today `[V]`. Phase 5 supplies the fee *values*; this phase fixes the *meaning*, and it must precede the Phase 3 freeze.
 **Dependencies** — Phase 0.
 **Risks** — proxy change affects every route → e2e + manual matrix on guarded routes.
-**Acceptance criteria** — the curl probe (`POST /checkout` with `Next-Action`, no session) no longer yields a 307; login-with-full-guest-cart shows no console error; CI green from scratch.
+**Acceptance criteria** — the curl probe (`POST /checkout` with `Next-Action`, no session) no longer yields a 307; login-with-full-guest-cart shows no console error; CI green from scratch; **a priced fee of `0` displays as free (never “Not yet calculated”) in both the checkout UI and the order email, and an unpriced fee remains distinguishable from it without reading the amount.**
 **Automated verification** — new Playwright spec: guest cart → login → zero page/console errors (health fixture); CI run.
 **Manual/browser verification** — the audit failure matrix on `/login`, `/checkout`.
-**Definition of done** — F-05, F-15, F-16 closed; health fixture merged.
+**Definition of done** — F-05, F-15, F-16 closed; health fixture merged; **open question 2 answered in code, so Phase 3 can freeze a money block whose values mean one thing only.**
 
 ---
 
@@ -432,8 +439,8 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Current state** — Swagger live with conventions text `[V]`; no frozen artifact, no drift gate.
 **Files/systems involved** — `apps/api` Swagger config, `docs/api/` (new artifact), CI.
 **Work required** — export OpenAPI JSON to `docs/api/openapi.v1.json`; CI job diffing generated vs frozen (breaking = fail, additive = update artifact in the same PR); sandbox recipe doc (compose + seed + console mail + verification toggle); a short safe/unstable/forbidden integration page (§19).
-**Dependencies** — Phase 1 (test/provider hygiene; honest recipe).
-**Risks** — freezing mistakes → additive-only, not immutable.
+**Dependencies** — Phase 1 (test/provider hygiene; honest recipe) **and Phase 2's `shippingPriced` decision** — freezing the money block while `shippingFee === 0` is still ambiguous would export the ambiguity to every mobile client.
+**Risks** — freezing mistakes → additive-only, not immutable. **Note the limit of that policy: additive-only protects *shape*, not *meaning*. A value whose semantics change later passes the drift gate untouched — which is exactly why open question 2 is settled in Phase 2 rather than here.**
 **Acceptance criteria** — the Flutter dev completes the 18-step contract journey `[P]` from the docs alone, on a fresh machine.
 **Automated verification** — the drift gate.
 **Manual verification** — a walkthrough with the mobile developer.
@@ -441,22 +448,26 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 
 ---
 
-### Phase 4 — Storefront catalogue reads cutover (T1) + catalogue entry tooling
+### Phase 4 — Storefront catalogue reads cutover (T1) + catalogue entry tooling + media upload API
 
-**Goal** — the designed storefront pages render the API catalogue; the owner has a working path to load the real catalogue, independent of admin readiness.
+**Goal** — the designed storefront pages render the API catalogue; the owner has a working path to load the real catalogue, independent of admin readiness; **and the Cloudinary upload API exists, empty, so nothing later waits on it.**
 **Why** — F-09 and F-03 both shrink; reads are the low-risk half. **This phase shrank substantially under D-6**: the Supabase→Mongo import is gone; T1 depends only on Phases 0 + 2.
 **Current state** — Mongo holds the 26-product dev seed `[V]`; legacy pages read Supabase `[V]`; without new tooling, admin CRUD (Phase 7) would be the only entry path for real data — weeks away.
-**Files/systems involved** — new import tool in `apps/api` tooling (beside `seed.ts`); storefront T1 routes (§7); `lib/api/endpoints.ts`; sitemap.
+**Files/systems involved** — new import tool in `apps/api` tooling (beside `seed.ts`); storefront T1 routes (§7); `lib/api/endpoints.ts`; sitemap; **new API `MediaModule` (Cloudinary, ADR-MEDIA-001) + `mediaAssets` collection.**
 **Work required** —
-1. **Temporary CSV/JSON catalogue import tool (~1 day):** spreadsheet-shaped input → products/categories/brands; upsert by SKU/slug; validated against the Mongo schemas; per-run count/skip/error report. Explicitly temporary as a *migration* aid but **kept after launch for bulk additions**. It has no dependency on Phases 1–3 and may be pulled forward to run right after Phase 0 if the owner wants to begin catalogue entry early.
+1. **CSV/JSON catalogue import tool, driven by a declarative column-mapping profile (~1–2 days).** Spreadsheet-shaped input → products/categories/brands; upsert by SKU/slug; validated against the Mongo schemas; per-run count/skip/error report. **Kept after launch for bulk additions** — it is not a throwaway migration aid, because there is no legacy catalogue to migrate (D-6).
+   - **Column mapping is configuration, not code `[O]`.** The real catalogue will arrive later from a supplier feed or another external source whose columns are **unknown at design time**, so the tool must not hardcode a schema. It reads a **mapping profile** — a small declarative config that says which input column feeds which model field (plus per-field type coercion, required/optional, and a default) — and a new supplier format costs a new profile, not a new parser.
+   - **Ships with a profile for the seed shape so it is testable on day one**, and its tests assert the *mapping mechanism* (a profile correctly rewires columns; a missing required column reports rather than throws), not one fixed layout.
+   - **This phase is where it stays.** *The former “may be pulled forward to run right after Phase 0” language is removed:* per the owner `[O]`, **the real catalogue does not exist and is deferred until after the build**, so there is no data for an early run to act on. Pulling the tool forward would buy nothing but an earlier untested surface.
 2. Migrate T1 routes to `lib/api` catalog calls, page by page, preserving URLs and design.
 3. Navbar/Footer category data from the API; sitemap from API data.
-**Dependencies** — Phases 0, 2. Real catalogue *content* is an **owner deliverable** entered via the tool — the code does not wait for it, but launch does (§25 risk 4).
-**Risks** — storefront shows demo data until the owner loads real data → visible but harmless in dev; owner comms: stop entering catalogue data in the old admin after T1 (edits there are invisible and disposable).
-**Acceptance criteria** — T1 routes render API data pixel-equivalent to before; no `@nest/services` import remains in T1 pages; the import tool round-trips a sample spreadsheet with a correct report.
+4. **Media upload API per ADR-MEDIA-001 (moved here from Phase 7 by owner decision `[O]`) — build only, no data.** `Client → NestJS → Cloudinary`: authorization before any byte is accepted, hard size limit, MIME allow-list, **magic-byte sniffing**, **EXIF strip** + dimension capture, **provider-relative identifiers persisted (never absolute URLs)**. **It ships EMPTY — no products and no images are loaded, because the real catalogue does not exist yet `[O]` — and is exercised only by tests** using fixture bytes. **The admin upload UI is NOT in this phase; it stays in Phase 7** (§13). Landing the endpoint here also **satisfies Phase 8's blog-cover dependency earlier** — blog covers no longer wait on Phase 7.
+**Dependencies** — Phases 0, 2. The media item additionally needs the **Cloudinary account credentials (owner-supplied, D-4)**; without them it is written and unit-tested but cannot be integration-proven — recorded, not worked around. Real catalogue *content* is an **owner deliverable** deferred until after the build `[O]` — the code does not wait for it, but launch does (§25 risk 1).
+**Risks** — **the storefront runs on the 26-product dev seed for the whole build, by design `[O]`** — visible in dev, harmless, and **blocking launch only, never engineering** (§25 risk 1); owner comms: stop entering catalogue data in the old admin after T1 (edits there are invisible and disposable). Media: an upload endpoint with no real content can rot unnoticed → its tests are the only thing exercising it, so they must cover the rejection paths (bad magic bytes, oversize, wrong MIME), not just the happy path.
+**Acceptance criteria** — T1 routes render API data pixel-equivalent to before; no `@nest/services` import remains in T1 pages; the import tool round-trips a sample spreadsheet with a correct report **and round-trips a second, deliberately different column layout using only a new mapping profile**; the media endpoint accepts a valid fixture image, persists a provider-relative identifier, strips EXIF, and **refuses** a file whose magic bytes contradict its declared MIME.
 **Automated verification** — Playwright specs per T1 route (health fixture); jest green; import-tool report tests.
 **Manual/browser verification** — visual pass on all T1 routes, mobile + desktop; one real spreadsheet import.
-**Definition of done** — T1 list in §7 fully API-backed; import tool documented for the owner.
+**Definition of done** — T1 list in §7 fully API-backed; import tool documented for the owner **including how to write a mapping profile for a supplier's format**; media upload API merged, empty, green, and recorded as satisfying Phase 8's blog-cover dependency.
 
 ---
 
@@ -465,9 +476,21 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Goal** — the navigable storefront’s auth, cart, checkout (with real D-8 delivery fees), and account run on the API; `/shop` scaffold retired; single session authority.
 **Why** — the working system becomes *the* system: F-03, F-04, F-06, F-12, F-13, F-18 all close here.
 **Current state** — `/shop` implementations proven `[V]`; legacy equivalents styled; API gaps: profile update, password reset, shipping-rule lookup (G-01). `FulfilmentService` is ready to receive the rule — governorate already a parameter, threshold already implemented `[V]`; `EGYPTIAN_GOVERNORATES` (27 values incl. Cairo and Giza) verified present in `packages/config` `[V]` and is reused as the rule vocabulary.
-**Files/systems involved** — API: auth/users modules (new endpoints §9), `fulfilment.service.ts` + new `shippingRules` collection + seed of the two D-8 rules, `notifications.service.ts` (`shippingUnpriced` retirement); storefront: T2 routes, proxy, Navbar/CartDrawer, Zustand stores, legacy `actions/*`; `/shop/*` (redirects then deletion); root layout route-group split.
+**Files/systems involved** — API: auth/users modules (new endpoints §9), `fulfilment.service.ts` + the frozen `shippingRates` collection + seed of the two D-8 rates, `notifications.service.ts` (`shippingUnpriced` retirement); storefront: T2 routes, proxy, Navbar/CartDrawer, Zustand stores, legacy `actions/*`; `/shop/*` (redirects then deletion); root layout route-group split.
 **Work required** —
-1. **Shipping rule model (D-8):** Mongo `shippingRules` roughly `{ governorates: string[], fee: number, isDefault: boolean }` with an enforced single default catching unlisted governorates; seed: Cairo+Giza → 5 000 pt (50 EGP), default → 10 000 pt (100 EGP); `FulfilmentService.quote` swaps the flat-config read for the lookup (designed-for change `[V]`); the config-driven free-shipping threshold **stays as-is and off** — the model remains extensible toward it (MONEY-MODEL.md already reserves `freeShippingThreshold` `[V]`). Update fulfilment/checkout specs; fix the `0`-means-unpriced convention in checkout UI and the order-email template (F-13 note).
+1. **Shipping rate model (D-8) — the FROZEN shape, not a parallel one.** `MONEY-MODEL.md` §6 already reserves `shippingRates[].fee` and `freeShippingThreshold` (int64 minor units), and `MONGODB-DESIGN.md` §11 already fixes the collection as `shippingRates`, keyed `{governorate:1}` **unique**. **The frozen documents win; the earlier `shippingRules` / `{ governorates: string[], fee, isDefault }` sketch in this plan is withdrawn.** Adopt exactly:
+
+   - **Collection** — `shippingRates` (frozen name; *not* `shippingRules`).
+   - **Key** — `governorate: string`, **one document per governorate**, unique index `{governorate:1}` (frozen). *Not* an array of governorates.
+   - **Fee** — `fee: number`, **int64 minor units (piastres)**, per `MONEY-MODEL.md` §6. *Not* EGP, *not* a float.
+   - **Threshold** — `freeShippingThreshold: number | null`, int64 minor units, already reserved by the frozen table. **Stays off** (`null`); the config-driven implementation remains authoritative until an owner value exists `[V]`.
+   - **Seed (D-8 values)** — `Cairo` → `5000`, `Giza` → `5000`, and every other governorate in `EGYPTIAN_GOVERNORATES` (27 values, verified `[V]`) → `10000`. Because the frozen key is one row per governorate, the D-8 rule is expressed as **27 rows**, not two.
+   - `FulfilmentService.quote(governorate, postDiscountSubtotal)` swaps its flat-config read for a `shippingRates` lookup. Signature, callers, DTOs and the order schema are unchanged — the service was explicitly designed for this substitution `[V]`.
+   - Update fulfilment/checkout specs, and the `FulfilmentService`/`fulfilment.config.ts` docstrings that currently justify *not* having the collection (§27 note 2).
+
+   **⚠ Gap the frozen shape cannot express — stated, not silently patched.** A unique scalar `governorate` key can express admin-editable per-governorate fees, but it has **no way to say “the fee for a governorate with no row”**. D-8 asks for a default fallback; the frozen schema has no slot for one. Enumerating all 27 rows makes a miss impossible *for today’s vocabulary*, but the miss path is still undefined — and an undefined miss path is precisely what `fulfilment.config.ts` warns about: “the miss path — not the data — would decide what every customer is charged” `[V]`.
+
+   **Minimal documented extension proposed (needs owner ratification — it amends `MONGODB-DESIGN.md` §11):** reserve a single row whose `governorate` is the sentinel `"*"`, meaning “every governorate without its own row”. This needs **no new field, no schema change and no index change** — `"*"` is just another value under the existing unique key — and costs only one documented rule: `"*"` is not a member of `EGYPTIAN_GOVERNORATES` and is rejected as an address value. *Alternative considered:* an explicit `isDefault: boolean` with a partial unique index — more self-describing, but it adds a field and an index to a frozen collection, so it is the larger amendment. **Do not implement either until the owner ratifies one; until then `quote` must treat a miss as an error, never as a fabricated amount.**
 2. Password-reset + profile endpoints.
 3. Guest cart rebuild per §8; T2 route migration as one atomic release train; **Google buttons removed (D-3)**; proxy guard rewritten around `nest_rt`; order self-cancel surfaced in account pages; T3: 301 `/shop/*`, delete slice + legacy Supabase auth/cart/checkout actions; route-group split (F-12).
 **Dependencies** — Phases 1, 2, 4.
@@ -475,7 +498,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Acceptance criteria** — a new customer completes the audit’s 14-step journey **on canonical URLs** with the health fixture silent, and the checkout shows 50 EGP delivery for a Cairo/Giza address, 100 EGP otherwise, with `grandTotal` including it; no Supabase import remains under `apps/storefront/src` except the four Phase 8 domains, each listed and dated; exactly one `<main>` per page.
 **Automated verification** — full Playwright matrix (auth incl. real verification, store, failure paths incl. expired-session action POST); fulfilment fee table tests; jest green.
 **Manual/browser verification** — full manual pass incl. reload/back/forward, cookie inspection, mobile; fee spot-checks per governorate.
-**Definition of done** — legacy customer commerce paths deleted; storefront talks only to the API (Phase 8 domains excepted, listed); F-13 closed by real fees.
+**Definition of done** — legacy customer commerce paths deleted; storefront talks only to the API (Phase 8 domains excepted, listed); F-13 closed by real fees. **The `shippingPriced` representation is NOT work in this phase — it landed in Phase 2 (open question 2); this phase only supplies the values it reports.**
 
 ---
 
@@ -495,15 +518,15 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 
 ---
 
-### Phase 7 — Admin on API, part 2: catalogue, media, inventory, customers, shipping rules
+### Phase 7 — Admin on API, part 2: catalogue, media UI, inventory, customers, shipping rates
 
 **Goal** — the whole business is manageable through the API.
 **Why** — F-09 fully closes; the admin becomes the fresh-data entry system D-6 assumes.
 **Current state** — API lacks CRUD/media/inventory-ops/customers/shipping-rules endpoints (G-01); admin UIs exist `[V]`; per-capability depth `[A]` resolved screen-by-screen here.
-**Files/systems involved** — API catalog/inventory/users/fulfilment modules + new media module (Cloudinary, ADR-MEDIA-001); admin actions for product/category-brand/inventory + upload flow; `check-slug`/`attributes` handlers re-pointed; new shipping-rules editor screen.
-**Work required** — endpoints per §9 with tests; media pipeline per §13 (server-side validation, no migration); inventory ops per §14; customers list/detail/role; **shipping-rules CRUD + admin editor (D-8 second half)** with guardrails (every governorate resolvable, exactly one default, fees positive-integer minor units); audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
-**Dependencies** — Phase 6 (admin auth), D-4 Cloudinary account (owner supplies credentials).
-**Risks** — scope creep in settings/dashboard → explicit KEEP/REMOVE pass; upload security → server-side validation per ADR-MEDIA-001.
+**Files/systems involved** — API catalog/inventory/users/fulfilment modules (**the media module itself is no longer here — it shipped in Phase 4 `[O]`**); admin actions for product/category-brand/inventory + the admin **upload UI** onto the existing Phase-4 endpoint; `check-slug`/`attributes` handlers re-pointed; new `shippingRates` editor screen.
+**Work required** — endpoints per §9 with tests; **the admin upload UI** per §13 — the API pipeline already exists and is tested from Phase 4, so this is the operator-facing half only (picker, progress, ordering, primary-image selection, replace/delete), with **no server-side validation rewritten here**; inventory ops per §14; customers list/detail/role; **`shippingRates` CRUD + admin editor (D-8 second half)** over the frozen collection, with guardrails (every governorate in `EGYPTIAN_GOVERNORATES` resolvable, `fee` a non-negative integer in minor units, and — if the owner ratified the Phase 5 sentinel extension — exactly one `"*"` row); audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
+**Dependencies** — Phase 6 (admin auth); **Phase 4 for the media endpoint**; D-4 Cloudinary account (owner supplies credentials — needed as early as Phase 4 now).
+**Risks** — scope creep in settings/dashboard → explicit KEEP/REMOVE pass; upload security → **already settled server-side in Phase 4** per ADR-MEDIA-001, and this phase must not re-implement or weaken it client-side.
 **Acceptance criteria** — create a product with images in admin → purchasable on the storefront and correct via the API within one refresh; a stock adjustment produces a typed inventory event and correct availability; editing a shipping rule changes the next checkout quote.
 **Automated verification** — endpoint tests; admin e2e for product-create, stock-adjust, and shipping-rule edit.
 **Manual verification** — full admin walkthrough by the owner — this doubles as the start of real catalogue entry.
@@ -519,11 +542,11 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Files/systems involved** — new API modules/collections per domain; admin screens (coupons/reviews re-pointed, blog possibly built); storefront UI (wishlist button/page, PDP reviews, blog pages, checkout coupon field); `orders` pricing path for coupon application.
 **Work required — in this internal order, cheapest-and-safest first so the owner can defer the tail under schedule pressure:**
 1. **Wishlist (~2 days).** Authenticated server-side model (`userId`+`productId`, unique), 3–4 endpoints, button + page swap; retires the Zustand+Supabase duplicates. No money, no UGC — cheapest, ship first.
-2. **Blog (~3–4 days).** Content model (slug, title, body, cover via media pipeline, publish state), admin authoring, storefront list/detail rendering. Read-mostly, no money.
+2. **Blog (~3–4 days).** Content model (slug, title, body, cover via the **Phase-4** media pipeline `[O]`, publish state), admin authoring, storefront list/detail rendering. Read-mostly, no money.
 3. **Reviews (~4–5 days).** UGC: model (user, product, rating, body, status), submit endpoint (verified-purchase rule per owner preference — confirm in implementation review `[A]`), **moderation endpoints + admin screen wired BEFORE any public read exposes content** (owner requirement), PDP rendering + rating aggregates.
 4. **Coupons (~4–5 days).** Implement the frozen `DISCOUNT-MODEL.md` spec: collections + unique redemption index, validation table, checkout apply/remove field, application inside the quote/placement path via the existing `discountTotal` envelope and the frozen fee formula; admin management re-pointed. **Money-touching:** same idempotency/validation discipline as order placement; last position is deliberate — riskiest, most deferrable.
 5. **Guest order tracking (small, independent):** the `GUEST-CHECKOUT.md`-promised endpoint (order number + contact proof, heavily throttled) + re-point the `/order-tracking` page.
-**Dependencies** — Phase 5 (storefront layer, quote path), Phase 7 (admin layer, media pipeline for blog covers/review images). Wishlist needs only Phase 5.
+**Dependencies** — Phase 5 (storefront layer, quote path), Phase 7 (admin layer). **The media pipeline for blog covers / review images is NO LONGER a Phase 7 dependency — the upload API ships in Phase 4 `[O]`, so blog covers are unblocked as soon as Phase 4 lands.** Only the *admin authoring screen* still waits on Phase 7. Wishlist needs only Phase 5.
 **Risks** — coupons interact with money → mitigated by the frozen spec, ordering (last), and §20 item 6 tests; reviews expose UGC → moderation-first gate; deferral of items 3–4 is an owner checkpoint, recorded in §25 if taken.
 **Acceptance criteria** — per domain: journey works end-to-end on canonical URLs with the health fixture silent; coupon order shows correct `discountTotal`, fee computed on the post-discount subtotal, and double-redemption structurally refused; unmoderated review content is never publicly readable.
 **Automated verification** — §20 item 6 spec set.
@@ -564,7 +587,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Why** — last, because deploying the split system would ship the broken half.
 **Current state** — **provisioning decisions OPEN (D-10 deferred until the build is complete).** `DEPLOYMENT-DECISION.md` stands as the recommendation `[P]`; nothing deployed `[V]` (no deploy configs beyond docs). The email production line (Phase E) is the long-lead prerequisite and is already running in parallel — it must not wait for D-10.
 **Work required** — take D-10 (targets, budget, domains); provision staging; bind §21 checklist to the chosen platforms; staging soak with the full e2e matrix on real subdomains (cookie topology re-validated); DNS cutover; production go-live; post-launch smoke (register with a real address, place a COD order with a real shipping fee, fulfil it in admin).
-**Dependencies** — Phases 1–9 (10 ongoing), Phase E complete, D-10 taken, and the **real catalogue entered by the owner** (§25 risk 4).
+**Dependencies** — Phases 1–9 (10 ongoing), Phase E complete, D-10 taken, and the **real catalogue entered by the owner** — the top schedule risk to go-live (§25 risk 1).
 **Risks** — provisioning unknowns surfacing late because D-10 is deferred → mitigated by keeping the recommendation current and by the staging gate; cookie topology differences → staging on real subdomains before go-live.
 **Acceptance criteria** — the §23 definition holds on production infrastructure.
 **Definition of done** — launch checklist signed; monitoring quiet for the agreed soak window.
@@ -585,7 +608,8 @@ Every statement below must be demonstrably true, on production infrastructure, w
 8. CI green from fresh clone (install → seed → type-check → lint → build → test → e2e) and red under the Phase-10 mutation checks.
 9. Deployed: staging + production per the taken D-10, secrets managed, readiness-probed, logged with request IDs, alerting on send-failures and readiness; runbooks exist.
 10. Supabase decommissioned: zero source references, project paused/deleted. (No archives — D-6.)
-11. Scoped-out items — payments beyond COD (D-7), Google login (D-3), campaigns/ads/analytics (D-9) — are recorded decisions in §25, not silent gaps. The real catalogue has been entered by the owner (import tool and/or admin).
+11. Scoped-out items — payments beyond COD (D-7), Google login (D-3), campaigns/ads/analytics (D-9) — are recorded decisions in §25, not silent gaps.
+    **The real catalogue has been entered by the owner** (via the Phase 4 import tool and/or the Phase 7 admin) **and the store therefore has real products to sell.** To be unambiguous: **items 1–10 above can every one of them be true while this item is false.** The catalogue does not exist today, is expected later from a supplier feed or another external source, and is deferred until after the build `[O]`. Throughout development the storefront runs on the 26-product dev seed `[V]`. **This item blocks LAUNCH ONLY — it never blocks engineering**, and no phase may be held open waiting on it.
 
 ## 24. Final Dependency Graph
 
@@ -621,7 +645,7 @@ P0 baseline
 | D-5 | Coupons / reviews / wishlist / blog | **BUILD API replacements for all four.** Coupons per the frozen `DISCOUNT-MODEL.md`, money-discipline; reviews moderation-first; wishlist authenticated server-side; blog with admin authoring. ~2.5–3 weeks, ordered cheapest-first with a deferral checkpoint | §16, Phase 8 |
 | D-6 | Legacy data | **THROWN AWAY ENTIRELY** — all data in Supabase *and* Mongo is mock; no import, no archival, no retention, no restore drills, no slug-redirect preservation. Real data entered fresh (import tool + admin) | §18 and throughout |
 | D-7 | Payments | **COD-only launch CONFIRMED** as a time-driven interim choice; provider integration is a recorded future project | §17 |
-| D-8 | Shipping pricing | **DECIDED:** 50 EGP Cairo & Giza, 100 EGP all other governorates; **admin-editable** Mongo rule model `{ governorates[], fee, isDefault }` with a default fallback rule; reuses `EGYPTIAN_GOVERNORATES` (verified present `[V]`); extensible toward a future free-shipping threshold (already implemented config-side `[V]`, stays off). Quote-side in Phase 5; admin editor in Phase 7 | §3, Phases 5, 7 |
+| D-8 | Shipping pricing | **DECIDED:** 50 EGP Cairo & Giza, 100 EGP all other governorates; **admin-editable**. **Modelled on the FROZEN `shippingRates` collection** (`MONEY-MODEL.md` §6 `shippingRates[].fee` + `freeShippingThreshold`, int64 minor units; `MONGODB-DESIGN.md` §11 key `{governorate:1}` unique) — i.e. **one row per governorate, 27 rows**, over `EGYPTIAN_GOVERNORATES` (verified present `[V]`). The earlier `{ governorates[], fee, isDefault }` sketch is **withdrawn**: the frozen document wins. The **default-fallback rule D-8 asks for has no slot in the frozen shape** — a minimal sentinel-row extension is proposed in Phase 5 and **awaits owner ratification**. Free-shipping threshold stays off. Quote-side in Phase 5; admin editor in Phase 7 | §3, Phases 5, 7 |
 | D-9 | Campaigns / ads / analytics | **DEFERRED — out of scope by decision.** No requirements invented | §16 |
 | D-10 | Deployment targets | **DEFERRED until the build is complete.** Production phase stays; provisioning decisions open; the Brevo/DNS long-lead item explicitly does not wait | §21, Phase 11 |
 
@@ -633,9 +657,13 @@ P0 baseline
 
 **Current top risks:**
 
-1. **The T2 atomic flip** remains the largest single release — mitigated by the feature-branch train, the health fixture, and the fact that verified target implementations already exist in `/shop`.
-2. **Brevo deliverability to Egyptian/Saudi inboxes is a discovery risk on calendar time.** A late failure slips launch with no engineering countermeasure — which is why Phase E starts alongside Phase 1 and reports findings, not just completion.
-3. **Real catalogue entry is now on the critical path to launch and it is owner content work, not code.** With no Supabase import (D-6), the storefront shows demo data until the owner loads real products via the Phase 4 import tool or the Phase 7 admin. Mitigation: the import tool lands early (~1 day, no upstream dependencies beyond Phase 0) and stays for bulk use.
+1. **⚠ TOP SCHEDULE RISK TO GO-LIVE — there is no real catalogue, and it is owner content work, not code `[O]`.** The catalogue **does not exist today**; it is expected later from a **supplier feed or another external source**, and the owner has **deferred it until after the build**. With no Supabase import either (D-6), the storefront runs on the **26-product dev seed for the entire build** `[V]`.
+   **This outranks every other schedule risk because it is the one item on the launch list that no amount of engineering can retire.** Phases 0–11 can all be complete, green and deployed — §23 items 1–10 all true — and the store still cannot open, because it has nothing real to sell.
+   It is also the risk with the **longest and least controllable lead time**: sourcing, negotiating and cleaning a supplier feed is a business process on calendar time, like Phase E's DNS work, and unlike Phase E it has not started.
+   *Mitigations, and their honest limits:* the Phase 4 import tool lands early and reads a **declarative column-mapping profile**, so an unknown supplier format costs a profile rather than a rewrite — that removes the *engineering* lead time, not the *content* lead time. **Nothing here blocks engineering; it blocks launch only, and no phase may be held open waiting on it** (§23 item 11).
+   *Owner action, the earliest useful one:* obtain **one representative sample file** from the intended source — not the full catalogue — early enough for the Phase 4 tool to be built and tested against a real column layout instead of an assumed one.
+2. **The T2 atomic flip** remains the largest single release — mitigated by the feature-branch train, the health fixture, and the fact that verified target implementations already exist in `/shop`.
+3. **Brevo deliverability to Egyptian/Saudi inboxes is a discovery risk on calendar time.** A late failure slips launch with no engineering countermeasure — which is why Phase E starts alongside Phase 1 and reports findings, not just completion.
 4. **Coupons introduce new money math into the pricing envelope.** Mitigated by the pre-existing frozen spec (`DISCOUNT-MODEL.md` `[V]`), last position in Phase 8, the structural double-redemption index, and §20 item 6 tests.
 5. **Phase 8 is the schedule pinch** (~2.5–3 weeks where both rails converge). The cheapest-first internal order exists so the owner can defer reviews/coupons with a recorded decision rather than schedule slip.
 6. **Admin capability depth is still unverified per screen** `[A]` — budgeted as screen-by-screen audits inside Phases 6/7; estimates there may move.
@@ -644,7 +672,73 @@ P0 baseline
 
 ---
 
-## 26. Changelog — 2026-09-01 decision update
+## 26. Changelog — 2026-09-02 overnight corrections
+
+Four corrections applied on branch `phase-1-2-overnight`. Documentation only — no code
+changed in this commit. Two are owner decisions `[O]`, two are correctness fixes to this
+plan's own reasoning.
+
+**26a — Media pipeline moves to Phase 4; build only, no data `[O]`.**
+The Cloudinary **upload API** (ADR-MEDIA-001: `Client → NestJS → Cloudinary`, server-side
+validation, magic-byte sniffing, EXIF strip, provider-relative identifiers) moves from
+Phase 7 to **Phase 4**. It **ships empty and is exercised only by tests** — no products and
+no images are loaded, because the real catalogue does not exist yet. **The admin upload UI
+stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
+on Phase 7 is now satisfied earlier** and is recorded as such.
+
+**26b — Shipping model realigned to the frozen `MONEY-MODEL.md`. The frozen document wins.**
+This plan had proposed a `shippingRules` collection shaped `{ governorates[], fee, isDefault }`.
+`MONEY-MODEL.md` §6 already reserves **`shippingRates[].fee`** and `freeShippingThreshold`
+(int64 minor units) and `MONGODB-DESIGN.md` §11 already fixes the key as `{governorate:1}`
+**unique** — one row per governorate. **The `shippingRules` sketch is withdrawn**; the frozen
+names, shape and units are adopted verbatim, which makes the D-8 rule **27 rows, not two**.
+Updated §3, §9, §12, §20, Phase 5, Phase 7, D-8.
+**Stated explicitly rather than papered over:** the frozen shape **cannot express the
+default fallback** D-8 asks for — a unique scalar key has no slot for "every governorate
+without a row". A **minimal extension is proposed** (a reserved `governorate: "*"` sentinel
+row: no new field, no schema change, no index change; the `isDefault` + partial-index
+alternative is recorded as the larger amendment). It **amends a frozen document and
+therefore awaits owner ratification**; until then a lookup miss must raise, never invent a
+fee.
+
+**26c — `shippingFee === 0` semantics resolved in Phase 2, before the Phase 3 freeze.**
+A correctness fix. §19 told the Flutter developer the quote was "safe to integrate now"
+while open question 2 deferred the meaning of `0` to Phase 5. Today `0` means **"not
+priced"** — `CheckoutForm.tsx:88` renders it "Not yet calculated" and
+`notifications.service.ts:299` sets `shippingUnpriced` from it `[V]`. After Phase 5 it means
+**"free"**. A client integrating at Phase 3 codes `0 → "not calculated"` and then
+misreports every free-shipping order.
+**Adding a field is additive and the drift gate reports it; changing the meaning of an
+existing value changes no name, no type and no shape, so the gate sees nothing.** That is
+why this cannot wait for Phase 5. Worse, it is **already reachable**: `FulfilmentService.quote`
+returns `0` whenever the free-shipping threshold is met `[V]`.
+Recommended representation: an explicit **`shippingPriced` boolean** (nullable fee as the
+alternative). Moved into **Phase 2** with both consumers updated. Updated §19, §20, Phase 2,
+Phase 3, Phase 5, F-13, open question 2.
+
+**26d — Catalogue timing `[O]`.**
+The real catalogue **does not exist**, will come later **from a supplier feed or another
+external source**, and is **deferred until after the build**. Therefore: the import tool
+**stays in Phase 4** and the "may be pulled forward to run right after Phase 0" language is
+**removed** — there is no data for an early run to act on. Its spec now requires a
+**declarative column-mapping profile** (configuration declaring which input column feeds
+which field) instead of a hardcoded schema, because the input format is unknown at design
+time; a new supplier format costs a profile, not a parser.
+**§25 risk 3 is escalated to risk 1 — the top schedule risk to go-live**, on the grounds
+that it is the only launch-list item no engineering can retire and it has the longest
+uncontrolled lead time. **§23 item 11 is made unambiguous:** items 1–10 can all be true
+while the store has nothing real to sell. Recorded throughout that the storefront runs on
+the 26-product dev seed for the whole build, and that this **blocks launch only, never
+engineering**.
+
+**Not changed, deliberately** — nothing in `docs/architecture/` was edited. 26b resolves a
+plan-vs-frozen-doc conflict in the frozen doc's favour, which is what the owner directed;
+the one place that would *amend* a frozen doc (the default-rate sentinel) is left unimplemented
+and flagged for ratification rather than decided here.
+
+---
+
+## 27. Changelog — 2026-09-01 decision update
 
 Applied owner decisions D-1…D-10 to the 2026-09-01 audit plan. Same evidence discipline; new `[O]` tag introduced for owner statements (data value, business rules) that cannot be verified from the tree.
 
@@ -662,7 +756,7 @@ Applied owner decisions D-1…D-10 to the 2026-09-01 audit plan. Same evidence d
 - §19: email framed as a production concern; console recipe is the dev/integration path.
 - §20: new-domain and shipping/coupon spec requirements added (item 6).
 - §21: provisioning marked OPEN per D-10; Brevo/DNS called out as the long-lead exception.
-- §22: phases re-derived — Phase 1 shrank to dev hygiene; new parallel **Phase E**; Phase 4 shrank (no import) and gained the CSV/JSON tool; Phase 5 grew (shipping rule quote-side, Google-button removal); Phase 7 gained the shipping-rules editor; Phase 8 grew into the four-domain rebuild (~13–16 working days, cheapest-first: wishlist → blog → reviews → coupons) plus guest tracking; old Phase 9 collapsed into code-deletion cleanup.
+- §22: phases re-derived — Phase 1 shrank to dev hygiene; new parallel **Phase E**; Phase 4 shrank (no import) and gained the CSV/JSON tool; Phase 5 grew (shipping rule quote-side, Google-button removal); Phase 7 gained the shipping-rates editor (**renamed to the frozen `shippingRates` 2026-09-02, §26b**); Phase 8 grew into the four-domain rebuild (~13–16 working days, cheapest-first: wishlist → blog → reviews → coupons) plus guest tracking; old Phase 9 collapsed into code-deletion cleanup.
 - §23: archive/restore clauses removed; shipping-fee correctness and the four rebuilt domains added; owner catalogue entry added.
 - §24: graph redrawn; longest path restated with P8 identified as the merge point/pinch.
 - §25: decisions table converted to RESOLVED with answers dated 2026-09-01; risk list rewritten — two risks explicitly marked eliminated (dual-write window; legacy-session invalidation), three new ones surfaced (deliverability discovery, owner catalogue entry on the critical path, Phase 8 pinch).
@@ -671,16 +765,17 @@ Applied owner decisions D-1…D-10 to the 2026-09-01 audit plan. Same evidence d
 - Supabase→Mongo catalogue import; customer migration options; order archival and read-only legacy views; audit-log export; retention window and restore drill; slug-redirect preservation; the optional interim F-04 patch; `GET /auth/google` from the §9 gap table.
 
 **Added**
-- `[O]` evidence tag; §6 status column; the temporary CSV/JSON catalogue import tool (Phase 4, pull-forwardable to post-Phase 0); Phase E (Brevo production line); shipping-rule model + seed + admin editor work items; Phase 8 internal build order with per-domain effort signals; this changelog.
+- `[O]` evidence tag; §6 status column; the temporary CSV/JSON catalogue import tool (Phase 4, pull-forwardable to post-Phase 0 — **the pull-forward was revoked 2026-09-02, §26d**); Phase E (Brevo production line); shipping-rule model + seed + admin editor work items; Phase 8 internal build order with per-domain effort signals; this changelog.
 
 **Contradictions checked against frozen docs — none found; three alignments worth recording**
 1. D-5 coupons: `DISCOUNT-MODEL.md` turns out to already freeze the exact model, validation table and double-redemption guard the decision asks for `[V]` — Phase 8’s coupon item is implementation of an existing spec, which lowers its risk.
-2. D-8 shipping: `MONEY-MODEL.md` already reserves `shippingRates[].fee` and `freeShippingThreshold`, `BUSINESS-RULES.md` RULE-PRICE-009 already mandates server-computed governorate-based fees, and `FulfilmentService`’s own docstring records the rates as “unsupplied business input” (`OPEN-001`) awaiting exactly this decision `[V]`. D-8 *supplies* the frozen architecture’s missing input; the service’s in-code note “no `shippingRates` collection” was an anti-overengineering guard pending that input and is superseded by the admin-editability requirement — update that docstring during Phase 5.
+2. **[Acted on 2026-09-02 — see §26b.]** D-8 shipping: `MONEY-MODEL.md` already reserves `shippingRates[].fee` and `freeShippingThreshold`, `BUSINESS-RULES.md` RULE-PRICE-009 already mandates server-computed governorate-based fees, and `FulfilmentService`’s own docstring records the rates as “unsupplied business input” (`OPEN-001`) awaiting exactly this decision `[V]`. D-8 *supplies* the frozen architecture’s missing input; the service’s in-code note “no `shippingRates` collection” was an anti-overengineering guard pending that input and is superseded by the admin-editability requirement — update that docstring during Phase 5.
 3. D-4 media: ADR-MEDIA-001 already specifies `Client → NestJS → Cloudinary` with server-side validation — D-4 confirms rather than changes it.
 
 **Open questions for the owner (non-blocking, resolve in the phase noted)**
 1. **D-6 scope clarification (interpretation recorded):** “throw away all Mongo data” is read as *business* data only — the seeded dev catalogue and test fixtures remain as tooling, because the jest suite and CI seed step depend on them `[V]`. Flag if the stricter reading was intended.
-2. **`0`-fee semantics (Phase 5):** once real fees exist, `shippingFee === 0` means “free” (threshold), but today it also encodes “unpriced” in the checkout UI and the order-email `shippingUnpriced` flag `[V]`. Phase 5 must pick one representation (recommend: an explicit `shippingPriced` boolean or non-null fee), and update both consumers.
+2. **`0`-fee semantics — RESOLVED INTO PHASE 2 (was: deferred to Phase 5).** `shippingFee === 0` today encodes **“not priced”** in both consumers — the checkout UI (`CheckoutForm.tsx:88` renders `amount === 0` as “Not yet calculated” `[V]`) and the order email (`notifications.service.ts:299` sets `shippingUnpriced: order.pricing.shippingFee === 0` `[V]`). After Phase 5 the same `0` will mean **“free”**.
+   **This is not merely a future ambiguity — it is already live.** `FulfilmentService.quote` *already* returns `0` when the free-shipping threshold is met `[V]`; the moment a threshold is configured, a genuinely free order renders as “Not yet calculated” and emails “Calculated before dispatch”. Recommendation: an explicit **`shippingPriced: boolean`** on the pricing block (additive, and the drift gate can see it arrive), with a nullable fee as the alternative. **Decided and shipped in Phase 2, before the Phase 3 freeze** — see Phase 2 item 5.
 3. **Quote before address selection (Phase 5):** with per-governorate fees, what does the quote show when no address is chosen? (Rare — the checkout page requires a selected address today `[V]`.) Recommend showing the default-rule fee labelled “estimated”.
 4. **Reviews: verified-purchase requirement? (Phase 8)** — the moderation-first rule is decided; whether submission requires a delivered order is not.
 5. **Blog admin authoring:** no admin blog screen was found in the route inventory `[V]` — Phase 8 assumes it must be **built**, not migrated; confirm no screen exists elsewhere before estimating.

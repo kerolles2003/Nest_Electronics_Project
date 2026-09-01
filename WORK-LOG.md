@@ -147,3 +147,62 @@ business-rule invention.
 ### Phase 0 remaining work
 
 Only the tag was outstanding. Junk, commits and pipeline were already done/green.
+
+---
+
+## TASK 2 — Branch `phase-1-2-overnight`, four PLAN.md corrections
+
+Branch created off the tagged baseline. Documentation only, one commit. All edits applied
+by assertion-checked scripts (each replacement required exactly one match, or the script
+aborted) — no fuzzy matching, no partial application.
+
+**2a — media → Phase 4, build only, no data.** Moved the ADR-MEDIA-001 upload API from
+Phase 7 to Phase 4; recorded that it ships EMPTY and is test-exercised only; kept the admin
+upload UI in Phase 7; noted Phase 8's blog-cover dependency is satisfied earlier.
+Touched §12, §13, Phase 4 (title/goal/files/work item 4/risks/acceptance/DoD), Phase 7
+(title/files/work/deps/risks), Phase 8 (deps + blog item).
+
+**2b — shipping model aligned to the frozen doc.** Re-read `MONEY-MODEL.md` §6 and
+`MONGODB-DESIGN.md` §11 before writing. Frozen shape adopted verbatim: collection
+`shippingRates`, key `{governorate:1}` **unique** (one row per governorate), `fee` int64
+minor units, `freeShippingThreshold` reserved and left off. The plan's `shippingRules` /
+`{governorates[], fee, isDefault}` sketch is **withdrawn**. Consequence recorded: the D-8
+rule becomes **27 rows, not two**.
+**The gap is stated, not silently patched** — a unique scalar key cannot express "the fee
+for a governorate with no row", so the frozen shape *cannot* express D-8's default fallback.
+Proposed the minimal extension (a reserved `governorate: "*"` sentinel — no new field, no
+schema change, no index change), recorded the `isDefault` + partial-index alternative as the
+larger amendment, and **left it unimplemented pending owner ratification** because adopting
+it amends a frozen document. Until ratified, a lookup miss must raise rather than invent a
+fee. Touched §3, §9, §12, §20, Phase 5, Phase 7, D-8.
+
+**2c — `shippingFee === 0` moved into Phase 2.** Verified both consumers in the tree before
+writing: `CheckoutForm.tsx:88` (`amount === 0` → "Not yet calculated") and
+`notifications.service.ts:299` (`shippingUnpriced: shippingFee === 0`).
+**New evidence found while checking, which strengthens the case:** `FulfilmentService.quote`
+**already returns `0`** when the free-shipping threshold is met `[V]` — so this is not only a
+future ambiguity, it is reachable the moment a threshold is configured. Recorded the core
+argument in the plan: additive fields are visible to the drift gate, a change in the meaning
+of an existing value is not. Recommended `shippingPriced: boolean`.
+Touched §19, §20, Phase 2 (goal/files/work/acceptance/DoD), Phase 3 (deps/risks), Phase 5
+(DoD), F-13, open question 2.
+
+**2d — catalogue timing.** Import tool stays in Phase 4; "may be pulled forward" removed;
+spec changed to a **declarative column-mapping profile** so an unknown supplier format costs
+a profile rather than a parser. §25 risk 3 **escalated to risk 1, the top schedule risk to
+go-live** (renumbering the previous 1 and 2 down), with the reasoning that it is the only
+launch-list item engineering cannot retire. §23 item 11 made unambiguous — items 1–10 can
+all be true while the store has nothing to sell; blocks **launch only, never engineering**.
+Added a concrete earliest-useful owner action: obtain one representative sample file, not
+the whole catalogue.
+
+**Frozen-doc conflicts:** none required leaving an item unchanged. 2b was a plan-vs-frozen
+conflict that the owner had already directed me to resolve in the frozen doc's favour, which
+I did. The single place that would *amend* a frozen doc (the sentinel default row) is left
+unimplemented and flagged under "Needs owner" instead of being decided here.
+**No file under `docs/architecture/` was edited.**
+
+Also added §26 (new changelog, four corrections), renumbered the previous changelog to §27,
+and repaired every cross-reference that moved (§26 note 2 → §27 note 2, §25 risk 4 → risk 1,
+header revision line), plus superseded-markers on the two lines of the older changelog that
+the corrections contradict.
