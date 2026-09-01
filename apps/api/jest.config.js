@@ -17,6 +17,21 @@ module.exports = {
   roots: ['<rootDir>/src', '<rootDir>/test'],
   testMatch: ['**/*.spec.ts'],
 
+  /**
+   * F-07 — email-vendor isolation, applied to EVERY suite.
+   *
+   * `setupFiles` (not `setupFilesAfterEach`) because this must run before the
+   * test file's imports are evaluated: `ConfigModule` reads the environment the
+   * first time a module graph compiles, so forcing `EMAIL_PROVIDER=console`
+   * afterwards would be too late.
+   *
+   * Centralised deliberately. Overriding `EmailSenderPort` in each suite would
+   * isolate the suites that remember to; this isolates the ones that do not,
+   * which is where the 225 live calls came from. `email-isolation.spec.ts`
+   * asserts the guard is actually in force.
+   */
+  setupFiles: ['<rootDir>/test/setup/email-isolation.ts'],
+
   // ts-jest compiles with the project tsconfig, so `emitDecoratorMetadata` is
   // honoured (Nest DI needs it) and a type error fails the run.
   transform: {

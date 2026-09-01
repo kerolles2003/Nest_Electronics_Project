@@ -206,3 +206,49 @@ Also added §26 (new changelog, four corrections), renumbered the previous chang
 and repaired every cross-reference that moved (§26 note 2 → §27 note 2, §25 risk 4 → risk 1,
 header revision line), plus superseded-markers on the two lines of the older changelog that
 the corrections contradict.
+
+---
+
+## TASK 3 — Phase 1 (email correctness in development)
+
+### Item 1 — F-07 provider isolation (done first, as instructed)
+
+**What the 225 calls actually were.** Traced before writing anything: `email-integration.spec.ts`
+was already safe (it overrides `EmailSenderPort` with a recorder) and `brevo-adapter.spec.ts`
+stubs `fetch`. The live calls came from the **nine other suites that build the real
+`AppModule`** (auth-flow, auth-guards, cart, checkout, transaction-gate, customer-journey,
+admin-orders, order-lifecycle, orders-read, addresses) — they register real users, and
+registration sends a verification email through whatever `.env` selected (`brevo`).
+
+**Approach — central, not per-suite.** A `setupFiles` entry
+(`apps/api/test/setup/email-isolation.ts`) rather than an `.overrideProvider` in eleven
+places, so a NEW suite is isolated *by default* instead of by remembering. `setupFiles`
+(not `setupFilesAfterEnv`) because `ConfigModule` reads the environment when the module
+graph first compiles.
+
+Two independent guarantees:
+1. **Selection** — `EMAIL_PROVIDER=console` forced. `ConfigModule` is configured so real
+   process env wins over `.env` `[V]`, so this overrides the developer's file. The
+   `ProvidersModule` switch then constructs `ConsoleEmailSender` and never constructs a
+   vendor adapter, so no key is read.
+2. **Transport** — a `fetch` guard that **throws** on any request to a known mail-vendor
+   host (brevo, sendinblue, resend, sendgrid, mailgun). Converts a future regression from a
+   silent send into a loud failure. Narrow by design: Mongo uses sockets, not `fetch`.
+
+**A correction I made to my own first attempt, worth recording.** I initially also deleted
+`BREVO_API_KEY`/`RESEND_API_KEY` in the setup file and asserted they stayed deleted. The
+bootstrap test caught that this is false: `@nestjs/config`'s `forRoot()` runs at *import*
+time and reloads `.env`, restoring the keys. I removed the deletes rather than weakening the
+assertion — a `delete` that reads as protection while providing none is worse than none — and
+documented the measured reason in the file. Isolation now rests only on the two guarantees
+that `.env` cannot undo.
+
+**Bootstrap test** — `apps/api/test/setup/email-isolation.spec.ts`, 10 tests: the provider is
+forced; the port resolves to `ConsoleEmailSender` in a *real* `ConfigModule + ProvidersModule`
+graph (not an overridden one); no vendor adapter is constructed; a send completes through the
+console sink; and the transport guard throws for each of the five vendor hosts while leaving
+other hosts alone.
+
+**Result:** 20 suites / **537 tests, all green** (527 baseline + 10 new). **Zero vendor
+calls** — the guard never tripped. Suite time fell **214s → 149s**, consistent with ~225
+eliminated network round-trips. `tsc --noEmit` and `eslint src test` both clean.
