@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
+// F-14 — `test` comes from the browser-health fixture, not from Playwright
+// directly. Every step below now also asserts that the page threw nothing,
+// logged no console error, and received no unexpected 5xx.
+import { expect, test } from './fixtures/browser-health';
 import { E2E_EMAIL_PREFIX } from './global-teardown';
 
 /**

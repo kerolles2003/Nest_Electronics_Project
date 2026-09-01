@@ -419,3 +419,43 @@ already documented it correctly, so no example change was needed. The point of t
 `http://127.0.0.1:3002/api/v1` fallback in `client.ts` is a safety net, not configuration —
 dev worked only by coincidence of the default matching the local port, and moving the API
 would have produced a confusing connection error instead of a missing-config one.
+
+### Item 4 — browser-health Playwright fixture (F-14)
+
+`e2e/fixtures/browser-health.ts` exports an extended `test`; importing it instead of
+`@playwright/test` covers a spec automatically (`auto: true`). It fails a test on:
+uncaught exception (`pageerror`), **unhandled promise rejection**, any `console.error`, and
+any **unexpected ≥500** response.
+
+Unhandled rejections needed an `addInitScript` reporter — Playwright's `pageerror` does not
+reliably carry them, and a rejected promise is the normal shape of a failed `fetch` or
+server action, i.e. exactly the class the fixture exists for.
+
+Opting out is explicit and scoped: `health.allowConsoleError(pattern)` /
+`allowServerError(pattern)`. Declaring costs a sentence; ignoring silently costs nothing —
+that asymmetry is deliberate.
+
+**Adopted by the existing journey spec**, and a new spec `e2e/guest-cart-login.spec.ts`:
+1. *guest cart → login* — seeds the persisted Zustand guest cart, submits the login form, and
+   asserts the button becomes **enabled again** (the "not stranded" contract that the F-05
+   hardening restores) and the URL is still `/login`, not an error overlay.
+2. *guarded-route control* — a guest navigating to `/checkout` is **still redirected**. This
+   guards the half of the proxy that must NOT change; without it a later "simplification"
+   could delete the guard entirely with every other test still green.
+
+The cart is seeded via `addInitScript` rather than clicked together, because the legacy
+product pages read the catalogue from **Supabase** — clicking through them would make a
+proxy/form regression test depend on a database D-6 already calls disposable.
+
+**First run found a real problem with my own fixture, not with the app.** All 4 specs failed
+on **24 problems that were every one the identical Next dev-server HMR WebSocket handshake
+error** (`_next/webpack-hmr`) — **zero application errors**. That channel does not exist in a
+production build and says nothing about the application, so it is excluded globally, scoped
+to the HMR URL rather than to "WebSocket errors" generally, with the reasoning written in.
+
+**Result: 4/4 Playwright specs green** (2 pre-existing + 2 new) under the fixture, in 35s.
+
+Incidental confirmations from the run: the order email printed
+`messageId=console-…` — the **console provider really is in use end-to-end** (F-07/F-02) —
+and the order email rendered **"Delivery — Calculated before dispatch"** on a real placed
+order, which is correction 2c's bug visible in production output.
