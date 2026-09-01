@@ -471,3 +471,209 @@ they are yours rather than mine.
    database. `autoIndex` is off by design, so an index-less database is a silent
    state — the API starts and serves traffic, and only the tests notice. CI does
    this already; a developer's machine does not.
+
+---
+
+# SESSION 4 — Phase 5a (additive only)
+
+**Nothing was cut over.** `/login`, `/register`, `/forgot-password`,
+`/account/*`, `/checkout`, the cart UI, the proxy and `/shop` are exactly as you
+left them. Everything below is additive and on `phase-1-2-overnight`, unpushed.
+
+**jest 800 passed / 15 skipped (815). Playwright 44. Build, type-check, lint and
+the drift gate green.** The 15 skipped are the Cloudinary suite, which is opt-in.
+
+---
+
+## What needs you
+
+### 1. The password-reset paths contradict a frozen document
+
+`AUTHORIZATION-MODEL.md` §2.8 sketches `POST /auth/forgot-password` and
+`POST /auth/reset-password`. `PLAN.md` §9 and your 5a brief both say
+`POST /auth/password-reset/request` and `/confirm`.
+
+I built the pair you named, and honoured §2.8's actual requirements exactly —
+neutral responses, hashed at rest, single-use, 1-hour TTL, `tokenVersion` bump,
+full session revocation. **Only the two URLs differ.**
+
+Changing them is cheap right now because nothing consumes them. It stops being
+cheap in 5b, when `/forgot-password` starts calling them.
+
+### 2. A shipping-rate row may carry its own free-shipping threshold
+
+`MONGODB-DESIGN.md` §11 gives the collection a threshold as well as a fee, so
+the field exists on every row. Every seeded row is `null`, so the configured
+`FREE_SHIPPING_THRESHOLD` — itself unset — is the only live mechanism and **no
+order is free**.
+
+What I decided without being asked: **a row's threshold wins over the configured
+one** for that governorate. Nothing sets one, so nothing depends on it yet.
+Worth ratifying before something does.
+
+### 3. The Cloudinary account is shared with another application
+
+It holds **108 assets that are not this shop's** — `partners/images/…` and
+`users/avatars/…`.
+
+Nothing here can reach them: every upload, listing and orphan report is scoped
+to `MEDIA_FOLDER_ROOT` (default `nest`). Two consequences:
+
+- **Never run a bulk delete against that account without a prefix.** The
+  reconciliation report is safe; a hand-written cleanup script is not.
+- Decide whether this shop should have its own account before it holds real
+  product photographs.
+
+### 4. The blank 404 body is 5b's
+
+The status is fixed — every dead link now answers `404` instead of `200`. The
+BODY is still empty, and that half cannot be fixed from inside a page. See below.
+
+---
+
+## The five things that landed
+
+### Readiness now refuses traffic when an index is missing
+
+`GET /health/ready` returns `503`, names every missing index and prints
+`pnpm --filter api indexes:sync`. Liveness stays green, because restarting
+cannot create an index.
+
+**It found a real defect on its first run:**
+`mediaAssets.media_asset_public_id_unique` — a UNIQUE index — was simply absent
+from the development database. It had been since the media ledger landed.
+
+This matters more than test noise. `CredentialRepository` and `CartRepository`
+both catch MongoDB error `11000` and translate it, and **that is their entire
+concurrency control**. No index, no error, no `catch`, and the race silently
+succeeds: two accounts on one email, a retried checkout becoming two orders, one
+order line decrementing stock twice.
+
+### Shipping rates, the D-8 model
+
+27 rows, Cairo and Giza 50.00 EGP, the other 25 at 100.00 EGP. No default row,
+no fallback, no sentinel — **a miss raises**, as a 500, because the governorate
+is validated on both sides so a miss means bad data rather than bad input.
+
+`pnpm --filter api shipping:seed` is a **release step, like `indexes:sync`** —
+with no fallback row, an empty collection means every checkout in the country
+raises. It adds missing rows and never overwrites an edited one.
+
+`SHIPPING_FLAT_FEE` is **removed, not deprecated**: a knob nothing reads
+survives in deployment manifests until somebody sets it and nothing explains the
+silence.
+
+Checkout now quotes a real fee. Three states, and the middle one is easy to
+conflate: a governorate with a row is priced, **no address chosen yet is
+unpriced** (an ordinary step of checkout, not an error), and a governorate with
+no row raises.
+
+### Password reset and profile update
+
+The three endpoints G-01 listed as blocking T2. A reset **signs the account out
+everywhere** — `tokenVersion` bump plus full refresh-token revocation, in one
+transaction with the credential change, because a reset that leaves an
+attacker's refresh token alive has not reset anything.
+
+The reset token lives in a **separate field** from the verification token, with
+a separate lookup. Both are a hash and a date, so nothing in the type system
+tells them apart; without the separation, an email-verification link would be a
+password-reset link. Tested in both directions.
+
+`PATCH /users/me` writes `fullName` and `phone` only. `role`, `email` and every
+credential field return `400 UNKNOWN_FIELD` — refused, not ignored.
+
+### The 404 — status fixed, body measured
+
+Every dead product, category and brand URL answered **200**. A soft 404:
+indexable, counted as a successful page view, invisible to monitoring.
+
+Fixed by removing the `loading.tsx` boundaries above the existence check. The
+products listing kept its skeleton by moving into a `(listing)` route group —
+the URL is unchanged, because a route group is not a path segment.
+
+**The body is still empty**, and this is the honest part. Measured across every
+route and every way `notFound()` can be reached:
+
+```
+how notFound() is reached                     status   designed page
+URL matches no route at all                     404     RENDERED
+thrown synchronously, before any await          404     RENDERED
+thrown after an await, no loading.tsx above     404     empty
+thrown after an await, loading.tsx above        200     empty      <- was here
+thrown from generateMetadata after an await     404     empty
+```
+
+A data-driven 404 must ask the API whether the thing exists, so it always
+awaits. Next's own docs say to place `notFound()` "before any `await` that may
+suspend" — which this cannot obey. **The remedy is the existence check in
+`proxy.ts`, which is yours in 5b**, and it would also let every `loading.tsx`
+come back.
+
+**Cost, accepted:** the four detail routes have no loading skeleton until then.
+
+Also found: the root `app/not-found.tsx` never caught `notFound()` at all — it
+only covers URLs matching no route — and the root `loading.tsx` was a
+product-grid skeleton being shown on `/about`, `/contact` and `/login`.
+
+### Cloudinary — D-4 is closed
+
+The credentials work. **15 tests against the real account**, opt-in via
+`pnpm --filter api test:cloudinary`, every upload under `dev-test/<runId>/` and
+destroyed afterwards.
+
+The response mapping — the one item recorded as unproven at the end of Phase 4 —
+was right, **with one exception**: Cloudinary answers `format: "jpg"` where
+everything else in the system says `jpeg`. The adapter now maps that one
+spelling, so a photograph is recorded identically whichever adapter stored it.
+
+`--images` works. Files go through the same validation an admin upload gets, so
+a supplier's `.jpg` that is really a PNG is refused and named in the report.
+**Idempotent by construction** — a product that already has images is left
+alone, because re-uploading gives the same photograph a second identity.
+
+**The most important thing found here:** nothing had ever called `retain()`.
+Every ledger row sat at `refCount: 0`, because until now nothing in production
+ever attached an image — so `DELETE /admin/media` would have cheerfully
+destroyed a photograph a live product page was showing. **Phase 7's upload UI
+must call `MediaService.retain()` and `release()`.**
+
+---
+
+## How ready is 5b
+
+**The API side is done.** Every endpoint the T2 cutover needs now exists and is
+tested at the HTTP boundary: auth, cart, checkout with real delivery fees,
+orders, addresses, password reset, profile. Nothing in 5b should need a new
+endpoint.
+
+**What the flip touches**, and it is genuinely atomic: `/login`, `/register`,
+`/forgot-password`, `/account/*`, `/checkout`, the Navbar cart button, the
+CartDrawer, the Zustand cart store, `proxy.ts`, and the deletion of the legacy
+Supabase auth/cart/checkout actions — all in one release, because the session
+authority cannot be half-migrated.
+
+**What I expect to be hardest**, in order:
+
+1. **The guest cart.** Everything else is "call a different function". This is a
+   state machine: a client-side cart for anonymous visitors, the API cart when
+   signed in, and a merge at the moment of login that must not lose lines, must
+   not double them on a retry, and must re-price against the catalogue rather
+   than trusting what the browser held.
+2. **`proxy.ts`.** It guards `/account` and `/checkout` and must never redirect
+   an action POST. Rewriting it around `nest_rt` while the pages beneath it are
+   also changing is the part where a mistake looks like an intermittent logout.
+3. **The 404 body**, if you want it fixed in the same pass — the existence check
+   belongs in the file you are already rewriting, which makes 5b the cheap
+   moment to do it.
+
+**Decide before starting:**
+
+- The password-reset paths (above). `/forgot-password` will consume them.
+- Whether the `/shop` slice is deleted in the same commit as the flip or left
+  redirecting for a release. Deleting it removes the only proven reference
+  implementation while the new one is a day old.
+- Whether "Featured" on `/products` goes back to being a sort. It is a filter
+  today because `featured` is not in the frozen sort enum; restoring the old
+  meaning means amending a frozen contract, and 5b is the last comfortable
+  moment to decide.

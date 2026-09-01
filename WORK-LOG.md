@@ -1839,3 +1839,58 @@ assets untouched.
 the cloud name, the API key and the secret: **no match**. The OpenAPI artifact
 is clean. The one test that ever read a credential — asserting the API key was
 undefined, and printing it when that broke — was removed in section 1.
+
+## SESSION 4 — final state
+
+| | Before | After |
+|---|---|---|
+| jest | **696 passed, 1 failed** (697) | **800 passed, 15 skipped** (815) across 33 suites |
+| Playwright | 37 | **44** |
+| Cloudinary integration | 0, and unprovable | **15**, against the real account, opt-in |
+| root `build` / `type-check` / `lint` | green | green |
+| OpenAPI drift gate | green | green — **additive** at every step |
+
+The 15 skipped are the Cloudinary suite: it is opt-in
+(`pnpm --filter api test:cloudinary`) and prints a line saying so on every
+default run, so it cannot be quietly forgotten.
+
+**The one failure at the start was mine**, from session 3: a test asserting
+`process.env.CLOUDINARY_API_KEY` was undefined. It broke the moment the account
+was supplied and **printed the API key into the failure output**. Fixed in §1.
+
+### Commits
+
+| | |
+|---|---|
+| `36174a3` | readiness fails when a declared index is missing |
+| `b9f959e` | the D-8 shipping rate table, and a miss that raises |
+| `2f38682` | password reset and profile update |
+| `446fc90` | a dead link answers 404, not 200 |
+| `41ae0ad` | the media pipeline, proven against the real Cloudinary account |
+
+Branch `phase-1-2-overnight`, **39 commits ahead of `main`**, nothing pushed.
+`main` untouched at `6d0673a`, still tagged `baseline-phase-0`. No history
+rewritten, no stash, no `.bak` files, no probe routes left behind.
+
+### Needs owner
+
+1. **The `/auth/password-reset/*` paths contradict a frozen document.**
+   `AUTHORIZATION-MODEL.md` §2.8 says `/auth/forgot-password` and
+   `/auth/reset-password`; `PLAN.md` §9 and the 5a brief say
+   `/auth/password-reset/request` and `/confirm`. I built the briefed pair and
+   honoured §2.8's behaviour exactly. **Cheap to change while nothing consumes
+   them; that stops being true in 5b.**
+
+2. **A `shippingRates` row may carry its own free-shipping threshold, and a row
+   threshold wins over the configured one.** The frozen shape gives the
+   collection a threshold, so the field exists; nothing sets one, so nothing
+   changes today. The precedence is a decision I made rather than one I was
+   given, and it is worth ratifying before anything depends on it.
+
+3. **The Cloudinary account is shared with an unrelated application** — 108
+   assets under `partners/` and `users/avatars/`. Everything here is
+   prefix-scoped so they cannot be touched, but it is worth deciding whether
+   this shop should have its own account before it holds real photographs.
+
+4. **The blank 404 body needs `proxy.ts`**, which is 5b's. Status is fixed;
+   body is not, and cannot be from inside a page.

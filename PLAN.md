@@ -265,7 +265,7 @@ The admin app itself (Next.js shell, components, validation UX): **KEEP**. Only 
 
 ## 13. Product and Image Management Plan
 
-- **Decision — D-4 CONFIRMED:** Cloudinary, via the already-frozen **ADR-MEDIA-001**: `Client → NestJS → Cloudinary`, not signed direct upload — the server sees every byte, validates, sniffs magic bytes, strips EXIF, captures dimensions `[V]` (MEDIA-MODEL.md).
+- **Decision — D-4 CONFIRMED and CLOSED (5a) `[V]`:** the credentials arrived and the pipeline is proven end to end against the real account, including the response mapping that was the one unproven item at the end of Phase 4. **The account is SHARED with an unrelated application** (108 assets under `partners/` and `users/avatars/`), so `MEDIA_FOLDER_ROOT` is configurable and every listing, upload and orphan report is prefix-scoped — a bulk delete without a prefix would destroy somebody else's content. Cloudinary, via the already-frozen **ADR-MEDIA-001**: `Client → NestJS → Cloudinary`, not signed direct upload — the server sees every byte, validates, sniffs magic bytes, strips EXIF, captures dimensions `[V]` (MEDIA-MODEL.md).
 - **No migration (D-4/D-6):** the 2 existing Supabase Storage objects are disposable dev data. The work is the pipeline only — and, per the owner’s Phase-4 decision `[O]`, **the pipeline is built before there is any content for it to carry.** That is deliberate: the endpoint is unblocked engineering, the catalogue is owner content work (§25 risk 1).
 - **Work — SPLIT ACROSS TWO PHASES `[O]`.** The owner moved the *upload API* earlier; the *admin UI* stays put.
   - **Phase 4 — the API endpoint only, and it ships EMPTY.** API media endpoint per ADR-MEDIA-001 (`Client → NestJS → Cloudinary`); server-side validation rules adopted from the admin’s existing client-side validation (5 MB, jpeg/png/webp `[V]`); **magic-byte sniffing** (never trust the declared MIME); **EXIF strip** + real-dimension capture via sharp; ordering + primary-image invariant; delete/replace with orphan cleanup; **store provider-relative identifiers, not absolute URLs** — MEDIA-MODEL.md records the legacy baked-URL defect explicitly `[V]`.
@@ -533,7 +533,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 **Why** — F-09 fully closes; the admin becomes the fresh-data entry system D-6 assumes.
 **Current state** — API lacks CRUD/media/inventory-ops/customers/shipping-rules endpoints (G-01); admin UIs exist `[V]`; per-capability depth `[A]` resolved screen-by-screen here.
 **Files/systems involved** — API catalog/inventory/users/fulfilment modules (**the media module itself is no longer here — it shipped in Phase 4 `[O]`**); admin actions for product/category-brand/inventory + the admin **upload UI** onto the existing Phase-4 endpoint; `check-slug`/`attributes` handlers re-pointed; new `shippingRates` editor screen.
-**Work required** — endpoints per §9 with tests; **the admin upload UI** per §13 — the API pipeline already exists and is tested from Phase 4, so this is the operator-facing half only (picker, progress, ordering, primary-image selection, replace/delete), with **no server-side validation rewritten here**; inventory ops per §14; customers list/detail/role; **`shippingRates` editing + admin editor (D-8 second half)** over the frozen collection, with guardrails from the ratified Phase 5 design: **every governorate in `EGYPTIAN_GOVERNORATES` must remain resolvable**, `fee` a non-negative integer in minor units, and — because there is **no fallback row and a miss raises** — **row deletion is refused** and creation is restricted to the 27 known governorates. Editing a rate is the whole feature; the row set is fixed; audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
+**Work required** — endpoints per §9 with tests; **the admin upload UI** per §13 — the API pipeline already exists and is proven against the real Cloudinary account from Phase 5a, so this is the operator-facing half only. **Note for the attach/detach actions:** `MediaService.retain()` and `release()` now exist and MUST be called — reference counting is what stops `DELETE /admin/media` destroying an image a live product page is showing, and until Phase 5a nothing in production had ever attached an image, so nothing had ever retained one (picker, progress, ordering, primary-image selection, replace/delete), with **no server-side validation rewritten here**; inventory ops per §14; customers list/detail/role; **`shippingRates` editing + admin editor (D-8 second half)** over the frozen collection, with guardrails from the ratified Phase 5 design: **every governorate in `EGYPTIAN_GOVERNORATES` must remain resolvable**, `fee` a non-negative integer in minor units, and — because there is **no fallback row and a miss raises** — **row deletion is refused** and creation is restricted to the 27 known governorates. Editing a rate is the whole feature; the row set is fixed; audit-trail events per `AUDIT-MODEL.md`; swap admin data layer; classify settings/dashboard widgets KEEP/REMOVE as they migrate.
 **Dependencies** — Phase 6 (admin auth); **Phase 4 for the media endpoint**; D-4 Cloudinary account (owner supplies credentials — needed as early as Phase 4 now).
 **Risks** — scope creep in settings/dashboard → explicit KEEP/REMOVE pass; upload security → **already settled server-side in Phase 4** per ADR-MEDIA-001, and this phase must not re-implement or weaken it client-side.
 **Acceptance criteria** — create a product with images in admin → purchasable on the storefront and correct via the API within one refresh; a stock adjustment produces a typed inventory event and correct availability; editing a shipping rule changes the next checkout quote.
@@ -695,7 +695,7 @@ no images are loaded, because the real catalogue does not exist yet. **The admin
 stays in Phase 7.** Updated §12, §13, Phase 4, Phase 7. **Phase 8's blog-cover dependency
 on Phase 7 is now satisfied earlier** and is recorded as such.
 
-**27 — Phase 5a: index enforcement, the D-8 rate table and the missing auth endpoints; no cutover.**
+**27 — Phase 5a: the additive half of Phase 5. No cutover; the session cluster is untouched.**
 The additive half of Phase 5. Readiness (`GET /health/ready`) now **refuses traffic when a
 declared index is missing**, names each one and prints the remedy — because several unique
 indexes are not optimisations but the entire enforcement behind an invariant, and two
@@ -712,7 +712,25 @@ alive has not reset anything. The two token kinds live in separate fields and ar
 looked up separately, and a test proves a verification token cannot be redeemed
 at the reset endpoint or the reverse.
 
-Updated Phase 5, D-8, §3, §9, §10, open questions.
+**The blank 404 is half fixed, and the half that is not is measured.** Every
+dead product, category and brand URL answered `200` — a soft 404. Removing the
+`loading.tsx` boundaries above the existence check restores the `404`; the
+listing page kept its skeleton by moving into a `(listing)` route group. The
+BODY is still empty, and no in-page arrangement can fix it: Next renders
+`notFound()` as an empty document whenever it is thrown after an `await`, which
+a data-driven 404 always is. The remedy is the existence check in `proxy.ts`,
+which is 5b's. `e2e/not-found.spec.ts` carries the measurement table and a
+`test.fail()` that goes red the day it starts working.
+
+**D-4 is CLOSED.** The Cloudinary credentials arrived and the whole pipeline is
+proven against the real account — upload, refusals, delete, orphan report,
+response mapping. One field was mapped on an assumption that turned out wrong
+(`format: "jpg"` rather than `jpeg`) and is now normalised in the adapter. The
+catalogue import's `--images` path is unblocked and idempotent. **The account is
+shared with an unrelated application** (108 assets), so `MEDIA_FOLDER_ROOT` is
+now configurable and prefix-scoping is load-bearing rather than tidy.
+
+Updated Phase 5, Phase 7, D-4, D-8, §3, §9, §10, open questions.
 
 **26b — Shipping model realigned to the frozen `MONEY-MODEL.md`. The frozen document wins.**
 This plan had proposed a `shippingRules` collection shaped `{ governorates[], fee, isDefault }`.
