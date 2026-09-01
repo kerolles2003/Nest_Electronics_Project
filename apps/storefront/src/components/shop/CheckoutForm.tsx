@@ -82,12 +82,24 @@ export function CheckoutForm({
         <dl className="mt-4 space-y-1 text-sm">
           <Row label="Subtotal" value={quote.pricing.itemsSubtotal.formatted} />
           <Row label="Discount" value={quote.pricing.discountTotal.formatted} />
+          {/*
+            Reads the server's `shippingPriced` flag, never the amount.
+
+            The old test was `shippingFee.amount === 0 ? 'Not yet calculated'`,
+            which is wrong in a way that gets worse rather than better: it
+            already mislabels a delivery made free by the free-shipping
+            threshold, and once real per-governorate rates land it would tell
+            every free-shipping customer their delivery had not been worked out.
+            The server knows which case it is; this only renders it.
+          */}
           <Row
             label="Delivery"
             value={
-              quote.pricing.shippingFee.amount === 0
-                ? 'Not yet calculated'
-                : quote.pricing.shippingFee.formatted
+              quote.pricing.shippingPriced
+                ? quote.pricing.shippingFee.amount === 0
+                  ? 'Free'
+                  : quote.pricing.shippingFee.formatted
+                : 'Not yet calculated'
             }
           />
           <div className="flex justify-between border-t border-black/10 pt-2 text-base font-black">

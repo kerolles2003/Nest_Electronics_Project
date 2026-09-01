@@ -604,6 +604,7 @@ export class CheckoutService {
         itemsSubtotal: context.pricing.itemsSubtotal,
         discountTotal: context.pricing.discountTotal,
         shippingFee: context.pricing.shippingFee,
+        shippingPriced: context.pricing.shippingPriced,
         grandTotal: context.pricing.grandTotal,
         vatInclusive: VAT_INCLUSIVE,
         vatRateBps: VAT_RATE_BPS,

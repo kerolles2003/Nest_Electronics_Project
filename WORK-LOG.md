@@ -459,3 +459,50 @@ Incidental confirmations from the run: the order email printed
 `messageId=console-…` — the **console provider really is in use end-to-end** (F-07/F-02) —
 and the order email rendered **"Delivery — Calculated before dispatch"** on a real placed
 order, which is correction 2c's bug visible in production output.
+
+### Item 5 — the 2c decision implemented: `shippingPriced`
+
+The ambiguity had a **config-level root** I had to fix first. `SHIPPING_FLAT_FEE` was
+`.default(0)`, and its own docstring said the zero meant "no rate supplied … charges nothing
+and says so, rather than guessing" — so `0` was *already* the sentinel for "unpriced", while
+also being a legitimate value meaning "free". The two were indistinguishable **by
+construction**, so no amount of downstream logic could have told them apart.
+
+The chain, end to end:
+
+1. **`SHIPPING_FLAT_FEE` is now `.optional()` with no default.** Absent = no rate supplied.
+   Present-and-`0` = a deliberate decision that delivery is free. **The numbers a customer
+   sees are unchanged** — an unset value still charges nothing, exactly as `.default(0)` did.
+2. **`fulfilment.config.ts`** → `shippingFlatFee: number | null`.
+3. **`FulfilmentService.quote()` returns `ShippingQuote {fee, priced}`** instead of a bare
+   number. A met free-shipping threshold returns **`{fee: 0, priced: true}`** — free *is* a
+   price, and that case is reachable today.
+4. **`OrderPricing` / `computeOrderPricing`** carry `shippingPriced` through; only `fee`
+   enters the arithmetic.
+5. **Persisted** on `OrderPricingSnapshot` (`default: false`) — the order email renders from
+   the snapshot long after placement, so the order must record what was true on the day. The
+   schema is `strict: 'throw'`, so this had to be declared, not just written.
+6. **API contract:** `shippingPriced` added to the shared `PricingBreakdownDto`, which covers
+   the **quote, order detail and order summary** responses. Documented at length because
+   Phase 3 freezes it, and it is the field that stops a mobile client mis-rendering free
+   orders. Optional on the way in (`?? false`) so an order written before the field reads
+   back truthfully; always present on the way out, so no client handles a missing value.
+7. **Consumer 1 — order email:** `shippingUnpriced: !order.pricing.shippingPriced`, was
+   `order.pricing.shippingFee === 0`.
+8. **Consumer 2 — checkout UI:** `CheckoutForm` reads the flag, and now renders three
+   distinct states: a fee, **"Free"**, and "Not yet calculated". It previously could not
+   render "Free" at all.
+
+**Tests.** The fulfilment spec is rewritten to assert both halves everywhere (asserting only
+the fee is what let the meanings blur), plus a new case proving a deliberate `0` and an
+absent rate are distinguishable. Two new notifications tests pin the crux: **two orders with
+an identical `shippingFee: 0` that must read differently** — one "Calculated before
+dispatch", one not — which the old contract could not express.
+
+**API: 541/541 green** (from 527 at baseline). eslint and tsc clean.
+
+**Playwright: 4/4 green.** One intermediate run failed the journey at sign-in; I checked
+rather than assumed, and it was **rate limiting from my own repeated runs** — `register` is
+capped at 3/hour per IP and the throttler is in-memory, so it had accumulated across three
+journey runs. Restarting the API reset it and all 4 passed. **Not a regression**, and worth
+knowing before someone hits it in the morning.

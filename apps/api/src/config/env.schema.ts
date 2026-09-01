@@ -180,17 +180,26 @@ export const envSchema = z.object({
    * Flat delivery fee in integer MINOR UNITS (piastres), applied to every
    * governorate.
    *
-   * Defaults to 0, which reproduces the current behaviour exactly. OPEN-001
-   * records the real per-governorate rate table as business input that has not
-   * been supplied, and a fabricated number presented to a customer as
-   * authoritative is worse than charging nothing — so the default charges
-   * nothing and says so, rather than guessing.
+   * OPTIONAL, with no default, and the distinction matters.
+   *
+   * ABSENT means no rate has been supplied (OPEN-001) — the customer is charged
+   * nothing and `FulfilmentService` reports `priced: false`, so the UI and the
+   * order email can say "not calculated yet" truthfully instead of inferring it
+   * from a zero.
+   *
+   * PRESENT AND 0 means a real, deliberate decision that delivery is free, and
+   * is reported as `priced: true`. It used to be indistinguishable from the
+   * absent case, which is the ambiguity this removes.
+   *
+   * The numbers a customer sees are unchanged by this: an unset value still
+   * charges nothing, exactly as the previous `.default(0)` did. What changes is
+   * that the system can now tell the two apart and say which one it means.
    *
    * Integer only: MONEY-MODEL.md §5 forbids a float anywhere a payable amount is
    * derived, and `z.coerce.number().int()` rejects `50.5` rather than rounding
    * it into a total.
    */
-  SHIPPING_FLAT_FEE: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  SHIPPING_FLAT_FEE: z.coerce.number().int().min(0).max(1_000_000).optional(),
 
   /**
    * Order value in integer MINOR UNITS at or above which delivery is free.

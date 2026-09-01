@@ -111,9 +111,24 @@ export class PricingBreakdownDto {
       'Quote without an `addressId` and it is computed without a governorate. ' +
       'It is `0` under the CURRENT configuration — the per-governorate rate table is unresolved ' +
       'business input (OPEN-001), so the server charges nothing rather than inventing a fee. ' +
-      'Present a zero as shipping not yet calculated, NOT as a free-shipping promotion.',
+      'DO NOT interpret the amount: read `shippingPriced` to tell a real fee from a placeholder.',
   })
   shippingFee!: MoneyDto;
+
+  @ApiProperty({
+    example: false,
+    description:
+      'Whether `shippingFee` is a PRICE. Read this INSTEAD of comparing the amount to zero. ' +
+      '`true` means the fee is what the customer owes — including when it is `0` because a ' +
+      'free-shipping threshold was met, which must be shown as free delivery. ' +
+      '`false` means no rate has been supplied yet (OPEN-001); the accompanying `0` is a ' +
+      'placeholder and should be shown as "delivery not yet calculated", never as free. ' +
+      'It is `false` under the current configuration and becomes `true` when real ' +
+      'per-governorate rates land, WITHOUT the meaning of any other field changing. ' +
+      'This field exists precisely so that a client written today keeps telling the truth then: ' +
+      'a client that branches on `shippingFee.amount === 0` will misreport every free order.',
+  })
+  shippingPriced!: boolean;
 
   @ApiProperty({
     type: MoneyDto,
@@ -138,7 +153,13 @@ export class PricingBreakdownDto {
   vatRateBps!: number;
 
   static of(
-    pricing: { itemsSubtotal: number; discountTotal: number; shippingFee: number; grandTotal: number },
+    pricing: {
+      itemsSubtotal: number;
+      discountTotal: number;
+      shippingFee: number;
+      shippingPriced?: boolean;
+      grandTotal: number;
+    },
     currency: string,
     vatInclusive: boolean,
     vatRateBps: number,
@@ -147,6 +168,15 @@ export class PricingBreakdownDto {
       itemsSubtotal: MoneyDto.of(pricing.itemsSubtotal, currency),
       discountTotal: MoneyDto.of(pricing.discountTotal, currency),
       shippingFee: MoneyDto.of(pricing.shippingFee, currency),
+      /*
+       * Optional on the way IN, always present on the way OUT.
+       *
+       * An order persisted before this field existed reads back `undefined`,
+       * and `false` is the truthful answer for it: no rate had been supplied
+       * when it was placed. The API surface stays a plain boolean, so no client
+       * ever has to handle a missing value.
+       */
+      shippingPriced: pricing.shippingPriced ?? false,
       grandTotal: MoneyDto.of(pricing.grandTotal, currency),
       vatInclusive,
       vatRateBps,

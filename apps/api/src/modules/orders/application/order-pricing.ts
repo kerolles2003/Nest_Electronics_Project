@@ -1,3 +1,4 @@
+import type { ShippingQuote } from '../../fulfilment/fulfilment.service';
 import { AppException } from '../../../common/errors/app.exception';
 
 /**
@@ -36,6 +37,21 @@ export interface OrderPricing {
   readonly itemsSubtotal: number;
   readonly discountTotal: number;
   readonly shippingFee: number;
+  /**
+   * Whether `shippingFee` is a PRICE or merely a placeholder zero.
+   *
+   * Carried in the pricing block rather than derived by each reader, because
+   * `shippingFee === 0` cannot answer the question: it is equally the answer
+   * for "delivery is free" and for "no rate has been supplied yet", and those
+   * two must not render the same way. `FulfilmentService.quote` is the only
+   * thing that knows which, so it says so once and the value travels with the
+   * money it describes.
+   *
+   * Part of the immutable snapshot for the same reason every other term is: the
+   * order email is rendered from the persisted order, and must report what was
+   * true on the day rather than what the configuration says later.
+   */
+  readonly shippingPriced: boolean;
   readonly grandTotal: number;
 }
 
@@ -49,6 +65,11 @@ export function lineTotal(unitPrice: number, quantity: number): number {
  * payable amount.
  *
  *   grandTotal = itemsSubtotal - discountTotal + shippingFee
+ *
+ * The shipping term arrives as a `ShippingQuote` rather than a bare number so
+ * that "free" and "not priced yet" cannot collapse into the same `0` on the way
+ * in. Only `fee` participates in the arithmetic; `priced` is carried through
+ * untouched, because it describes the number rather than changing it.
  *
  * `discountTotal` and `shippingFee` are parameters rather than hard-coded zeros
  * so the formula is the real one and each term has an authority elsewhere:
@@ -71,15 +92,16 @@ export function lineTotal(unitPrice: number, quantity: number): number {
 export function computeOrderPricing(
   itemsSubtotal: number,
   discountTotal: number,
-  shippingFee: number,
+  shipping: ShippingQuote,
 ): OrderPricing {
   const clampedDiscount = Math.min(Math.max(discountTotal, 0), itemsSubtotal);
-  const grandTotal = itemsSubtotal - clampedDiscount + shippingFee;
+  const grandTotal = itemsSubtotal - clampedDiscount + shipping.fee;
 
   const pricing: OrderPricing = {
     itemsSubtotal,
     discountTotal: clampedDiscount,
-    shippingFee,
+    shippingFee: shipping.fee,
+    shippingPriced: shipping.priced,
     grandTotal,
   };
 

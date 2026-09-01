@@ -106,6 +106,22 @@ export class OrderPricingSnapshot {
   @Prop({ type: Number, required: true, min: 0, default: 0 })
   shippingFee!: number;
 
+  /**
+   * Whether `shippingFee` above is a price at all.
+   *
+   * Persisted rather than derived because `shippingFee === 0` is ambiguous —
+   * it means both "delivery is free" and "no rate was supplied" — and the order
+   * email is rendered from this snapshot long after placement, when the
+   * configuration that produced the number may have changed. The order must be
+   * able to say what was true on the day.
+   *
+   * `default: false` is the truthful reading for any document written before
+   * this field existed: no rate had been supplied then, so nothing about their
+   * delivery was priced.
+   */
+  @Prop({ type: Boolean, required: true, default: false })
+  shippingPriced!: boolean;
+
   @Prop({ type: Number, required: true, min: 0 })
   grandTotal!: number;
 

@@ -3,6 +3,44 @@ import { fulfilmentConfig, type FulfilmentConfig } from '../../config/fulfilment
 import { AppException } from '../../common/errors/app.exception';
 
 /**
+ * What delivery costs, AND whether that is a price at all.
+ *
+ * ## Why a bare `number` was not enough
+ *
+ * `quote()` used to return the fee alone, so `0` had to carry two unrelated
+ * meanings: "delivery is free" and "no rate has been supplied, so nothing has
+ * been calculated". Both consumers guessed the second one — the checkout UI
+ * rendered `amount === 0` as "Not yet calculated" and the order email set
+ * `shippingUnpriced` from `shippingFee === 0`.
+ *
+ * That guess is already wrong today: this service returns `0` when a
+ * free-shipping threshold is met, so the moment a threshold is configured a
+ * genuinely free order tells the customer its delivery has not been worked out.
+ * It becomes wrong for every order once real per-governorate rates land.
+ *
+ * ## Why the fix could not wait for the rates
+ *
+ * Adding a field is additive and a contract drift gate reports it. Redefining
+ * what `0` MEANS changes no field, no name and no type — the gate sees nothing,
+ * and every client that already shipped `0 → "not calculated"` silently
+ * misreports free orders. So the representation is settled before the contract
+ * freezes, and the rate values arrive later against a shape that already tells
+ * the truth.
+ *
+ * `priced: false` always carries `fee: 0`; there is no such thing as an
+ * unpriced non-zero fee.
+ */
+export interface ShippingQuote {
+  /** Integer minor units. Always 0 when `priced` is false. */
+  readonly fee: number;
+  /**
+   * True when a rate exists and this fee is what the customer owes — INCLUDING
+   * when that is zero because a free-shipping threshold was met.
+   */
+  readonly priced: boolean;
+}
+
+/**
  * THE shipping cost authority.
  *
  * Authority: docs/architecture/NESTJS-MODULE-MAP.md §9 — "Public API:
@@ -67,7 +105,7 @@ export class FulfilmentService {
    * Pure integer arithmetic — no division, no float, no rounding. The only
    * rounding point MONEY-MODEL.md §7.2 permits is a percentage discount.
    */
-  quote(governorate: string | null, postDiscountSubtotal: number): number {
+  quote(governorate: string | null, postDiscountSubtotal: number): ShippingQuote {
     void governorate;
 
     if (!Number.isSafeInteger(postDiscountSubtotal) || postDiscountSubtotal < 0) {
@@ -77,12 +115,33 @@ export class FulfilmentService {
       throw AppException.internal();
     }
 
-    const threshold = this.config.freeShippingThreshold;
+    const flatFee = this.config.shippingFlatFee;
 
-    if (threshold !== null && postDiscountSubtotal >= threshold) {
-      return 0;
+    /*
+     * NO RATE HAS BEEN SUPPLIED (OPEN-001).
+     *
+     * `fee: 0` here is not a price. It is the absence of one, and `priced:
+     * false` is the only thing that says so — which is the entire reason this
+     * method stopped returning a bare number.
+     */
+    if (flatFee === null) {
+      return { fee: 0, priced: false };
     }
 
-    return this.config.shippingFlatFee;
+    const threshold = this.config.freeShippingThreshold;
+
+    /*
+     * Free, and `priced: true` — deliberately.
+     *
+     * Free IS a price: a rate exists, the threshold was met, and the customer
+     * owes nothing for delivery. Conflating this with "not yet calculated" is
+     * exactly the defect being removed, and it is reachable TODAY the moment a
+     * threshold is configured.
+     */
+    if (threshold !== null && postDiscountSubtotal >= threshold) {
+      return { fee: 0, priced: true };
+    }
+
+    return { fee: flatFee, priced: true };
   }
 }

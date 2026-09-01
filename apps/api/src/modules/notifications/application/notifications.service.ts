@@ -335,7 +335,15 @@ export class NotificationsService {
       // A zero fee currently means "not priced yet" (OPEN-001: the real
       // per-governorate table is unsupplied), and promising free delivery we
       // have not decided on would be worse than saying so.
-      shippingUnpriced: order.pricing.shippingFee === 0,
+      /*
+       * Read from the order's own flag, never inferred from the amount.
+       *
+       * `shippingFee === 0` was the old test, and it is wrong in both
+       * directions: it calls a genuinely free delivery "Calculated before
+       * dispatch", and once real rates exist it would call every zero a price.
+       * The order records which one it was at placement time.
+       */
+      shippingUnpriced: !order.pricing.shippingPriced,
       grandTotal: money(order.pricing.grandTotal),
 
       paymentMethod: NotificationsService.PAYMENT_COPY[order.payment.method] ?? order.payment.method,

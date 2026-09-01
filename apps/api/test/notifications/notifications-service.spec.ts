@@ -99,6 +99,10 @@ function orderFixture(overrides: Partial<PlacedOrder> = {}): PlacedOrder {
       itemsSubtotal: 65000,
       discountTotal: 0,
       shippingFee: 0,
+      // The deployed default: a zero that is NOT a price. The fixture states it
+      // rather than leaving it undefined, because the whole point of the field
+      // is that this case is declared instead of inferred.
+      shippingPriced: false,
       grandTotal: 65000,
       vatInclusive: true,
       vatRateBps: 1400,
@@ -227,6 +231,54 @@ describe('order confirmation content', () => {
     expect(sender.sent[0]?.to).toEqual([
       { email: 'snapshot@example.test', name: 'Snapshot Name' },
     ]);
+  });
+
+  /**
+   * The 2c correctness fix, asserted where a customer would see it.
+   *
+   * The email used to derive "delivery not priced" from `shippingFee === 0`.
+   * These two cases have the SAME zero fee and must read differently, which is
+   * precisely what the old test could not express — and what a client
+   * integrating against the frozen contract would otherwise get wrong.
+   */
+  describe('the delivery line reports whether the fee is a price', () => {
+    it('says the fee was not calculated when no rate was supplied', async () => {
+      await service.sendOrderConfirmation(
+        orderFixture({
+          pricing: {
+            itemsSubtotal: 65000,
+            discountTotal: 0,
+            shippingFee: 0,
+            shippingPriced: false,
+            grandTotal: 65000,
+            vatInclusive: true,
+            vatRateBps: 1400,
+          },
+        } as Partial<PlacedOrder>),
+      );
+
+      expect(sender.sent[0]?.text).toContain('Calculated before dispatch');
+    });
+
+    it('does NOT say that for a genuinely free delivery, despite the identical zero', async () => {
+      await service.sendOrderConfirmation(
+        orderFixture({
+          pricing: {
+            itemsSubtotal: 65000,
+            discountTotal: 0,
+            // Same amount as the case above. Only `shippingPriced` differs.
+            shippingFee: 0,
+            shippingPriced: true,
+            grandTotal: 65000,
+            vatInclusive: true,
+            vatRateBps: 1400,
+          },
+        } as Partial<PlacedOrder>),
+      );
+
+      expect(sender.sent[0]?.text).not.toContain('Calculated before dispatch');
+      expect(sender.sent[0]?.text).toContain('0.00 EGP');
+    });
   });
 
   it('keys idempotency on the order id', async () => {

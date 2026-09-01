@@ -36,12 +36,18 @@ export const fulfilmentConfig = registerAs('fulfilment', () => {
 
   return {
     /**
-     * The flat delivery fee, in integer minor units (piastres).
+     * The flat delivery fee in integer minor units (piastres), or `null` when
+     * NO RATE HAS BEEN SUPPLIED.
+     *
+     * `null` is not "free" — it is "not priced", and `FulfilmentService` turns
+     * it into `{ fee: 0, priced: false }` so the distinction survives all the
+     * way to the customer instead of being re-inferred from a zero by every
+     * consumer. An explicit `0` is a real decision that delivery is free.
      *
      * Applies to every governorate. When per-governorate rates arrive they are
      * read here instead; no caller changes.
      */
-    shippingFlatFee: e.SHIPPING_FLAT_FEE,
+    shippingFlatFee: e.SHIPPING_FLAT_FEE ?? null,
 
     /**
      * Order value at or above which delivery is free, in integer minor units, or

@@ -164,13 +164,28 @@ export interface AddressInput {
  * The authoritative money breakdown. Every figure is server-computed.
  *
  * `shippingFee` is quoted from the chosen address's governorate and the
- * post-discount subtotal. It is `0` under the current configuration — render
- * that as "shipping not yet calculated", NOT as a free-shipping promotion.
+ * post-discount subtotal. **Never branch on its amount** — read
+ * `shippingPriced`, which is the field that says whether the amount is a price
+ * at all.
  */
 export interface PricingBreakdown {
   itemsSubtotal: Money;
   discountTotal: Money;
   shippingFee: Money;
+  /**
+   * Whether `shippingFee` is a real price.
+   *
+   * `true` — the customer owes exactly that, INCLUDING when it is zero because
+   * a free-shipping threshold was met. Show it as the fee, or as free.
+   * `false` — no delivery rate has been supplied yet; the zero beside it is a
+   * placeholder, and the honest thing to show is "not yet calculated".
+   *
+   * The distinction exists because `shippingFee === 0` cannot carry it: the
+   * same zero means "free" and "unpriced", and reading it as "unpriced" — which
+   * this app used to do — misreports every free-shipping order the moment real
+   * rates land.
+   */
+  shippingPriced: boolean;
   grandTotal: Money;
   vatInclusive: boolean;
   vatRateBps: number;
