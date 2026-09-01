@@ -130,7 +130,22 @@ export function assertPricingInvariants(pricing: OrderPricing): void {
     pricing.discountTotal <= pricing.itemsSubtotal &&
     pricing.shippingFee >= 0 &&
     pricing.grandTotal >= 0 &&
-    pricing.grandTotal === pricing.itemsSubtotal - pricing.discountTotal + pricing.shippingFee;
+    pricing.grandTotal === pricing.itemsSubtotal - pricing.discountTotal + pricing.shippingFee &&
+    /*
+     * An UNPRICED fee must be zero.
+     *
+     * `ShippingQuote` states this ("`priced: false` always carries `fee: 0`;
+     * there is no such thing as an unpriced non-zero fee") and nothing enforced
+     * it. MONEY-MODEL.md §7.1 requires invariants to be "asserted in code, not
+     * merely documented", and this one was only documented.
+     *
+     * It matters because the pair is what the customer is shown: a non-zero fee
+     * flagged as unpriced renders as "not yet calculated" beside a charge the
+     * customer is nonetheless being asked to pay. Every current path satisfies
+     * this, so the assertion changes no behaviour today — it closes the gap
+     * before Phase 5 introduces a lookup that could violate it on a miss.
+     */
+    (pricing.shippingPriced || pricing.shippingFee === 0);
 
   if (!consistent) {
     throw AppException.internal();

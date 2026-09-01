@@ -750,3 +750,25 @@ seen in one state is not a tested boolean.
   all three states are exercised without a database or a config change that would leak into
   other suites, including *two otherwise identical zero-fee orders that must serialise
   differently*, and the missing-field coercion from A7.
+
+## FINDING 4 — a documented invariant that was never asserted
+
+`ShippingQuote` states: *"`priced: false` always carries `fee: 0`; there is no such thing as
+an unpriced non-zero fee."* Nothing enforced it — `assertPricingInvariants` checks integers,
+ranges and the total formula, but not this pair.
+
+**Proven reachable during A7:** unsetting the field on an order that had a real 5000 fee
+produced `priced:false` alongside `fee:5000`, and the API served it without complaint.
+
+MONEY-MODEL.md §7.1 requires invariants to be *"asserted in code, not merely documented"*,
+and this one was only documented.
+
+**Why it matters, concretely:** a non-zero fee flagged unpriced renders as "not yet
+calculated" beside a charge the customer is nonetheless being asked to pay.
+
+**Fixed** with one clause in `assertPricingInvariants`, plus a property test over all seven
+meaningful `FulfilmentService` configurations × five subtotals (rather than one example,
+since the failure it guards against is a future `quote()` body that a single case would
+miss). **Behaviour today is unchanged** — every current path already satisfies it. This
+closes the gap before Phase 5 introduces a `shippingRates` lookup that could violate it on a
+miss. Classified as hardening, not a live bug.

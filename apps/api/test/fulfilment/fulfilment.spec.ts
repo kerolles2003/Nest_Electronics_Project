@@ -154,6 +154,36 @@ describe('FulfilmentService', () => {
   });
 
   /**
+   * The invariant `ShippingQuote` documents: an unpriced fee is always zero.
+   *
+   * Asserted as a PROPERTY over every configuration this service accepts,
+   * rather than as one example, because the failure it guards against is a
+   * future `quote()` body returning a fee it has not actually priced — and a
+   * single example would not notice.
+   */
+  it('never returns an unpriced non-zero fee, under any configuration', () => {
+    const configs = [
+      { shippingFlatFee: null, freeShippingThreshold: null },
+      { shippingFlatFee: null, freeShippingThreshold: 0 },
+      { shippingFlatFee: null, freeShippingThreshold: 50_000 },
+      { shippingFlatFee: 0, freeShippingThreshold: null },
+      { shippingFlatFee: 5000, freeShippingThreshold: null },
+      { shippingFlatFee: 5000, freeShippingThreshold: 0 },
+      { shippingFlatFee: 5000, freeShippingThreshold: 50_000 },
+    ];
+
+    for (const config of configs) {
+      for (const subtotal of [0, 1, 49_999, 50_000, 1_000_000]) {
+        const quoted = service(config as Partial<FulfilmentConfig>).quote('Cairo', subtotal);
+
+        if (!quoted.priced) {
+          expect(quoted.fee).toBe(0);
+        }
+      }
+    }
+  });
+
+  /**
    * MONEY-MODEL.md §5: no float may appear where a payable amount is derived.
    * The fee comes from configuration and is returned unchanged, so the only way
    * a non-integer could escape is a non-integer reaching configuration — which
