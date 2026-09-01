@@ -174,6 +174,26 @@ export enum ErrorCode {
    */
   ADDRESS_LIMIT_REACHED = 'ADDRESS_LIMIT_REACHED',
 
+  // ---- Media — 400 / 404 / 409 ----
+  /**
+   * 400. The uploaded file failed a rule: too large, empty, an unaccepted MIME
+   * type, contents that are not the declared format, or dimensions below the
+   * minimum. `details[0].message` says which — one code rather than six,
+   * because every one of them is answered the same way (send a different file)
+   * and a client that branched on the difference would gain nothing.
+   */
+  INVALID_UPLOAD = 'INVALID_UPLOAD',
+
+  /** 404. No managed asset with that `publicId`. */
+  MEDIA_ASSET_NOT_FOUND = 'MEDIA_ASSET_NOT_FOUND',
+
+  /**
+   * 409. The asset is still referenced by at least one document, and
+   * destroying it would break every page that shows it — the legacy defect
+   * reference counting exists to prevent. `details[0].message` gives the count.
+   */
+  MEDIA_ASSET_IN_USE = 'MEDIA_ASSET_IN_USE',
+
   // ---- Rate limiting — 429 ----
   /** Too many requests. Accompanied by a `Retry-After` header in seconds. */
   RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',

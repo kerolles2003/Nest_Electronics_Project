@@ -3027,6 +3027,225 @@
           "admin · orders"
         ]
       }
+    },
+    "/api/v1/admin/media": {
+      "post": {
+        "description": "Accepts `multipart/form-data` with a `file` part and the `entity` / `entityId` fields\nnaming what the asset is for.\n\n**The server sees every byte** (ADR-MEDIA-001). It is checked against the size limit and\nthe MIME allow-list, then **sniffed** — a file declaring `image/png` whose contents are\nnot PNG is refused. It is then decoded, its EXIF orientation baked into the pixels, its\nmetadata stripped, its long edge capped and its real dimensions read, before anything is\nstored. **The client is never the authority for any of it.**\n\n**The response has no `url` and never will.** Build the delivery URL from `publicId` and\n`version`; storing a rendered URL turns a CDN change into a data migration.\n\n**The original filename is discarded.** The server generates the identifier.",
+        "operationId": "MediaController_upload_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file",
+                  "entity",
+                  "entityId"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "JPEG, PNG or WebP, at most 5 MB."
+                  },
+                  "entity": {
+                    "type": "string",
+                    "enum": [
+                      "products",
+                      "categories",
+                      "brands",
+                      "blog"
+                    ]
+                  },
+                  "entityId": {
+                    "type": "string",
+                    "example": "68b000000000000000000001"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaAssetResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_UPLOAD — no file part, an empty file, over the size limit, a MIME type outside the allow-list, contents that contradict the declared type, or an image whose shorter edge is under 200px. `details[0].message` says which. VALIDATION_ERROR — `entity` or `entityId` is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — media operations require an ADMIN or SUPER_ADMIN account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload one image",
+        "tags": [
+          "media"
+        ]
+      },
+      "delete": {
+        "description": "Permanently removes the asset from the store. **Refused with `409` while anything still\nreferences it** — the reference count is consulted first, and the error names how many\ndocuments would break.\n\nThat refusal is the point of the reference ledger. Legacy duplication copied image URLs,\nso two products shared one storage object and deleting from either destroyed it for both.\n\n`publicId` is a **query parameter**, not a path segment, because it contains slashes.",
+        "operationId": "MediaController_destroy_v1",
+        "parameters": [
+          {
+            "name": "publicId",
+            "required": true,
+            "in": "query",
+            "description": "The provider-relative identifier, exactly as it was returned by the upload.",
+            "schema": {
+              "example": "nest/products/68b000000000000000000001/kK3nQ8vRb2Xf",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — media operations require an ADMIN or SUPER_ADMIN account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MEDIA_ASSET_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MEDIA_ASSET_IN_USE — still referenced; `details[0].message` gives the count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Destroy an unreferenced image",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/v1/admin/media/reconciliation": {
+      "get": {
+        "description": "Compares the store against the reference ledger in both directions and **reports**.\n\n**Nothing is deleted, by design** (MEDIA-MODEL.md §9.3). An automated deleter that\nmisreads state destroys assets irreversibly; a report an admin acts on is the right trade\nat this scale. Revisit above ~10,000 assets.",
+        "operationId": "MediaController_reconcile_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Maximum entries per section. A report is read by a person, so it is bounded.",
+            "schema": {
+              "example": "100",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaReconciliationResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — media operations require an ADMIN or SUPER_ADMIN account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Orphan reconciliation report",
+        "tags": [
+          "media"
+        ]
+      }
     }
   },
   "info": {
@@ -3308,6 +3527,9 @@
               "IDEMPOTENCY_KEY_REUSED",
               "CART_EMPTY",
               "ADDRESS_LIMIT_REACHED",
+              "INVALID_UPLOAD",
+              "MEDIA_ASSET_NOT_FOUND",
+              "MEDIA_ASSET_IN_USE",
               "RATE_LIMIT_EXCEEDED",
               "INTERNAL_ERROR",
               "SERVICE_UNAVAILABLE",
@@ -5871,6 +6093,127 @@
         },
         "required": [
           "reason"
+        ]
+      },
+      "MediaAssetDto": {
+        "type": "object",
+        "properties": {
+          "publicId": {
+            "type": "string",
+            "example": "nest/products/68b000000000000000000001/kK3nQ8vRb2Xf",
+            "description": "Provider-relative identifier. Build the delivery URL from this; never store one."
+          },
+          "version": {
+            "type": "number",
+            "example": 1756700000,
+            "description": "Bumped on re-upload. Include it in the URL so a CDN cache busts deterministically."
+          },
+          "format": {
+            "type": "string",
+            "example": "webp",
+            "enum": [
+              "jpeg",
+              "png",
+              "webp"
+            ]
+          },
+          "width": {
+            "type": "number",
+            "example": 1200,
+            "description": "Of the STORED image, after any downscale."
+          },
+          "height": {
+            "type": "number",
+            "example": 1200
+          },
+          "bytes": {
+            "type": "number",
+            "example": 84213,
+            "description": "Of the stored image, in bytes."
+          }
+        },
+        "required": [
+          "publicId",
+          "version",
+          "format",
+          "width",
+          "height",
+          "bytes"
+        ]
+      },
+      "MediaAssetResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MediaAssetDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UnreferencedAssetDto": {
+        "type": "object",
+        "properties": {
+          "publicId": {
+            "type": "string",
+            "example": "nest/products/68b000000000000000000001/kK3nQ8vRb2Xf"
+          },
+          "bytes": {
+            "type": "number",
+            "example": 84213
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-01T12:00:00.000Z"
+          }
+        },
+        "required": [
+          "publicId",
+          "bytes",
+          "createdAt"
+        ]
+      },
+      "MediaReconciliationDto": {
+        "type": "object",
+        "properties": {
+          "inStoreOnly": {
+            "description": "In the store, absent from the ledger — an upload whose database write failed. Safe to delete from the store once confirmed; nothing can reference it.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inLedgerOnly": {
+            "description": "In the ledger, absent from the store — destroyed out of band. The DANGEROUS direction: documents may still reference these, and those pages are already showing a broken image.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unreferenced": {
+            "description": "Known to both, referenced by nothing. Not an error — an upload nobody attached — and the ordinary thing an operator cleans up. Oldest first.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnreferencedAssetDto"
+            }
+          }
+        },
+        "required": [
+          "inStoreOnly",
+          "inLedgerOnly",
+          "unreferenced"
+        ]
+      },
+      "MediaReconciliationResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MediaReconciliationDto"
+          }
+        },
+        "required": [
+          "data"
         ]
       }
     }

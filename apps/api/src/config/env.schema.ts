@@ -251,6 +251,29 @@ export const envSchema = z.object({
    * can reach it.
    */
   BREVO_API_KEY: z.string().min(1).optional(),
+
+  // ---- Media provider selection (application level) ----
+  // Authority: CONFIGURATION-ARCHITECTURE.md §9 (names), MEDIA-MODEL.md §12.
+  //
+  // `memory` is the media counterpart of `EMAIL_PROVIDER=console`: it accepts
+  // and validates every byte exactly as the real adapter does, then keeps the
+  // result in process instead of sending it to a vendor. It exists so the whole
+  // upload pipeline — authorization, size, MIME, magic bytes, EXIF stripping,
+  // dimension capture, publicId generation — is exercised on a machine with no
+  // Cloudinary account, which today is every machine (D-4 credentials are not
+  // yet supplied).
+  MEDIA_PROVIDER: z.enum(['memory', 'cloudinary']).default('memory'),
+
+  // ---- Media provider credentials (vendor level) ----
+  // All three are required together when `MEDIA_PROVIDER=cloudinary`, and are
+  // read ONLY through providers/media/cloudinary/cloudinary.config.ts.
+  //
+  // CLOUDINARY_CLOUD_NAME is a public identifier and appears in every delivery
+  // URL; the other two are secrets and must never be exposed to a browser
+  // (MEDIA-MODEL.md §12 — "Never NEXT_PUBLIC_*").
+  CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
+  CLOUDINARY_API_KEY: z.string().min(1).optional(),
+  CLOUDINARY_API_SECRET: z.string().min(1).optional(),
 });
 
 /**
@@ -282,6 +305,34 @@ const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['BREVO_API_KEY'],
       message: "Required when EMAIL_PROVIDER='brevo'",
+    });
+  }
+
+  // All three Cloudinary values or none. A partial set is the dangerous case:
+  // the SDK would construct, then fail at the first upload with an
+  // authentication error that reads like an outage rather than like the
+  // configuration mistake it is.
+  for (const key of ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'] as const) {
+    if (value.MEDIA_PROVIDER === 'cloudinary' && value[key] === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: "Required when MEDIA_PROVIDER='cloudinary'",
+      });
+    }
+  }
+
+  // The memory adapter keeps uploads in process memory. In production that is
+  // not a degraded mode but a data-loss one: an admin uploads a product image,
+  // the API reports success, and the bytes vanish at the next restart while
+  // the database keeps a reference to an asset that no longer exists. Refused
+  // for the same reason as EMAIL_PROVIDER=console below.
+  if (value.NODE_ENV === 'production' && value.MEDIA_PROVIDER === 'memory') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['MEDIA_PROVIDER'],
+      message:
+        "Must not be 'memory' when NODE_ENV='production' — uploads would be lost at restart",
     });
   }
 

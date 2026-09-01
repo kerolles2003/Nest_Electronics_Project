@@ -1,12 +1,17 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { emailConfig, type EmailConfig } from '../config/email.config';
+import { mediaConfig, type MediaConfig } from '../config/media.config';
+import { MediaStoragePort } from '../modules/media/application/ports/media-storage.port';
 import { EmailSenderPort } from '../modules/notifications/application/ports/email-sender.port';
 import { BrevoEmailSender } from './email/brevo/brevo-email-sender';
 import { brevoConfig, type BrevoConfig } from './email/brevo/brevo.config';
 import { ConsoleEmailSender } from './email/console/console-email-sender';
 import { ResendEmailSender } from './email/resend/resend-email-sender';
 import { resendConfig, type ResendConfig } from './email/resend/resend.config';
+import { CloudinaryMediaStorage } from './media/cloudinary/cloudinary-media-storage';
+import { cloudinaryConfig, type CloudinaryConfig } from './media/cloudinary/cloudinary.config';
+import { InMemoryMediaStorage } from './media/memory/in-memory-media-storage';
 
 /**
  * THE composition point for replaceable external implementations.
@@ -15,8 +20,8 @@ import { resendConfig, type ResendConfig } from './email/resend/resend.config';
  *
  * **This is the only file in the codebase that names both a port and a
  * vendor.** `grep -rn "resend" src/ --exclude-dir=providers` returns nothing,
- * and that is the whole design: replaceability is a property of the import
- * graph, not of a registry.
+ * and so does the same search for `cloudinary`. That is the whole design:
+ * replaceability is a property of the import graph, not of a registry.
  *
  * ## Why a conditional and not a factory class or a registry
  *
@@ -62,9 +67,12 @@ import { resendConfig, type ResendConfig } from './email/resend/resend.config';
     ConfigModule.forFeature(emailConfig),
     ConfigModule.forFeature(resendConfig),
     ConfigModule.forFeature(brevoConfig),
+    ConfigModule.forFeature(mediaConfig),
+    ConfigModule.forFeature(cloudinaryConfig),
   ],
   providers: [
     ConsoleEmailSender,
+    InMemoryMediaStorage,
     {
       provide: EmailSenderPort,
       useFactory: (
@@ -92,7 +100,32 @@ import { resendConfig, type ResendConfig } from './email/resend/resend.config';
       },
       inject: [emailConfig.KEY, resendConfig.KEY, brevoConfig.KEY, ConsoleEmailSender],
     },
+    {
+      provide: MediaStoragePort,
+      useFactory: (
+        media: MediaConfig,
+        cloudinary: CloudinaryConfig,
+        memoryStorage: InMemoryMediaStorage,
+      ): MediaStoragePort => {
+        // THE SECOND SWITCH, and the only other place in `src/` that names a
+        // vendor. It is shaped exactly like the email one on purpose: a reader
+        // who has understood one has understood both, and a third provider
+        // costs an arm rather than a pattern.
+        //
+        // The Cloudinary client is constructed HERE rather than registered as
+        // a provider, so a process running on `memory` never constructs it and
+        // never reads a credential — which today is every process, because the
+        // D-4 account has not been supplied.
+        switch (media.provider) {
+          case 'cloudinary':
+            return new CloudinaryMediaStorage(cloudinary);
+          default:
+            return memoryStorage;
+        }
+      },
+      inject: [mediaConfig.KEY, cloudinaryConfig.KEY, InMemoryMediaStorage],
+    },
   ],
-  exports: [EmailSenderPort],
+  exports: [EmailSenderPort, MediaStoragePort],
 })
 export class ProvidersModule {}

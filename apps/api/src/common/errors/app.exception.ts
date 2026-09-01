@@ -383,4 +383,57 @@ export class AppException extends HttpException {
       'The requested brand was not found.',
     );
   }
+
+  // --- Media ----------------------------------------------------------------
+
+  /**
+   * The uploaded file failed a validation rule.
+   *
+   * `reason` is deliberately specific and deliberately safe to show an
+   * operator: every one of these is a mistake a person can correct, and a
+   * generic "invalid file" would send them guessing. Nothing in it is derived
+   * from the file's own contents, so a crafted filename or EXIF field cannot
+   * reach a response through here.
+   */
+  static invalidUpload(reason: string): AppException {
+    return new AppException(
+      ErrorCode.INVALID_UPLOAD,
+      HttpStatus.BAD_REQUEST,
+      'The uploaded file was rejected.',
+      [{ field: 'file', message: reason, code: ErrorCode.INVALID_UPLOAD }],
+    );
+  }
+
+  static mediaAssetNotFound(): AppException {
+    return new AppException(
+      ErrorCode.MEDIA_ASSET_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      'No managed media asset with that identifier.',
+    );
+  }
+
+  /**
+   * Refusing to destroy an asset something still points at.
+   *
+   * The count is included because it turns a refusal into an instruction:
+   * detach it from that many documents, then try again. Legacy destroyed the
+   * object regardless and let the other product discover it later (MEDIA-MODEL
+   * §9.1).
+   */
+  static mediaAssetInUse(refCount: number): AppException {
+    return new AppException(
+      ErrorCode.MEDIA_ASSET_IN_USE,
+      HttpStatus.CONFLICT,
+      'That image is still in use and was not deleted.',
+      [
+        {
+          field: 'publicId',
+          message:
+            `${String(refCount)} document(s) still reference this image. Remove it from them ` +
+            'first; deleting it now would break every page that shows it.',
+          code: ErrorCode.MEDIA_ASSET_IN_USE,
+        },
+      ],
+    );
+  }
 }

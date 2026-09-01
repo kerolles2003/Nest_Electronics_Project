@@ -102,7 +102,7 @@ entering this document and the drift gate as they land.
 | Real shipping fee **values** | 5 | `shippingFee.amount` becomes non-zero and `shippingPriced` becomes `true`. **The shape is already final** — if you read `shippingPriced` today, nothing in your code changes. |
 | Password reset (`request` / `confirm`) | 5 | new endpoints |
 | Profile update (`PATCH /users/me`) | 5 | new endpoint |
-| Media upload | 4 | new endpoint; **ships empty** — no product images exist yet |
+| ~~Media upload~~ | ~~4~~ | **LANDED, and not for you.** `POST /admin/media` is staff-only and needs an ADMIN or SUPER_ADMIN token; a customer app has no use for it. What it changes for you is downstream: product images will start appearing in `primaryImage` / `images`, as `{publicId, version, format, width, height, alt}`. **Build the delivery URL yourself** — `https://res.cloudinary.com/<cloud>/image/upload/<transformation>/v<version>/<publicId>` — because the API deliberately returns no URL (a stored URL makes a CDN change a data migration). Use `width`/`height` to reserve space before the image loads. **No product has an image yet**, so every one of those fields is `null` or empty today. |
 | Coupons | 8 | `discountTotal` starts being non-zero; the field already exists |
 | Reviews, wishlist, blog | 8 | new endpoints |
 | Guest order tracking | 8 | new endpoint |

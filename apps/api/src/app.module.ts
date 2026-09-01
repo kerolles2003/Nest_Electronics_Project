@@ -16,6 +16,7 @@ import { CatalogModule } from './modules/catalog/catalog.module';
 import { FulfilmentModule } from './modules/fulfilment/fulfilment.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { MediaModule } from './modules/media/media.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProvidersModule } from './providers/providers.module';
@@ -63,6 +64,13 @@ import { ProvidersModule } from './providers/providers.module';
     InventoryModule,
     FulfilmentModule,
     OrdersModule,
+    /**
+     * Ships EMPTY (Phase 4): the upload pipeline and the reference ledger
+     * exist and are tested, no product has an image, and the admin upload UI
+     * is Phase 7. Landed here so Phase 7 and Phase 8's blog covers do not
+     * wait on it.
+     */
+    MediaModule,
   ],
   providers: [
     {
