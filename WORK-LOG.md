@@ -726,3 +726,27 @@ wrong. This is my own test from the previous session and it was weaker than I de
 **Fixed:** both delivery-line tests now extract the delivery line specifically and assert the
 whole line (`'Delivery          Free'` / `'Delivery          Calculated before dispatch'`),
 via a `deliveryLineOf()` helper, so they can only pass for the stated reason.
+
+## FINDING 3 — `shippingPriced` was asserted nowhere at the HTTP boundary
+
+Grep showed `checkout.spec.ts:427` and `:699` assert `shippingFee.amount === 0`, and
+`orders-read.spec.ts:636-642` walks the money fields, but **no test anywhere asserted
+`shippingPriced` on any response**.
+
+**Failure scenario:** the DTO stops serialising the field, or hardcodes `true`, and all 541
+tests still pass — while a mobile client built on the frozen contract silently misreports
+free delivery. A field in a frozen contract with no boundary test is untested.
+
+Compounding it: the integration suites only ever run under the deployed configuration, where
+no rate is supplied, so **`false` was the only value any test had ever observed.** A boolean
+seen in one state is not a tested boolean.
+
+**Fixed** in three places:
+- `checkout.spec.ts` — the quote response and the persisted order both assert the flag.
+- `orders-read.spec.ts` — the order-**summary** serialiser is a different class from the
+  detail one, so the flag is asserted on that shape too rather than assumed to travel with
+  the money.
+- **New `test/orders/pricing-dto.spec.ts`** (6 tests) — `PricingBreakdownDto.of` is pure, so
+  all three states are exercised without a database or a config change that would leak into
+  other suites, including *two otherwise identical zero-fee orders that must serialise
+  differently*, and the missing-field coercion from A7.

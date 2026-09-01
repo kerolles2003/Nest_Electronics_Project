@@ -645,6 +645,15 @@ describe('summary shape', () => {
         (pricing.discountTotal?.amount ?? 0) +
         (pricing.shippingFee?.amount ?? 0),
     );
+
+    /*
+     * The order-summary serialiser is a DIFFERENT class from the order-detail
+     * one, and both are part of the frozen contract. A client reading the
+     * history list must be able to tell an unpriced delivery from a free one
+     * exactly as it can on the detail page, so the flag is asserted on this
+     * shape too rather than assumed to travel with the money.
+     */
+    expect(typeof (row.pricing as Record<string, unknown>)['shippingPriced']).toBe('boolean');
   });
 
   it('leaks nothing internal', async () => {

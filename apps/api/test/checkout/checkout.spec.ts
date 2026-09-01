@@ -425,6 +425,19 @@ describe('quote', () => {
     expect(data.pricing.itemsSubtotal.formatted).toBe('1,550.00 EGP');
     expect(data.pricing.discountTotal.amount).toBe(0);
     expect(data.pricing.shippingFee.amount).toBe(0);
+    /*
+     * The zero above is NOT a price, and the response has to say so.
+     *
+     * `shippingPriced` is part of the frozen v1 contract, and until now nothing
+     * asserted it at the HTTP boundary: the DTO could have stopped serialising
+     * it, or hardcoded `true`, and every test still passed. A mobile client
+     * that trusts this field deserves a test that fails when it is wrong.
+     *
+     * `false` is correct under the deployed configuration, where
+     * `SHIPPING_FLAT_FEE` is unset (OPEN-001).
+     */
+    expect(data.pricing.shippingPriced).toBe(false);
+    expect(typeof data.pricing.shippingPriced).toBe('boolean');
     expect(data.pricing.grandTotal.amount).toBe(data.pricing.itemsSubtotal.amount);
     expect(data.pricing.vatInclusive).toBe(true);
     expect(data.pricing.vatRateBps).toBe(1400);
@@ -697,6 +710,9 @@ describe('placement — the happy path', () => {
     expect(order.pricing.itemsSubtotal.amount).toBe(2 * 32500 + 3 * 30000);
     expect(order.pricing.discountTotal.amount).toBe(0);
     expect(order.pricing.shippingFee.amount).toBe(0);
+    // The PERSISTED snapshot carries the flag too, not just the quote — the
+    // order email is rendered from this document long after placement.
+    expect(order.pricing.shippingPriced).toBe(false);
     expect(order.pricing.grandTotal.amount).toBe(
       order.pricing.itemsSubtotal.amount - order.pricing.discountTotal.amount + order.pricing.shippingFee.amount,
     );
