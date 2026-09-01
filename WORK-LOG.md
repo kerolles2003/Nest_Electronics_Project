@@ -252,3 +252,34 @@ other hosts alone.
 **Result:** 20 suites / **537 tests, all green** (527 baseline + 10 new). **Zero vendor
 calls** — the guard never tripped. Suite time fell **214s → 149s**, consistent with ~225
 eliminated network round-trips. `tsc --noEmit` and `eslint src test` both clean.
+
+### Item 2 — F-02 dev config coherence
+
+**The root was deeper than the `.env` file.** `apps/api/.env.example` already said
+`EMAIL_PROVIDER=console`, so the committed example was half-right. The actual defect was in
+`env.schema.ts:196`: `EMAIL_FROM_ADDRESS` **defaulted to `onboarding@resend.dev`** — Resend's
+shared sandbox sender, a real deliverable address belonging to one vendor, baked into the
+schema. Cleaning `.env` alone would not have fixed it; any deployment that simply omitted a
+sender inherited a Resend identity while `EMAIL_PROVIDER` said `brevo`.
+
+Changes:
+- **`env.schema.ts`** — default is now `no-reply@nest-electronics.invalid`, hoisted into a
+  documented `PLACEHOLDER_SENDER` constant. `.invalid` is **reserved by RFC 2606 and can
+  never resolve**, so the placeholder cannot deliver to anyone. No real domain was invented.
+- **New production guard**, following the file's existing superRefine pattern (which already
+  refuses console-mail, verification-off and localhost-SITE_URL in production): the API now
+  **refuses to start with the placeholder sender when `NODE_ENV=production`.** This is what
+  makes the placeholder safe to ship as a default — the F-02 mismatch can no longer leak
+  toward production. Production config itself was not touched; no production value exists to
+  touch (D-10 deferred).
+- **`.env.example`** — the Resend-sandbox block replaced with an explicit placeholder
+  explanation and a pointer to Phase E for the real sender.
+- **`apps/api/.env` (local, gitignored, NOT committed — verified with `git check-ignore`)** —
+  flipped to `EMAIL_PROVIDER=console` with the placeholder sender, so dev is coherent as
+  Phase 1 requires. **`BREVO_API_KEY` was deliberately left in place** for Phase E; with the
+  console provider selected the schema does not require it and no adapter reads it.
+
+`docs/deployment/DEPLOYMENT-DECISION.md` also mentions `onboarding@resend.dev`, but as a
+factual description of what Resend offers, not as configuration. Left alone.
+
+537/537 green, `tsc --noEmit` clean.

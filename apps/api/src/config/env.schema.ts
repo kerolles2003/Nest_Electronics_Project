@@ -43,6 +43,28 @@ const durationString = z
  * Authority: docs/architecture/CONFIGURATION-ARCHITECTURE.md §6 — secrets are
  * never logged.
  */
+/**
+ * The default envelope sender: a deliberate, unmistakable placeholder.
+ *
+ * `.invalid` is reserved by RFC 2606 and is guaranteed never to resolve, so
+ * this address cannot deliver mail to anyone under any circumstances. That is
+ * the point — the previous default was Resend's shared sandbox sender
+ * `onboarding@resend.dev`, which is a REAL, deliverable address belonging to
+ * one vendor. Carrying it as the default meant a deployment that forgot to set
+ * a sender inherited a Resend identity while `EMAIL_PROVIDER` said `brevo`
+ * (F-02) — a mismatch that fails even with a valid key, because a domain
+ * verified with one vendor is not verified with another.
+ *
+ * A placeholder that cannot possibly work is safer than a real one that works
+ * only in the wrong circumstances. The production guard in the superRefine
+ * below refuses it outright, so this value can never reach a live deployment.
+ *
+ * The owner's real sender lands with the Brevo production line (Phase E),
+ * together with the SPF/DKIM records that authorise it. No domain is invented
+ * here.
+ */
+const PLACEHOLDER_SENDER = 'no-reply@nest-electronics.invalid';
+
 const SECRET_KEYS: ReadonlySet<string> = new Set([
   'MONGODB_URI',
   'RESEND_API_KEY',
@@ -193,7 +215,7 @@ export const envSchema = z.object({
    * authorise the provider. That is a DNS fact this schema cannot check, so it
    * validates the shape and the deployment checklist owns the rest.
    */
-  EMAIL_FROM_ADDRESS: z.string().email().default('onboarding@resend.dev'),
+  EMAIL_FROM_ADDRESS: z.string().email().default(PLACEHOLDER_SENDER),
 
   /** Display name shown beside the from-address in a mail client. */
   EMAIL_FROM_NAME: z.string().min(1).default('Nest Electronics'),
@@ -264,6 +286,21 @@ const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['EMAIL_PROVIDER'],
       message: "Must not be 'console' when NODE_ENV='production' — no mail would be delivered",
+    });
+  }
+
+  // The placeholder sender is unroutable by construction (RFC 2606 `.invalid`).
+  // Reaching production with it means every verification and order email is
+  // rejected by the first relay that resolves the domain — the same class of
+  // silent, total failure the console-provider guard above prevents, so it is
+  // refused the same way rather than left to a deployment checklist.
+  if (value.NODE_ENV === 'production' && value.EMAIL_FROM_ADDRESS === PLACEHOLDER_SENDER) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['EMAIL_FROM_ADDRESS'],
+      message:
+        "Must be a real sender on a domain verified with the selected provider when " +
+        "NODE_ENV='production' — the default placeholder cannot deliver",
     });
   }
 
