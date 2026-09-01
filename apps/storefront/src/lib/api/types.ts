@@ -19,6 +19,19 @@ export interface Money {
   formatted: string;
 }
 
+/**
+ * A page of results WITH the facets computed over the same filtered set.
+ *
+ * Separate from `PagedEnvelope` because only `GET /products` returns facets,
+ * and a shared type carrying an optional `facets` would let a caller reach for
+ * one on an endpoint that never sends it.
+ */
+export interface FacetedPagedEnvelope<T> {
+  data: T[];
+  meta: PaginationMeta;
+  facets: ProductFacets;
+}
+
 export interface PaginationMeta {
   page: number;
   limit: number;
@@ -65,12 +78,113 @@ export interface ProductPricing {
   basePrice: Money;
   salePrice: Money | null;
   effectivePrice: Money;
-  discountPercent: number | null;
+  /**
+   * BASIS POINTS, not percent. `1500` is 15%.
+   *
+   * This was transcribed as `discountPercent` and the API has always sent
+   * `discountPercentBps`, so anything reading it got `undefined`. Nothing did
+   * — the `/shop` slice never showed a discount badge — which is exactly why
+   * it survived: a wrong type costs nothing until the first reader.
+   *
+   * Basis points because a percentage of a price is money arithmetic, and
+   * MONEY-MODEL.md keeps money in integers all the way down. Divide by 100 to
+   * display.
+   */
+  discountPercentBps: number;
 }
 
+/**
+ * A managed image — a provider-relative identifier, never a URL
+ * (ADR-MEDIA-002). Build the delivery URL with `lib/images.ts`.
+ *
+ * `version` busts the CDN cache when an image is replaced; `width` and
+ * `height` let a page reserve space before the bytes arrive, which is what
+ * stops a product grid shifting as it loads. All four were missing from this
+ * type and present on the wire.
+ */
 export interface ProductImage {
   publicId: string;
+  version: number;
+  format: string;
+  width: number;
+  height: number;
   alt: string | null;
+}
+
+export interface ProductSpec {
+  key: string;
+  label: string;
+  value: string;
+  unit: string | null;
+  filterable: boolean;
+}
+
+/** One value of one facet, with how many matches it would leave. */
+export interface TermFacet {
+  slug: string;
+  name: string;
+  count: number;
+}
+
+export interface SpecFacet {
+  key: string;
+  label: string;
+  values: { value: string; count: number }[];
+}
+
+/**
+ * Server-computed facets, over the FILTERED set.
+ *
+ * The counts describe what applying each value would leave, given the filters
+ * already applied — so a facet showing `(0)` is a dead end the UI can grey out
+ * instead of a promise it cannot keep. `priceRange` is the range across all
+ * matches, not across the current page.
+ */
+export interface ProductFacets {
+  categories: TermFacet[];
+  brands: TermFacet[];
+  priceRange: { min: Money; max: Money } | null;
+  specs: SpecFacet[];
+}
+
+export interface Category {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  parentId: string | null;
+  /** 0 for a root. The tree is not a fixed depth — do not assume two levels. */
+  depth: number;
+  image: ProductImage | null;
+  /** SUBTREE count: a parent includes every descendant's products. */
+  productCount: number;
+  sortOrder: number;
+}
+
+export interface CategoryTreeNode extends Category {
+  children: CategoryTreeNode[];
+}
+
+export interface CategoryDetail extends Category {
+  /** Ancestors, root first, EXCLUDING this category. */
+  breadcrumb: Category[];
+}
+
+export interface Brand {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  logo: ProductImage | null;
+  website: string | null;
+  productCount: number;
+}
+
+export interface ProductSuggestion {
+  slug: string;
+  name: string;
+  sku: string;
+  primaryImage: ProductImage | null;
 }
 
 export interface ProductListItem {
@@ -91,8 +205,20 @@ export interface ProductListItem {
 export interface ProductDetail extends ProductListItem {
   description: string | null;
   images: ProductImage[];
-  specs: { key: string; label: string; value: string }[];
-  stockQuantity: number;
+  specs: ProductSpec[];
+  /**
+   * The API calls this `stockOnHand`. It was transcribed as `stockQuantity`,
+   * which is a field the server has never sent.
+   *
+   * Prefer `availability` for anything a customer sees: the exact count is
+   * operational detail, and showing "3 left" turns a stock figure into a
+   * promise the next order may break.
+   */
+  stockOnHand: number;
+  salesCount: number;
+  weight: number | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // --- cart -------------------------------------------------------------------

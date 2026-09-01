@@ -5,14 +5,20 @@ import type {
   Address,
   AddressInput,
   AuthUser,
+  Brand,
   Cart,
+  Category,
+  CategoryDetail,
+  CategoryTreeNode,
   CheckoutQuote,
   Envelope,
+  FacetedPagedEnvelope,
   Order,
   OrderSummary,
   PagedEnvelope,
   ProductDetail,
   ProductListItem,
+  ProductSuggestion,
   SessionTokens,
 } from './types';
 
@@ -89,28 +95,127 @@ export function resendVerification(email: string): Promise<Envelope<{ message: s
 
 // --- catalogue (public) -----------------------------------------------------
 
-export function listProducts(params: {
+/**
+ * Every filter `GET /products` accepts, and no more.
+ *
+ * `forbidNonWhitelisted` is on globally, so an undocumented key is a
+ * `400 UNKNOWN_FIELD` rather than a parameter the server quietly ignores —
+ * which is why this type is exhaustive rather than `Record<string, string>`.
+ *
+ * Money parameters are in **integer minor units**, like every other amount on
+ * the wire. `minPrice: 10000` is 100.00 EGP.
+ */
+export interface ProductQuery {
   page?: number;
   limit?: number;
   q?: string;
+  /** Matches the whole SUBTREE — a parent includes every descendant's products. */
   category?: string;
-  sort?: string;
-} = {}): Promise<PagedEnvelope<ProductListItem>> {
+  /** Repeatable, ORed within itself. */
+  brand?: string[];
+  minPrice?: number;
+  maxPrice?: number;
+  inStock?: boolean;
+  featured?: boolean;
+  /** `key:value`, repeatable. ANDs across keys, ORs within one key. */
+  spec?: string[];
+  sort?: 'relevance' | 'newest' | 'price_asc' | 'price_desc' | 'rating' | 'name_asc';
+}
+
+/**
+ * Arrays are repeated, not joined.
+ *
+ * `?brand=a&brand=b` is the shape the API's `@Transform(toStringArray)` reads.
+ * `?brand=a,b` would arrive as one brand slug called "a,b", match nothing, and
+ * return an empty page rather than an error — a silent wrong answer.
+ */
+function toQueryString(params: Record<string, unknown>): string {
   const query = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') query.set(key, String(value));
+    if (value === undefined || value === '') continue;
+
+    if (Array.isArray(value)) {
+      for (const entry of value) query.append(key, String(entry));
+    } else {
+      query.set(key, String(value));
+    }
   }
 
   const qs = query.toString();
+  return qs === '' ? '' : `?${qs}`;
+}
 
+/**
+ * The discovery endpoint: a page, the TRUE total, and server-computed facets,
+ * in one round trip.
+ *
+ * The facets come back with the results because computing them client-side
+ * would mean either fetching every product or showing counts that are wrong.
+ */
+export function listProducts(params: ProductQuery = {}): Promise<
+  FacetedPagedEnvelope<ProductListItem>
+> {
   // Catalogue reads are public and unauthenticated: sending a bearer token
   // would tie a cacheable public response to one customer for no benefit.
-  return apiFetch(`/products${qs ? `?${qs}` : ''}`, { auth: false, revalidate: 60 });
+  return apiFetch(`/products${toQueryString({ ...params })}`, { auth: false, revalidate: 60 });
 }
 
 export function getProduct(slug: string): Promise<Envelope<ProductDetail>> {
   return apiFetch(`/products/${encodeURIComponent(slug)}`, { auth: false, revalidate: 60 });
+}
+
+/** Up to 8 in the same category, excluding this one, ordered by sales. */
+export function getRelatedProducts(slug: string): Promise<Envelope<ProductListItem[]>> {
+  return apiFetch(`/products/${encodeURIComponent(slug)}/related`, {
+    auth: false,
+    revalidate: 60,
+  });
+}
+
+/**
+ * Autocomplete: up to 8 lightweight results, anchored PREFIX match on name and
+ * SKU. Makers search by part number, so SKU is matched first-class.
+ *
+ * Deliberately NOT revalidated for as long as the rest: a search-as-you-type
+ * box that lags a rename by a minute is fine; one that lags it by an hour looks
+ * broken.
+ */
+export function suggestProducts(q: string): Promise<Envelope<ProductSuggestion[]>> {
+  return apiFetch(`/products/suggest${toQueryString({ q })}`, { auth: false, revalidate: 30 });
+}
+
+// --- categories and brands --------------------------------------------------
+
+/** Flat, every active category. Use `getCategoryTree` for navigation. */
+export function listCategories(): Promise<Envelope<Category[]>> {
+  return apiFetch('/categories', { auth: false, revalidate: 300 });
+}
+
+/**
+ * The whole tree, nested, in one call.
+ *
+ * Revalidated far less often than products because a taxonomy changes when
+ * somebody decides to change it, not when stock moves — and it is rendered on
+ * EVERY page through the navbar, so re-fetching it per request would put a
+ * request on the critical path of the entire site for data that is static for
+ * days.
+ */
+export function getCategoryTree(): Promise<Envelope<CategoryTreeNode[]>> {
+  return apiFetch('/categories/tree', { auth: false, revalidate: 300 });
+}
+
+/** One category with its ancestors, root first, for a breadcrumb. */
+export function getCategory(slug: string): Promise<Envelope<CategoryDetail>> {
+  return apiFetch(`/categories/${encodeURIComponent(slug)}`, { auth: false, revalidate: 300 });
+}
+
+export function listBrands(): Promise<Envelope<Brand[]>> {
+  return apiFetch('/brands', { auth: false, revalidate: 300 });
+}
+
+export function getBrand(slug: string): Promise<Envelope<Brand>> {
+  return apiFetch(`/brands/${encodeURIComponent(slug)}`, { auth: false, revalidate: 300 });
 }
 
 // --- cart -------------------------------------------------------------------
