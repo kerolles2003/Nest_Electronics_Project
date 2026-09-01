@@ -25,6 +25,33 @@ import { SEED_BRANDS, SEED_CATEGORIES, SEED_PRODUCTS, type SeedProduct } from '.
 
 const logger = new Logger('Seed');
 
+/**
+ * The persisted image array for one product.
+ *
+ * `sortOrder` and `isPrimary` live on the element rather than beside the array
+ * (CATALOG-MODEL.md §8), so a reorder is one atomic `$set` of the whole array.
+ * The invariant this enforces is "EXACTLY one primary when there is at least
+ * one image": the seed data does not state which is primary, and inferring it
+ * from position is the only rule that cannot produce zero or two.
+ */
+function imagesOf(product: SeedProduct): {
+  publicId: string;
+  version: number;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+  alt: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+}[] {
+  return (product.images ?? []).map((asset, index) => ({
+    ...asset,
+    sortOrder: index,
+    isPrimary: index === 0,
+  }));
+}
+
 /** `salePrice ?? basePrice`, asserted rather than assumed. */
 function effectivePriceOf(product: SeedProduct): number {
   const { basePrice, salePrice } = product;
@@ -194,7 +221,7 @@ async function main(): Promise<void> {
               },
               currency: 'EGP',
               stock: { onHand: seed.onHand, lowStockThreshold: seed.lowStockThreshold },
-              images: [],
+              images: imagesOf(seed),
               specs: seed.specs.map((entry, index) => ({ ...entry, sortOrder: index })),
               rating: {
                 average: seed.ratingAverage,
@@ -213,7 +240,11 @@ async function main(): Promise<void> {
         .exec();
     }
 
-    logger.log(`products    ${String(SEED_PRODUCTS.length)} upserted`);
+    const withImages = SEED_PRODUCTS.filter((entry) => (entry.images?.length ?? 0) > 0).length;
+    logger.log(
+      `products    ${String(SEED_PRODUCTS.length)} upserted ` +
+        `(${String(withImages)} with images, ${String(SEED_PRODUCTS.length - withImages)} without)`,
+    );
 
     // --- Denormalised counts ----------------------------------------------
     // Category counts are SUBTREE counts, because `category.path` on a product

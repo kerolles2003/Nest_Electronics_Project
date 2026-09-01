@@ -8,11 +8,41 @@
  *
  * The shape of the data is deliberately awkward in the ways the real catalogue
  * is awkward, because a seed that is too tidy hides bugs:
- *   · most products have NO brand (53 of 85 live products have none)
- *   · no product has an image (74% of live products have none)
+ *   · many products have NO brand, and one brand has no products at all
+ *   · many products have NO image (74% of live products have none), some have
+ *     exactly one, and some have a gallery of three
  *   · some products are out of stock, some are below their low-stock threshold
  *   · some carry a sale price, most do not
+ *   · some have no reviews yet, so the rating widget must render nothing
+ *   · the category tree is three levels deep in one branch and one level deep
+ *     in most, so a breadcrumb cannot assume a fixed depth
  *   · prices span four orders of magnitude (1.00 EGP to 14,500.00 EGP)
+ *
+ * ## Why it was extended for Phase 4 (T1)
+ *
+ * The storefront pages being moved onto the API render states this seed could
+ * not produce. With zero images in the whole catalogue, the product gallery,
+ * the thumbnail strip and the `images.length > 1` branch were unreachable, so a
+ * migration could break every one of them and still look correct. Same for the
+ * "no reviews yet" rating, the empty brand page, and a breadcrumb deeper than
+ * two levels.
+ *
+ * The seed is TEST INFRASTRUCTURE, not business data (D-6): the real catalogue
+ * does not exist and arrives later from a supplier feed. Extending it is
+ * therefore free of business consequence and is the only way the T1 acceptance
+ * criterion — structural parity, every state still handled — can be checked at
+ * all.
+ *
+ * ## Images name a PROVIDER-RELATIVE identifier, never a URL
+ *
+ * `MEDIA-MODEL.md` §3 is explicit: persist `publicId` + `version`, derive URLs
+ * at read time. The legacy system stored absolute URLs and deleted assets by
+ * string-splitting them, which made a CDN change a data migration. These
+ * `publicId`s sit in the same `nest/products/<slug>/<n>` namespace the media
+ * upload API writes to, so the rendering path exercised here is the one real
+ * uploads will use. Until a Cloudinary account is configured they resolve to
+ * nothing and the storefront renders its placeholder — which is correct
+ * behaviour, and still drives the layout from real image COUNTS.
  *
  * All money is in integer minor units (piastres): 32500 = 325.00 EGP.
  */
@@ -31,6 +61,45 @@ export interface SeedBrand {
   readonly description: string;
   readonly website: string | null;
 }
+
+/**
+ * An image record as the media pipeline will persist it.
+ *
+ * `bytes`, `width` and `height` are captured at upload rather than guessed at
+ * render time — legacy stored none of the three, which guaranteed layout shift
+ * on every product grid.
+ */
+export interface SeedImage {
+  readonly publicId: string;
+  readonly version: number;
+  readonly format: string;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+  readonly alt: string | null;
+}
+
+/**
+ * One image for a product, in the namespace the upload API writes to.
+ *
+ * The dimensions vary on purpose: a grid that only ever sees 1200x1200 squares
+ * will not reveal that it cannot cope with a landscape photograph.
+ */
+const image = (
+  slug: string,
+  index: number,
+  alt: string,
+  width = 1200,
+  height = 1200,
+): SeedImage => ({
+  publicId: `nest/products/${slug}/${String(index)}`,
+  version: 1756700000,
+  format: 'webp',
+  width,
+  height,
+  bytes: 40_000 + index * 9_000,
+  alt,
+});
 
 export interface SeedSpec {
   readonly key: string;
@@ -60,6 +129,15 @@ export interface SeedProduct {
   readonly ratingCount: number;
   readonly weight: number | null;
   readonly specs: readonly SeedSpec[];
+  /**
+   * OPTIONAL, and absent for most products on purpose.
+   *
+   * "No images" is the majority state in a real catalogue and it is a state the
+   * storefront has to render correctly, so it is the default here rather than
+   * something a test has to construct. The first entry becomes the primary
+   * image; order is the array order.
+   */
+  readonly images?: readonly SeedImage[];
 }
 
 export const SEED_CATEGORIES: readonly SeedCategory[] = [
@@ -70,6 +148,10 @@ export const SEED_CATEGORIES: readonly SeedCategory[] = [
   { slug: 'sensors', name: 'Sensors', description: 'Measure the physical world.', parentSlug: null, sortOrder: 2 },
   { slug: 'environmental-sensors', name: 'Environmental Sensors', description: 'Temperature, humidity, pressure and air quality.', parentSlug: 'sensors', sortOrder: 1 },
   { slug: 'motion-sensors', name: 'Motion & Distance Sensors', description: 'Accelerometers, gyroscopes, ultrasonic and PIR.', parentSlug: 'sensors', sortOrder: 2 },
+  // The only depth-2 category, and it exists for exactly that reason: a
+  // breadcrumb, a category page and the subtree filter must all cope with a
+  // branch deeper than the one they were written against.
+  { slug: 'imu-modules', name: 'IMU Modules', description: 'Combined accelerometer, gyroscope and magnetometer packages.', parentSlug: 'motion-sensors', sortOrder: 1 },
 
   { slug: 'passive-components', name: 'Passive Components', description: 'The parts every build needs.', parentSlug: null, sortOrder: 3 },
   { slug: 'resistors', name: 'Resistors', description: 'Through-hole and surface-mount resistors and kits.', parentSlug: 'passive-components', sortOrder: 1 },
@@ -87,6 +169,10 @@ export const SEED_BRANDS: readonly SeedBrand[] = [
   { slug: 'waveshare', name: 'Waveshare', description: 'Breakout boards, displays and HATs.', website: 'https://www.waveshare.com' },
   { slug: 'dfrobot', name: 'DFRobot', description: 'Sensor modules and robotics components.', website: 'https://www.dfrobot.com' },
   { slug: 'nordic-semiconductor', name: 'Nordic Semiconductor', description: 'Bluetooth Low Energy and short-range wireless SoCs.', website: 'https://www.nordicsemi.com' },
+  // Deliberately stocks NOTHING. A brand record created before its first
+  // delivery is ordinary, and `/brands/sparkfun` rendering an empty state
+  // rather than a crash or a blank page is a case no other row can produce.
+  { slug: 'sparkfun', name: 'SparkFun', description: 'Breakout boards and Qwiic-connected modules.', website: 'https://www.sparkfun.com' },
 ];
 
 const V = (value: string): SeedSpec => ({ key: 'operating-voltage', label: 'Operating Voltage', value, unit: 'V', filterable: true });
@@ -104,6 +190,11 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 32500, salePrice: 28000, costPrice: 21000,
     onHand: 149, lowStockThreshold: 10, isFeatured: true, salesCount: 214,
     ratingAverage: 456, ratingCount: 38, weight: 9,
+    images: [
+      image('esp32-devkit-v1', 1, 'ESP32 DevKit V1 board, top view'),
+      image('esp32-devkit-v1', 2, 'ESP32 DevKit V1 pin labels', 1600, 900),
+      image('esp32-devkit-v1', 3, 'ESP32 DevKit V1 in a breadboard'),
+    ],
     specs: [V('3.3'), CONN('Wi-Fi + Bluetooth'), IFACE('USB'), MOUNT('Through-hole'), spec('cpu-cores', 'CPU Cores', '2'), spec('clock-speed', 'Clock Speed', '240', 'MHz'), spec('flash', 'Flash', '4', 'MB')],
   },
   {
@@ -114,6 +205,10 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 61500, salePrice: null, costPrice: 44000,
     onHand: 42, lowStockThreshold: 10, isFeatured: true, salesCount: 61,
     ratingAverage: 470, ratingCount: 17, weight: 11,
+    images: [
+      image('esp32-s3-devkitc-1', 1, 'ESP32-S3-DevKitC-1, top view'),
+      image('esp32-s3-devkitc-1', 2, 'ESP32-S3-DevKitC-1 USB-C end', 1600, 900),
+    ],
     specs: [V('3.3'), CONN('Wi-Fi + Bluetooth'), IFACE('USB-C'), MOUNT('Through-hole'), spec('flash', 'Flash', '8', 'MB'), spec('psram', 'PSRAM', '8', 'MB')],
   },
   {
@@ -144,6 +239,11 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 78000, salePrice: null, costPrice: 58000,
     onHand: 34, lowStockThreshold: 8, isFeatured: true, salesCount: 132,
     ratingAverage: 481, ratingCount: 54, weight: 25,
+    images: [
+      image('arduino-uno-r3', 1, 'Arduino Uno R3, top view'),
+      image('arduino-uno-r3', 2, 'Arduino Uno R3 headers'),
+      image('arduino-uno-r3', 3, 'Arduino Uno R3 with a shield fitted', 900, 1600),
+    ],
     specs: [V('5'), IFACE('USB-B'), MOUNT('Through-hole'), spec('clock-speed', 'Clock Speed', '16', 'MHz'), spec('flash', 'Flash', '32', 'KB')],
   },
   {
@@ -184,6 +284,9 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 385000, salePrice: null, costPrice: 310000,
     onHand: 3, lowStockThreshold: 5, isFeatured: false, salesCount: 22,
     ratingAverage: 488, ratingCount: 26, weight: 46,
+    images: [
+      image('raspberry-pi-4-model-b-4gb', 1, 'Raspberry Pi 4 Model B, top view'),
+    ],
     specs: [V('5'), CONN('Wi-Fi + Bluetooth + Ethernet'), IFACE('USB-C'), spec('ram', 'RAM', '4', 'GB')],
   },
   {
@@ -214,6 +317,10 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 23500, salePrice: null, costPrice: 16000,
     onHand: 31, lowStockThreshold: 10, isFeatured: false, salesCount: 66,
     ratingAverage: 468, ratingCount: 23, weight: 3,
+    images: [
+      image('bme280-pressure-sensor', 1, 'BME280 breakout board'),
+      image('bme280-pressure-sensor', 2, 'BME280 breakout, underside'),
+    ],
     specs: [V('3.3'), IFACE('I2C'), MOUNT('Through-hole'), spec('range-pressure', 'Pressure Range', '300 to 1100', 'hPa')],
   },
   {
@@ -344,6 +451,9 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     basePrice: 1450000, salePrice: null, costPrice: 1180000,
     onHand: 2, lowStockThreshold: 3, isFeatured: true, salesCount: 11,
     ratingAverage: 492, ratingCount: 13, weight: 2400,
+    images: [
+      image('hakko-fx888d-soldering-station', 1, 'Hakko FX-888D station and iron', 1600, 900),
+    ],
     specs: [V('220'), spec('power-rating', 'Power', '70', 'W'), spec('range-temperature', 'Temperature Range', '200 to 480', '°C')],
   },
   {
@@ -355,5 +465,126 @@ export const SEED_PRODUCTS: readonly SeedProduct[] = [
     onHand: 6, lowStockThreshold: 3, isFeatured: false, salesCount: 19,
     ratingAverage: 458, ratingCount: 16, weight: 390,
     specs: [spec('display-count', 'Display Count', '22000'), spec('accuracy', 'Basic DC Accuracy', '±0.1', '%'), spec('true-rms', 'True RMS', 'Yes')],
+  },
+  // -------------------------------------------------------------------------
+  // Added for Phase 4 (T1). Each one exists to make a rendering state
+  // reachable that the original 26 could not produce; the comment on each says
+  // which. They are ordinary catalogue rows in every other respect.
+  // -------------------------------------------------------------------------
+  {
+    // THREE images and NO reviews: the gallery with a full thumbnail strip,
+    // beside a rating widget that must render nothing rather than "0.0".
+    sku: 'MPU9250-9DOF', slug: 'mpu9250-9-axis-imu', name: 'MPU-9250 9-Axis IMU',
+    shortDescription: 'Accelerometer, gyroscope and magnetometer in one package.',
+    description: 'Three sensors in one QFN: a 3-axis accelerometer, a 3-axis gyroscope and an AK8963 3-axis magnetometer, with an on-board digital motion processor that fuses them so the host does not have to. Speaks I2C or SPI at up to 20 MHz.',
+    categorySlug: 'imu-modules', brandSlug: 'dfrobot',
+    basePrice: 21500, salePrice: 18900, costPrice: 14000,
+    onHand: 63, lowStockThreshold: 10, isFeatured: false, salesCount: 0,
+    ratingAverage: 0, ratingCount: 0, weight: 4,
+    images: [
+      image('mpu9250-9-axis-imu', 1, 'MPU-9250 breakout, top view'),
+      image('mpu9250-9-axis-imu', 2, 'MPU-9250 breakout, underside'),
+      image('mpu9250-9-axis-imu', 3, 'MPU-9250 axis orientation diagram', 1600, 900),
+    ],
+    specs: [V('3.3'), IFACE('I2C / SPI'), MOUNT('Through-hole'), spec('axes', 'Axes', '9'), spec('gyro-range', 'Gyroscope Range', '±2000', '°/s')],
+  },
+  {
+    // OUT OF STOCK, one image, no brand and no reviews — the combination a card
+    // is most likely to get wrong, since three independent branches fire at once.
+    sku: 'BNO055-BREAKOUT', slug: 'bno055-orientation-sensor', name: 'BNO055 Absolute Orientation Sensor',
+    shortDescription: 'Sensor fusion in hardware — outputs quaternions directly.',
+    description: 'The BNO055 runs the fusion algorithm on its own Cortex-M0, so it reports absolute orientation as Euler angles or quaternions without the host doing any maths. The reason it is worth more than the sum of its three sensors.',
+    categorySlug: 'imu-modules', brandSlug: null,
+    basePrice: 78000, salePrice: null, costPrice: 61000,
+    onHand: 0, lowStockThreshold: 5, isFeatured: false, salesCount: 0,
+    ratingAverage: 0, ratingCount: 0, weight: 5,
+    images: [image('bno055-orientation-sensor', 1, 'BNO055 breakout board')],
+    specs: [V('3.3'), IFACE('I2C / UART'), MOUNT('Through-hole'), spec('axes', 'Axes', '9'), spec('output', 'Output', 'Quaternion / Euler')],
+  },
+  {
+    // FEATURED, on sale, three images: the home rail with everything switched on.
+    sku: 'RPI-PICO-2W', slug: 'raspberry-pi-pico-2-w', name: 'Raspberry Pi Pico 2 W',
+    shortDescription: 'RP2350 with Wi-Fi and Bluetooth, and twice the memory of the Pico W.',
+    description: 'The RP2350 pairs dual Cortex-M33 cores with dual Hazard3 RISC-V cores — you choose which pair boots — alongside 520 KB of SRAM and the programmable IO blocks that made the original Pico worth having. Wi-Fi 4 and Bluetooth 5.2 are on board.',
+    categorySlug: 'development-boards', brandSlug: 'raspberry-pi',
+    basePrice: 42000, salePrice: 37500, costPrice: 29000,
+    onHand: 88, lowStockThreshold: 15, isFeatured: true, salesCount: 96,
+    ratingAverage: 478, ratingCount: 24, weight: 6,
+    images: [
+      image('raspberry-pi-pico-2-w', 1, 'Raspberry Pi Pico 2 W, top view'),
+      image('raspberry-pi-pico-2-w', 2, 'Raspberry Pi Pico 2 W castellated edge', 1600, 900),
+      image('raspberry-pi-pico-2-w', 3, 'Raspberry Pi Pico 2 W beside a coin for scale'),
+    ],
+    specs: [V('3.3'), CONN('Wi-Fi + Bluetooth'), IFACE('USB-C'), MOUNT('Through-hole / SMD'), spec('cpu-cores', 'CPU Cores', '2'), spec('sram', 'SRAM', '520', 'KB')],
+  },
+  {
+    // A SECOND product for a brand that had only one, so a brand page shows a
+    // grid rather than a single card.
+    sku: 'WS-RP2040-ZERO', slug: 'waveshare-rp2040-zero', name: 'Waveshare RP2040-Zero',
+    shortDescription: 'Thumb-sized RP2040 board with castellated edges for direct soldering.',
+    description: 'An RP2040 in a footprint smaller than a postage stamp, with castellated edges so it can be reflowed onto a carrier board like a module. USB-C, 2 MB of flash and 29 GPIO, of which 20 are broken out.',
+    categorySlug: 'development-boards', brandSlug: 'waveshare',
+    basePrice: 18500, salePrice: null, costPrice: 13000,
+    onHand: 4, lowStockThreshold: 10, isFeatured: false, salesCount: 33,
+    ratingAverage: 441, ratingCount: 9, weight: 2,
+    images: [
+      image('waveshare-rp2040-zero', 1, 'Waveshare RP2040-Zero, top view'),
+      image('waveshare-rp2040-zero', 2, 'Waveshare RP2040-Zero castellated edges'),
+    ],
+    specs: [V('3.3'), IFACE('USB-C'), MOUNT('Through-hole / SMD'), spec('flash', 'Flash', '2', 'MB')],
+  },
+  {
+    // No images, no brand, plenty of stock: the majority state, and the one the
+    // placeholder path has to keep handling after the migration.
+    sku: 'LORA-SX1278-433', slug: 'lora-sx1278-433mhz-module', name: 'LoRa SX1278 433 MHz Module',
+    shortDescription: 'Long-range sub-GHz radio with a 3 km line-of-sight link budget.',
+    description: 'Semtech SX1278 spread-spectrum radio on the 433 MHz ISM band, reaching several kilometres line-of-sight at low data rates. SPI interface, adjustable spreading factor, and an antenna connection you actually have to think about.',
+    categorySlug: 'connectivity', brandSlug: null,
+    basePrice: 26000, salePrice: 22500, costPrice: 17500,
+    onHand: 71, lowStockThreshold: 12, isFeatured: false, salesCount: 27,
+    ratingAverage: 415, ratingCount: 11, weight: 7,
+    specs: [V('3.3'), CONN('LoRa 433 MHz'), IFACE('SPI'), MOUNT('Through-hole'), spec('range', 'Line-of-sight Range', '3', 'km')],
+  },
+  {
+    // A THIRD Arduino-branded board, so brand faceting has a bucket big enough
+    // to be worth filtering by.
+    sku: 'ARDUINO-NANO-33-BLE', slug: 'arduino-nano-33-ble-sense', name: 'Arduino Nano 33 BLE Sense',
+    shortDescription: 'Nano footprint with BLE, an IMU and four environmental sensors.',
+    description: 'An nRF52840 in the Nano footprint, with Bluetooth Low Energy, a 9-axis IMU, and sensors for temperature, humidity, pressure, light, gesture and sound. The board Arduino ships its machine-learning tutorials against.',
+    categorySlug: 'development-boards', brandSlug: 'arduino',
+    basePrice: 145000, salePrice: null, costPrice: 112000,
+    onHand: 17, lowStockThreshold: 5, isFeatured: true, salesCount: 41,
+    ratingAverage: 462, ratingCount: 22, weight: 12,
+    images: [
+      image('arduino-nano-33-ble-sense', 1, 'Arduino Nano 33 BLE Sense, top view'),
+      image('arduino-nano-33-ble-sense', 2, 'Arduino Nano 33 BLE Sense sensor cluster', 1600, 900),
+      image('arduino-nano-33-ble-sense', 3, 'Arduino Nano 33 BLE Sense, underside'),
+    ],
+    specs: [V('3.3'), CONN('Bluetooth LE'), IFACE('Micro USB'), MOUNT('Through-hole'), spec('cpu-cores', 'CPU Cores', '1'), spec('sensors', 'On-board Sensors', '6')],
+  },
+  {
+    // The cheapest row in the catalogue after the single resistor, and the only
+    // one with a single image in a category that otherwise has none.
+    sku: 'RES-KIT-PRECISION', slug: 'precision-resistor-kit-1-percent', name: 'Precision Resistor Kit — 1%, 20 Values',
+    shortDescription: '1% metal-film resistors, 20 values, 20 of each.',
+    description: 'Metal-film resistors at 1% tolerance and 50 ppm/°C, in the twenty values that actually turn up in analogue front ends. Sorted into a labelled box rather than a bag, because finding a 4.99 kΩ in a bag is not a design activity.',
+    categorySlug: 'resistors', brandSlug: null,
+    basePrice: 9500, salePrice: null, costPrice: 6200,
+    onHand: 34, lowStockThreshold: 8, isFeatured: false, salesCount: 15,
+    ratingAverage: 430, ratingCount: 6, weight: 180,
+    images: [image('precision-resistor-kit-1-percent', 1, 'Precision resistor kit in its labelled box', 1600, 900)],
+    specs: [MOUNT('Through-hole'), spec('tolerance', 'Tolerance', '±1', '%'), spec('power-rating', 'Power', '0.25', 'W'), spec('piece-count', 'Pieces', '400')],
+  },
+  {
+    // Low stock AND on sale AND no images: the badge combination on a card that
+    // has nothing else to show.
+    sku: 'USB-LOGIC-8CH', slug: 'usb-logic-analyser-8-channel', name: 'USB Logic Analyser — 8 Channel, 24 MHz',
+    shortDescription: 'Eight channels at 24 MS/s, driven by sigrok or PulseView.',
+    description: 'Eight channels sampling at up to 24 MS/s over USB, which is enough to decode I2C, SPI and UART traffic on any of the boards in this catalogue. Works with sigrok and PulseView, so no vendor software is required.',
+    categorySlug: 'tools', brandSlug: null,
+    basePrice: 47000, salePrice: 39000, costPrice: 31000,
+    onHand: 3, lowStockThreshold: 6, isFeatured: false, salesCount: 52,
+    ratingAverage: 447, ratingCount: 29, weight: 60,
+    specs: [V('5'), IFACE('USB'), spec('channels', 'Channels', '8'), spec('sample-rate', 'Sample Rate', '24', 'MS/s')],
   },
 ];

@@ -11,6 +11,7 @@ import { validationExceptionFactory } from '../../src/common/pipes/validation-ex
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { CartRepository } from '../../src/modules/cart/infrastructure/repositories/cart.repository';
 import { Cart, type CartLean } from '../../src/modules/cart/infrastructure/schemas/cart.schema';
+import { SEED_PRODUCTS } from '../../src/database/seed/catalog.seed-data';
 import { Category } from '../../src/modules/catalog/infrastructure/schemas/category.schema';
 import { Product } from '../../src/modules/catalog/infrastructure/schemas/product.schema';
 import { Role, User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
@@ -24,8 +25,8 @@ import { Role, User, type UserLean } from '../../src/modules/users/infrastructur
  * delisted product, or a price that changes mid-test — and mutating the seed to
  * get them would leave the development catalogue wrong for everyone else. Every
  * created id is tracked and deleted by id in `afterAll`. There is no
- * `deleteMany({})`, no `drop`, and the 26 seeded products are asserted intact at
- * the end.
+ * `deleteMany({})`, no `drop`, and the seeded products are asserted intact at
+ * the end — by count, read from the seed definition itself.
  *
  * The throttler's COUNTER is replaced, not its guard, so the real guard still
  * runs while the suite exceeds limits that exist for humans.
@@ -957,7 +958,10 @@ describe('the rest of the API is unaffected', () => {
   it('leaves the seeded catalogue intact', async () => {
     // The suite created and destroyed its own products; the development seed
     // must be exactly as it was.
+    // Read from the seed definition, not written as a literal: the count is a
+    // property of the seed, and hardcoding it means every future seed change
+    // fails here for a reason that has nothing to do with the cart.
     const seeded = await products.countDocuments({ slug: { $not: /^cart-test-/ } }).exec();
-    expect(seeded).toBe(26);
+    expect(seeded).toBe(SEED_PRODUCTS.length);
   });
 });
