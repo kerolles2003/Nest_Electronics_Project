@@ -32,7 +32,7 @@ export function RecommendedProducts({ products }: RecommendedProps) {
                  <span className="text-6xl">🪑</span>
              </div>
              <h3 className="text-2xl font-extrabold text-white mb-3 tracking-wide z-20 relative">Hearth loft series</h3>
-             <p className="text-gray-400 text-[13px] leading-relaxed max-w-sm mb-6 z-20 relative">The expressive proportions of the seating's surface, combined with the soft, curved arms create the ideal haven for relaxation.</p>
+             <p className="text-gray-400 text-[13px] leading-relaxed max-w-sm mb-6 z-20 relative">The expressive proportions of the seating&apos;s surface, combined with the soft, curved arms create the ideal haven for relaxation.</p>
              <button className="bg-red-500 text-white px-6 py-2 rounded-full font-bold text-[12px] hover:bg-white hover:text-black transition-colors shadow-sm relative z-20">Shop Now</button>
            </div>
            <div className="bg-white rounded-[16px] p-10 flex flex-col items-center text-center shadow-sm cursor-pointer group">

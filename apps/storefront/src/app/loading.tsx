@@ -1,9 +1,14 @@
 export default function Loading() {
   return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="flex flex-col items-center gap-4">
-        <div className="h-8 w-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-foreground-muted">Loading...</p>
+    <div className="container-marketplace py-6">
+      <div className="animate-pulse space-y-4">
+        <div className="h-4 bg-gray-200 rounded w-32" />
+        <div className="h-8 bg-gray-200 rounded w-48" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="bg-gray-100 rounded-sm aspect-[3/4]" />
+          ))}
+        </div>
       </div>
     </div>
   );

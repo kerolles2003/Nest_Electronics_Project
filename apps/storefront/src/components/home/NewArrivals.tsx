@@ -1,43 +1,63 @@
 'use client';
 
 import Link from 'next/link';
-import { ProductCard } from '@nest/ui';
-
-interface ProductDTO {
-  id: string;
-  slug: string;
-  sku: string;
-  name: string;
-  brandName: string | null;
-  categoryName: string | null;
-  imageUrl: string | null;
-  basePrice: number;
-  salePrice: number | null;
-  rating: number;
-  reviewCount: number;
-  inStock: boolean;
-  isFeatured: boolean;
-}
+import { ArrowRight } from 'lucide-react';
+import { ProductCard, ProductListSkeleton } from '@/components/ProductCard';
+import type { ProductCardDTO } from '@nest/types';
 
 interface NewArrivalsProps {
-  products: ProductDTO[];
+  products: ProductCardDTO[];
 }
 
 export function NewArrivals({ products }: NewArrivalsProps) {
   if (!products.length) return null;
 
   return (
-    <section className="container-nest section-gap">
-      <div className="flex justify-between items-center mb-5">
-        <h2 className="text-xl font-heading font-semibold text-foreground">New Arrivals</h2>
-        <Link href="/products?sort=newest" className="text-sm text-primary hover:text-primary-hover font-medium transition-colors">
-          View All
-        </Link>
+    <section className="border-y border-[var(--color-border)] bg-surface-low">
+      <div className="container-nest section-gap">
+        <div className="section-heading animate-impeccable-reveal">
+          <div>
+            <p className="section-kicker">Recently Restocked</p>
+            <h2 className="section-title">New arrivals</h2>
+          </div>
+          <Link href="/products?sort=newest" className="section-link group/btn">
+            View All
+            <ArrowRight className="h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
+          </Link>
+        </div>
+
+        <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
+          {products.slice(0, 8).map((product, index) => (
+            <div 
+              key={product.id}
+              className="animate-impeccable-reveal"
+              style={{ animationDelay: `${index * 50}ms` }}
+            >
+              <ProductCard
+                product={product}
+                variant="list"
+              />
+            </div>
+          ))}
+        </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {products.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
+    </section>
+  );
+}
+
+export function NewArrivalsSkeleton() {
+  return (
+    <section className="border-y border-[var(--color-border)] bg-surface-low">
+      <div className="container-nest section-gap">
+        <div className="flex justify-between items-center mb-5">
+          <div className="h-6 w-32 bg-[var(--color-border)] animate-pulse rounded" />
+          <div className="h-4 w-16 bg-[var(--color-border)] animate-pulse rounded" />
+        </div>
+        <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <ProductListSkeleton key={i} />
+          ))}
+        </div>
       </div>
     </section>
   );

@@ -40,7 +40,8 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
     postal_code: '',
   });
 
-  const { items, updateQuantity, subtotal, clearCart } = useCartStore();
+  const { items, updateQuantity, clearCart } = useCartStore();
+  const subtotal = items.reduce((acc, item) => acc + (item.product.sale_price ?? item.product.base_price) * item.quantity, 0);
 
   const updateField = useCallback(
     (field: keyof ShippingFormData, value: string) => {
@@ -96,24 +97,24 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-8">
+      <div className="flex items-center justify-between mb-10 max-w-2xl mx-auto">
         {STEPS.map((s, i) => (
           <React.Fragment key={s.label}>
-            <div className="flex items-center">
+            <div className="flex flex-col items-center gap-2">
               <div
-                className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-colors ${
+                className={`flex items-center justify-center w-12 h-12 rounded-full text-base font-bold transition-all duration-300 ${
                   i < step
-                    ? 'bg-green-500 text-white'
+                    ? 'bg-success text-white shadow-md'
                     : i === step
-                      ? 'bg-blue-600 text-white'
-                      : 'border border-gray-300 text-gray-400'
+                      ? 'bg-primary text-white shadow-md ring-4 ring-primary/20'
+                      : 'bg-surface border border-border text-foreground-muted'
                 }`}
               >
-                {i < step ? <Check className="w-4 h-4" /> : i + 1}
+                {i < step ? <Check className="w-5 h-5" strokeWidth={3} /> : i + 1}
               </div>
               <span
-                className={`ml-2 text-sm font-medium hidden sm:inline ${
-                  i === step ? 'text-gray-900' : i < step ? 'text-gray-500' : 'text-gray-400'
+                className={`text-sm font-semibold hidden sm:block ${
+                  i === step ? 'text-foreground' : i < step ? 'text-foreground' : 'text-foreground-muted'
                 }`}
               >
                 {s.label}
@@ -121,8 +122,8 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
             </div>
             {i < STEPS.length - 1 && (
               <div
-                className={`flex-1 h-px ${
-                  i < step ? 'bg-green-500' : 'bg-gray-200'
+                className={`flex-1 h-1.5 rounded-full mx-4 sm:mx-6 transition-colors duration-300 ${
+                  i < step ? 'bg-success' : 'bg-surface border border-border'
                 }`}
               />
             )}
@@ -133,63 +134,63 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           {step === 0 && (
-            <div className="bg-white border border-gray-200 rounded-md p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
-                <MapPin className="w-5 h-5 text-gray-500" />
+            <div className="bg-card border border-border/50 rounded-3xl p-8 shadow-sm">
+              <h2 className="text-2xl font-bold text-foreground mb-8 flex items-center gap-3">
+                <MapPin className="w-6 h-6 text-primary" />
                 Shipping Information
               </h2>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Full Name</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">Full Name</label>
                   <input
                     type="text"
                     value={shippingData.full_name}
                     onChange={(e) => updateField('full_name', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                     placeholder="Ahmed Mohamed"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Phone</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">Phone</label>
                   <input
                     type="tel"
                     value={shippingData.phone}
                     onChange={(e) => updateField('phone', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                     placeholder="01012345678"
                   />
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Street Address</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">Street Address</label>
                   <input
                     type="text"
                     value={shippingData.street}
                     onChange={(e) => updateField('street', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                     placeholder="123 Main Street, Apt 4"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">City</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">City</label>
                   <input
                     type="text"
                     value={shippingData.city}
                     onChange={(e) => updateField('city', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                     placeholder="Cairo"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Governorate</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">Governorate</label>
                   <select
                     value={shippingData.governorate}
                     onChange={(e) => updateField('governorate', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                   >
                     <option value="">Select Governorate</option>
                     {EGYPTIAN_GOVERNORATES.map((g) => (
@@ -201,22 +202,22 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Postal Code (optional)</label>
+                  <label className="block text-[13px] font-bold text-foreground mb-2">Postal Code (optional)</label>
                   <input
                     type="text"
                     value={shippingData.postal_code}
                     onChange={(e) => updateField('postal_code', e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary transition-colors text-foreground"
                     placeholder="12345"
                   />
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end">
+              <div className="mt-10 flex justify-end">
                 <button
                   onClick={() => setStep(1)}
                   disabled={!isShippingFormValid}
-                  className="bg-blue-600 text-white px-6 py-2.5 rounded-md font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  className="bg-primary text-white px-8 py-3.5 rounded-xl font-bold hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
                 >
                   Continue to Review
                 </button>
@@ -225,39 +226,39 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
           )}
 
           {step === 1 && (
-            <>
-              <div className="bg-white border border-gray-200 rounded-md p-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <ClipboardList className="w-5 h-5 text-gray-500" />
+            <div className="space-y-6">
+              <div className="bg-card border border-border/50 rounded-3xl p-8 shadow-sm">
+                <h2 className="text-2xl font-bold text-foreground mb-6 flex items-center gap-3">
+                  <ClipboardList className="w-6 h-6 text-primary" />
                   Order Review
                 </h2>
 
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-border/50">
                   {items.map((item) => (
-                    <div key={item.id} className="flex gap-4 py-4">
-                      <div className="w-16 h-16 bg-gray-50 rounded-md border border-gray-200 flex-shrink-0 relative overflow-hidden">
+                    <div key={item.id} className="flex gap-4 py-5">
+                      <div className="w-20 h-20 bg-surface rounded-xl border border-border/50 flex-shrink-0 relative overflow-hidden">
                         {item.product.images?.[0]?.url ? (
                           <Image
                             src={item.product.images[0].url}
                             alt={item.product.name_en}
                             fill
-                            className="object-contain p-1"
+                            className="object-contain p-2"
                           />
                         ) : (
-                          <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-xs">
+                          <div className="absolute inset-0 flex items-center justify-center text-foreground-subtle text-xs">
                             No Image
                           </div>
                         )}
                       </div>
 
-                      <div className="flex-1">
-                        <h3 className="font-medium text-sm text-gray-900 line-clamp-2">
+                      <div className="flex-1 flex flex-col justify-center">
+                        <h3 className="font-semibold text-sm text-foreground line-clamp-2 mb-1">
                           {item.product.name_en}
                         </h3>
-                        <p className="text-sm text-blue-600 font-semibold mt-1">
+                        <p className="text-sm text-primary font-bold">
                           EGP {item.product.sale_price ?? item.product.base_price}
                         </p>
-                        <div className="mt-2">
+                        <div className="mt-3 inline-block">
                           <QuantitySelector
                             quantity={item.quantity}
                             onIncrease={() =>
@@ -271,8 +272,8 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
                         </div>
                       </div>
 
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">
+                      <div className="text-right flex flex-col justify-center">
+                        <p className="text-base font-bold text-foreground">
                           EGP {(
                             (item.product.sale_price ?? item.product.base_price) *
                             item.quantity
@@ -284,13 +285,14 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
                 </div>
               </div>
 
-              <div className="bg-white border border-gray-200 rounded-md p-6">
-                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-gray-500" />
+              <div className="bg-card border border-border/50 rounded-3xl p-8 shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1.5 h-full bg-primary" />
+                <h3 className="font-bold text-foreground mb-4 flex items-center gap-2 text-lg">
+                  <MapPin className="w-5 h-5 text-primary" />
                   Shipping Address
                 </h3>
-                <div className="text-sm text-gray-600 space-y-1">
-                  <p className="font-medium text-gray-900">{shippingData.full_name}</p>
+                <div className="text-[15px] text-foreground-muted space-y-1.5">
+                  <p className="font-bold text-foreground">{shippingData.full_name}</p>
                   <p>{shippingData.phone}</p>
                   <p>{shippingData.street}</p>
                   <p>
@@ -300,50 +302,51 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
                 </div>
                 <button
                   onClick={() => setStep(0)}
-                  className="text-sm text-blue-600 hover:underline mt-3"
+                  className="text-sm font-bold text-primary hover:text-primary-hover hover:underline mt-4 inline-block"
                 >
-                  Edit
+                  Edit Address
                 </button>
               </div>
 
               {orderError && (
-                <div className="border border-red-300 bg-red-50 rounded-md p-4 text-sm text-red-600">
+                <div className="border border-danger/20 bg-danger/5 rounded-2xl p-5 text-sm font-medium text-danger flex items-center gap-3">
+                  <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   {orderError}
                 </div>
               )}
 
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center pt-4">
                 <button
                   onClick={() => setStep(0)}
-                  className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition-colors"
+                  className="px-6 py-3.5 border border-border text-foreground font-bold rounded-xl hover:bg-surface transition-colors"
                 >
                   Back to Shipping
                 </button>
                 <button
                   onClick={handlePlaceOrder}
                   disabled={isSubmitting}
-                  className="bg-blue-600 text-white px-6 py-2.5 rounded-md font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                  className="bg-primary text-white px-8 py-3.5 rounded-xl font-bold hover:bg-primary-hover disabled:opacity-50 transition-all flex items-center gap-2 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
-                  <PackageCheck className="w-4 h-4" />
+                  <PackageCheck className="w-5 h-5" />
                 </button>
               </div>
-            </>
+            </div>
           )}
         </div>
 
         <div className="lg:col-span-1">
-          <div className="bg-white border border-gray-200 rounded-md p-4 sticky top-24">
-            <h3 className="text-base font-semibold text-gray-900 mb-3">Order Summary</h3>
+          <div className="bg-[#f8f8f8] dark:bg-surface-low border border-border/50 rounded-3xl p-6 sticky top-24 shadow-sm">
+            <h3 className="text-xl font-bold text-foreground mb-6">Order Summary</h3>
 
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-border/50">
               {items.map((item) => (
-                <div key={item.id} className="flex justify-between py-2 text-sm">
-                  <span className="text-gray-600">
+                <div key={item.id} className="flex justify-between py-3 text-[13px]">
+                  <span className="text-foreground-muted flex-1 pr-4">
                     {item.product.name_en}{' '}
-                    <span className="text-gray-400">×{item.quantity}</span>
+                    <span className="text-foreground font-bold">×{item.quantity}</span>
                   </span>
-                  <span className="text-gray-900 font-medium">
+                  <span className="text-foreground font-bold whitespace-nowrap">
                     EGP {(
                       (item.product.sale_price ?? item.product.base_price) *
                       item.quantity
@@ -353,14 +356,22 @@ export function CheckoutStepper({ onOrderCreated }: CheckoutStepperProps) {
               ))}
             </div>
 
-            <div className="flex justify-between font-semibold text-lg text-gray-900 pt-3 border-t border-gray-200 mt-3">
+            <div className="flex justify-between font-black text-xl text-foreground pt-4 border-t border-border/50 mt-4">
               <span>Total</span>
-              <span>EGP {subtotal.toFixed(2)}</span>
+              <span className="text-primary">EGP {subtotal.toFixed(2)}</span>
             </div>
 
-            <p className="text-xs text-gray-500 mt-3">
-              Payment will be collected upon delivery (Cash on Delivery).
-            </p>
+            <div className="mt-6 bg-card p-4 rounded-2xl border border-border/50 flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-success/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-4 h-4 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+              </div>
+              <div>
+                <h4 className="text-[13px] font-bold text-foreground">Cash on Delivery</h4>
+                <p className="text-xs text-foreground-muted mt-1 leading-relaxed">
+                  Payment will be collected upon delivery. No card required.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

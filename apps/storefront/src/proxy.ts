@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { logAuthFailure } from "@/lib/logger";
 
@@ -39,11 +39,11 @@ export async function proxy(request: NextRequest) {
           cookiesToSet: {
             name: string;
             value: string;
-            options: Record<string, unknown>;
+            options: CookieOptions;
           }[],
         ) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set({ name, value, ...options });
+            response.cookies.set(name, value, options);
           });
         },
       },

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export default async function sitemap() {
   const { productService } = await getServices();
   const [products, categories, brands] = await Promise.all([
-    productService.listProducts({}, { page: 1, limit: 1000 }),
+    productService.listProducts({}, { page: 1, limit: 5000 }),
     productService.getCategoryTree(),
     productService.getAllBrands(),
   ]);

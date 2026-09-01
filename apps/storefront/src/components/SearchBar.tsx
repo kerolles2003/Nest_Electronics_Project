@@ -30,27 +30,37 @@ export function SearchBar({ initialQuery = '' }: SearchBarProps) {
   }, []);
 
   return (
-    <form onSubmit={handleSubmit} className="relative w-full max-w-2xl">
-      <div className="relative flex items-center">
-        <Search className="absolute left-3 w-5 h-5 text-muted-foreground pointer-events-none" />
+    <form onSubmit={handleSubmit} className="relative w-full">
+      <div className="relative flex items-center rounded-md border border-[var(--color-border)] bg-card p-1 shadow-sm transition-all focus-within:border-primary/50 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-primary)_8%,transparent)]">
+        <div className="hidden h-10 items-center border-r border-[var(--color-border)] px-4 text-[12px] font-black uppercase text-foreground-muted md:flex">
+          All categories
+        </div>
         <input
           ref={inputRef}
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Search for products, modules, sensors..."
-          className="w-full pl-10 pr-10 py-3 text-sm bg-card border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-muted-foreground/60"
+          placeholder="Search for Arduino, ESP32, sensors..."
+          className="w-full bg-transparent px-4 py-2.5 text-sm text-foreground placeholder:text-foreground-subtle focus:outline-none"
         />
+        
         {value && (
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-3 p-1 rounded-full hover:bg-muted transition-colors"
+            className="mr-1 rounded-md p-2 transition-colors hover:bg-accent"
             aria-label="Clear search"
           >
-            <X className="w-4 h-4 text-muted-foreground" />
+            <X className="w-4 h-4 text-foreground-subtle" />
           </button>
         )}
+
+        <button 
+          type="submit"
+          className="rounded-md bg-primary p-2.5 text-primary-foreground shadow-md transition-all hover:bg-primary-hover active:scale-95"
+        >
+          <Search className="w-5 h-5" />
+        </button>
       </div>
     </form>
   );

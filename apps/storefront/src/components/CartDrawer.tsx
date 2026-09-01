@@ -10,7 +10,8 @@ import Link from 'next/link';
 
 export function CartDrawer() {
   const { isCartOpen, closeCart } = useUIStore();
-  const { items, removeItem, updateQuantity, subtotal } = useCartStore();
+  const { items, removeItem, updateQuantity } = useCartStore();
+  const subtotal = items.reduce((acc, item) => acc + (item.product.sale_price ?? item.product.base_price) * item.quantity, 0);
 
   if (!isCartOpen) return null;
 
@@ -23,9 +24,9 @@ export function CartDrawer() {
       />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white shadow-2xl z-50 flex flex-col animate-in slide-in-from-right-full duration-300 ease-out">
+      <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-card shadow-2xl z-50 flex flex-col animate-in slide-in-from-right-full duration-300 ease-out">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
           <h2 className="text-base font-bold text-foreground flex items-center gap-2">
             <ShoppingBag className="w-5 h-5" />
             Your Cart
@@ -35,7 +36,7 @@ export function CartDrawer() {
               </span>
             )}
           </h2>
-          <button onClick={closeCart} className="p-2 rounded-full hover:bg-surface transition-colors" aria-label="Close cart">
+          <button onClick={closeCart} className="p-2 rounded-full hover:bg-accent transition-colors" aria-label="Close cart">
             <X className="w-5 h-5 text-foreground-muted" />
           </button>
         </div>
@@ -44,27 +45,27 @@ export function CartDrawer() {
         <div className="flex-1 overflow-y-auto">
           {items.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-foreground-muted px-6 py-12">
-              <div className="w-16 h-16 rounded-full bg-surface flex items-center justify-center mb-4">
+              <div className="w-16 h-16 rounded-full bg-accent flex items-center justify-center mb-4">
                 <ShoppingBag className="w-8 h-8 text-foreground-subtle" />
               </div>
               <p className="text-foreground font-medium text-sm">Your cart is empty</p>
               <p className="text-foreground-muted text-xs mt-1 mb-6 text-center">Add items to get started</p>
               <button
                 onClick={closeCart}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 border border-border text-foreground rounded-md hover:bg-surface text-sm font-medium transition-colors"
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 border border-[var(--color-border)] text-foreground rounded-md hover:bg-accent text-sm font-medium transition-colors"
               >
                 Continue Shopping
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="divide-y divide-[var(--color-border)]">
               {items.map((item) => {
                 const price = item.product.sale_price ?? item.product.base_price;
                 const lineTotal = price * item.quantity;
                 return (
                   <div key={item.id} className="flex gap-3 px-5 py-4">
-                    <div className="w-16 h-16 bg-surface rounded-md border border-border flex-shrink-0 relative overflow-hidden">
+                    <div className="w-16 h-16 bg-surface rounded-md border border-[var(--color-border)] flex-shrink-0 relative overflow-hidden">
                       {item.product.images?.[0]?.url ? (
                         <Image
                           src={item.product.images[0].url}
@@ -115,7 +116,7 @@ export function CartDrawer() {
 
         {/* Footer */}
         {items.length > 0 && (
-          <div className="border-t border-border px-5 py-4 space-y-3 bg-surface">
+          <div className="border-t border-[var(--color-border)] px-5 py-4 space-y-3 bg-surface">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-foreground-muted">Subtotal</span>
               <span className="text-lg font-bold text-foreground">EGP {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -124,7 +125,7 @@ export function CartDrawer() {
               Shipping and taxes calculated at checkout.
             </p>
             <Link href="/checkout" onClick={closeCart} className="block">
-              <button className="w-full bg-primary text-white py-3 rounded-md font-semibold hover:bg-primary-hover transition-colors flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+              <button className="w-full bg-primary text-primary-foreground py-3 rounded-md font-semibold hover:bg-primary-hover transition-colors flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
                 Proceed to Checkout
                 <ArrowRight className="w-4 h-4" />
               </button>

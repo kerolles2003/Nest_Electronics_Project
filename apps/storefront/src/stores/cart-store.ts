@@ -29,8 +29,6 @@ interface CartStore {
   setItems: (items: CartItem[]) => void;
   validateCart: () => number;
   mergeCart: (incomingItems: CartItem[]) => void;
-  get totalItems(): number;
-  get subtotal(): number;
 }
 
 export const useCartStore = create<CartStore>()(
@@ -159,17 +157,6 @@ export const useCartStore = create<CartStore>()(
             cartVersion: state.cartVersion + 1,
           };
         });
-      },
-      get totalItems() {
-        return get().items.reduce((total, item) => total + item.quantity, 0);
-      },
-      get subtotal() {
-        return get().items.reduce(
-          (total, item) =>
-            total +
-            (item.product.sale_price ?? item.product.base_price) * item.quantity,
-          0
-        );
       },
     }),
     {

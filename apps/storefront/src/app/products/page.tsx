@@ -1,6 +1,6 @@
 import { getServices } from "@/lib/services"
 import { searchParamsCache } from "./search-params"
-import { ProductCard } from "@nest/ui"
+import { ProductCard } from "@/components/ProductCard"
 import { ProductFilters } from "@nest/types"
 import { FilterSidebar } from "@/components/FilterSidebar"
 import { MobileFilterToggle } from "@/components/MobileFilterToggle"
@@ -55,10 +55,6 @@ export default async function ProductsPage(
   const parsedParams = searchParamsCache.parse(searchParams)
 
   const { productService } = await getServices()
-  const [categories, brands] = await Promise.all([
-    productService.getCategoryTree(),
-    productService.getAllBrands()
-  ])
 
   const filters: ProductFilters = {
     search: parsedParams.q || undefined,
@@ -72,7 +68,11 @@ export default async function ProductsPage(
 
   const pagination = { page: parsedParams.page, limit: 16 }
 
-  const result = await productService.listProducts(filters, pagination)
+  const [categories, brands, result] = await Promise.all([
+    productService.getCategoryTree(),
+    productService.getAllBrands(),
+    productService.listProducts(filters, pagination)
+  ])
 
   const products = result.data.map(p => ({
     id: p.id,
@@ -87,6 +87,7 @@ export default async function ProductsPage(
     rating: p.avg_rating || 0,
     reviewCount: p.review_count || 0,
     inStock: p.available_stock > 0,
+    availableStock: p.available_stock,
     isFeatured: p.is_featured,
   }))
 
@@ -119,6 +120,15 @@ export default async function ProductsPage(
 
   const totalPages = result.totalPages || 1
   const activeSort = parsedParams.sort || "newest"
+
+  const priceRange = products.length > 0
+    ? {
+        min: Math.floor(Math.min(...products.map(p => p.salePrice ?? p.basePrice))),
+        max: Math.ceil(Math.max(...products.map(p => p.salePrice ?? p.basePrice))),
+      }
+    : { min: 0, max: 10000 }
+
+  const activeFilterCount = activeFilters.length
 
   return (
     <div className="container-nest section-gap">
@@ -153,16 +163,21 @@ export default async function ProductsPage(
       </div>
 
       <div className="flex gap-6">
-        {/* Sidebar */}
+        {/* Desktop Sidebar */}
         <div className="w-60 shrink-0 hidden lg:block space-y-3">
-          <FilterSidebar categories={categories} brands={brands} />
+          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.total} />
+        </div>
+
+        {/* Mobile Filter Sidebar (hidden on desktop, shows drawer on mobile) */}
+        <div className="lg:hidden">
+          <FilterSidebar categories={categories} brands={brands} priceRange={priceRange} totalResults={result.total} />
         </div>
 
         {/* Main Content */}
         <div className="flex-1 min-w-0">
           {/* Active Filters */}
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <MobileFilterToggle />
+            <MobileFilterToggle activeFilterCount={activeFilterCount} />
             {activeFilters.length > 0 && (
               <>
                 {activeFilters.map((f) => (

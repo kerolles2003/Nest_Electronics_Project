@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase';
 import { CartService } from '@nest/services';
 import { SupabaseCartProvider } from '@nest/providers';
 import { logCartSyncFailure } from '@/lib/logger';
+import { revalidatePath } from 'next/cache';
+import { cartSyncSchema } from '@nest/types';
 
 export async function syncCartToDatabase(
-  userId: string,
   items: Array<{
     productId: string;
     variantId?: string | null;
@@ -19,30 +20,48 @@ export async function syncCartToDatabase(
     maxStock?: number;
   }>
 ) {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { success: false, error: 'Not authenticated' };
+  }
+
   try {
-    const supabase = await createClient();
+    const parsed = cartSyncSchema.safeParse(items);
+    if (!parsed.success) {
+      return { success: false, error: 'Invalid cart items' };
+    }
+
     const cartRepo = new SupabaseCartProvider(supabase);
     const cartService = new CartService(cartRepo);
 
     if (items.length > 0) {
-      await cartService.mergeGuestCart(userId, items);
+      await cartService.mergeGuestCart(user.id, items);
     }
 
+    revalidatePath('/cart', 'page');
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to sync cart';
-    logCartSyncFailure({ userId, itemsCount: items.length, error: message });
+    logCartSyncFailure({ userId: user.id, itemsCount: items.length, error: message });
     return { success: false, error: message };
   }
 }
 
-export async function getCart(userId: string) {
+export async function getCart() {
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return null;
+  }
+
   try {
-    const supabase = await createClient();
     const cartRepo = new SupabaseCartProvider(supabase);
     const cartService = new CartService(cartRepo);
 
-    return cartService.getCart(userId);
+    return cartService.getCart(user.id);
   } catch {
     return null;
   }

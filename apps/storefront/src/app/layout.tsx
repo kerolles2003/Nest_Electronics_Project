@@ -1,40 +1,26 @@
 import type { Metadata } from "next";
-import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
-import "./globals.css";
-import { NuqsAdapter } from "nuqs/adapters/next/app";
-import { ToastProvider } from "@nest/ui";
+import { Albert_Sans, Urbanist } from "next/font/google";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { CartDrawer } from "@/components/CartDrawer";
 import { MobileBottomNav } from "@/components/MobileBottomNav";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { ToastProvider } from "@nest/ui";
+import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
+const albertSans = Albert_Sans({
+  variable: "--font-body",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
 });
 
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
+const urbanist = Urbanist({
+  variable: "--font-heading",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
-  title: "Nest Electronics | Egypt's #1 Electronics Store for Engineers & Makers",
-  description:
-    "Egypt's premier electronics & embedded systems store for engineers, students, and makers. Arduino, ESP32, sensors, motors, displays and 500+ more components. Delivered across Egypt.",
-  openGraph: {
-    title: "Nest Electronics",
-    description: "Egypt's #1 electronics store for engineers and makers.",
-    type: "website",
-    locale: "en_EG",
-  },
+  title: "Nest Electronics — Components for Makers | Cairo, Egypt",
+  description: "Arduino, ESP32, sensors, modules — Egypt's electronics store for engineers and makers. Same-day dispatch from Cairo.",
 };
 
 export default function RootLayout({
@@ -45,18 +31,21 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-storefront-theme="woodmart"
       data-scroll-behavior="smooth"
-      className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${albertSans.variable} ${urbanist.variable} font-sans antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-white text-foreground font-sans">
-        <NuqsAdapter>
-          <ToastProvider>
+      <body suppressHydrationWarning className="min-h-screen bg-background text-foreground font-sans transition-colors duration-200">
+        <ToastProvider>
+          <NuqsAdapter>
             <Navbar />
-            <main className="flex-1 pb-14 md:pb-0">{children}</main>
+            <main className="pb-16 md:pb-0">{children}</main>
             <Footer />
             <MobileBottomNav />
-          </ToastProvider>
-        </NuqsAdapter>
+            <CartDrawer />
+          </NuqsAdapter>
+        </ToastProvider>
       </body>
     </html>
   );

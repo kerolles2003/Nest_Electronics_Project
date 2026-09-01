@@ -1,83 +1,92 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
-import type { User } from '@supabase/supabase-js';
+import { useEffect, useState } from 'react';
+import { getSupabaseBrowserClient } from '@nest/providers';
+import { Profile } from '@nest/types';
 
-interface AuthUser {
+export interface AuthUser {
   id: string;
-  email: string | null;
-  fullName: string | null;
-  initials: string;
-}
-
-let supabase: ReturnType<typeof createBrowserClient> | null = null;
-
-function getSupabase() {
-  if (!supabase) {
-    supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
-  }
-  return supabase;
-}
-
-let cachedUser: AuthUser | null = null;
-
-function fetchProfile(supabaseUser: User): AuthUser {
-  const fullName = supabaseUser.user_metadata?.full_name ?? supabaseUser.email?.split('@')[0] ?? null;
-  const initials = fullName
-    ? fullName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
-    : (supabaseUser.email?.charAt(0).toUpperCase() ?? 'U');
-
-  return {
-    id: supabaseUser.id,
-    email: supabaseUser.email ?? null,
-    fullName,
-    initials,
-  };
+  email?: string;
+  fullName?: string;
+  initials?: string;
+  role?: string;
+  profile?: Profile;
 }
 
 export function useAuth() {
-  const [user, setUser] = useState<AuthUser | null>(cachedUser);
-  const [loading, setLoading] = useState(!cachedUser);
-  const initialized = useRef(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const supabase = getSupabaseBrowserClient();
 
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
+    let mounted = true;
 
-    const supabaseClient = getSupabase();
-
-    supabaseClient.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        const authUser = fetchProfile(session.user);
-        cachedUser = authUser;
-        setUser(authUser);
-      } else {
-        cachedUser = null;
-        setUser(null);
+    const handleSession = async (session: any) => {
+      if (!session?.user) {
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
+        return;
       }
-      setLoading(false);
+
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (mounted) {
+          const fullName = profile?.full_name || session.user.user_metadata?.full_name || 'User';
+          const initials = fullName
+            .split(' ')
+            .map((n: string) => n[0])
+            .join('')
+            .toUpperCase()
+            .substring(0, 2);
+
+          setUser({
+            id: session.user.id,
+            email: session.user.email,
+            fullName,
+            initials,
+            role: profile?.role || 'customer',
+            profile: profile as Profile,
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching profile:', error);
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    // Initial check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
     });
 
-    supabaseClient.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const authUser = fetchProfile(session.user);
-        cachedUser = authUser;
-        setUser(authUser);
-      }
-      setLoading(false);
+    // Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      handleSession(session);
     });
-  }, []);
 
-  const signOut = useCallback(async () => {
-    const supabaseClient = getSupabase();
-    await supabaseClient.auth.signOut();
-    cachedUser = null;
-    setUser(null);
-  }, []);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
-  return { user, loading, signOut };
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  return {
+    user,
+    loading,
+    signOut,
+    supabase,
+  };
 }

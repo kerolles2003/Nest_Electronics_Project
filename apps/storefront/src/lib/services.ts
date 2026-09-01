@@ -4,6 +4,7 @@ import { ProductService } from '@nest/services';
 import { SupabaseProductProvider, SupabaseCategoryProvider, SupabaseBrandProvider, PostgresSearchProvider } from '@nest/providers';
 import { SearchService } from '@nest/services';
 import { CartService } from '@nest/services';
+import { BlogService } from '@nest/services';
 import { SupabaseCartProvider } from '@nest/providers';
 
 // Helper to get all initialized services for Server Components
@@ -19,11 +20,13 @@ export async function getServices() {
   const productService = new ProductService(productRepo, categoryRepo, brandRepo);
   const searchService = new SearchService(searchRepo);
   const cartService = new CartService(cartRepo);
+  const blogService = new BlogService(supabase);
 
   return {
     productService,
     searchService,
     cartService,
+    blogService,
   };
 }
 
@@ -41,4 +44,9 @@ export const getCachedBrandBySlug = cache(async (slug: string) => {
 export const getCachedProductBySlug = cache(async (slug: string) => {
   const { productService } = await getServices();
   return productService.getProductPage(slug);
+});
+
+export const getCachedBlogPostBySlug = cache(async (slug: string) => {
+  const { blogService } = await getServices();
+  return blogService.getPostBySlug(slug);
 });

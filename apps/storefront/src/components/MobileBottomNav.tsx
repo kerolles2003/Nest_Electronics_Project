@@ -12,7 +12,8 @@ import { ROUTES } from '@nest/config/constants';
 export function MobileBottomNav() {
   const pathname = usePathname();
   const { openCart } = useUIStore();
-  const totalItems = useCartStore((s) => s.totalItems);
+  const cartItems = useCartStore((s) => s.items);
+  const totalItems = cartItems.reduce((total, item) => total + item.quantity, 0);
   const { user } = useAuth();
 
   const isActive = (path: string) => pathname === path;
@@ -21,57 +22,65 @@ export function MobileBottomNav() {
   const isAccountActive = accountPaths.some((p) => pathname.startsWith(p));
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white border-t border-border safe-area-bottom" aria-label="Mobile navigation">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-background/95 border-t border-[var(--color-border)] safe-area-bottom backdrop-blur-xl" aria-label="Mobile navigation">
       <div className="flex items-center h-14">
         <Link
           href={ROUTES.home}
-          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors duration-150 ${
+          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${
             isActive(ROUTES.home) ? 'text-primary' : 'text-foreground-muted'
           }`}
         >
-          {isActive(ROUTES.home) && (
-            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />
-          )}
+          <span
+            className={`absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-primary transition-all duration-300 ${
+              isActive(ROUTES.home) ? 'w-8 opacity-100' : 'w-0 opacity-0'
+            }`}
+          />
           <Home className="w-5 h-5" />
           <span className="text-[10px] font-medium">Home</span>
         </Link>
 
         <Link
           href={ROUTES.products}
-          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors duration-150 ${
+          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${
             isActive(ROUTES.products) || pathname.startsWith('/categories/') || pathname.startsWith('/brands/')
               ? 'text-primary'
               : 'text-foreground-muted'
           }`}
         >
-          {(isActive(ROUTES.products) || pathname.startsWith('/categories/') || pathname.startsWith('/brands/')) && (
-            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />
-          )}
+          <span
+            className={`absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-primary transition-all duration-300 ${
+              isActive(ROUTES.products) || pathname.startsWith('/categories/') || pathname.startsWith('/brands/')
+                ? 'w-8 opacity-100'
+                : 'w-0 opacity-0'
+            }`}
+          />
           <Grid3X3 className="w-5 h-5" />
           <span className="text-[10px] font-medium">Categories</span>
         </Link>
 
         <Link
           href={ROUTES.search}
-          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors duration-150 ${
+          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${
             pathname.startsWith('/search') ? 'text-primary' : 'text-foreground-muted'
           }`}
         >
-          {pathname.startsWith('/search') && (
-            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />
-          )}
+          <span
+            className={`absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-primary transition-all duration-300 ${
+              pathname.startsWith('/search') ? 'w-8 opacity-100' : 'w-0 opacity-0'
+            }`}
+          />
           <Search className="w-5 h-5" />
           <span className="text-[10px] font-medium">Search</span>
         </Link>
 
         <button
           onClick={openCart}
-          className="relative flex-1 flex flex-col items-center justify-center gap-0.5 text-foreground-muted transition-colors duration-150 active:text-primary"
+          className="relative flex-1 flex flex-col items-center justify-center gap-0.5 text-foreground-muted transition-all duration-150 active:scale-95 active:text-primary"
         >
           <ShoppingCart className="w-5 h-5" />
           <span className="text-[10px] font-medium">Cart</span>
           {totalItems > 0 && (
-            <span className="absolute top-0.5 right-1/4 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-white text-[9px] font-bold px-1">
+            <span className="absolute top-0.5 right-1/4 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold px-1 shadow-sm">
               {totalItems > 99 ? '99+' : totalItems}
             </span>
           )}
@@ -79,16 +88,18 @@ export function MobileBottomNav() {
 
         <Link
           href={user ? ROUTES.account.profile : ROUTES.login}
-          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors duration-150 ${
+          className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${
             isAccountActive ? 'text-primary' : 'text-foreground-muted'
           }`}
         >
-          {isAccountActive && (
-            <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-primary rounded-full" />
-          )}
+          <span
+            className={`absolute top-0 left-1/2 -translate-x-1/2 h-0.5 rounded-full bg-primary transition-all duration-300 ${
+              isAccountActive ? 'w-8 opacity-100' : 'w-0 opacity-0'
+            }`}
+          />
           <div className="relative">
             {user ? (
-              <div className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center text-[8px] font-bold">
+              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[8px] font-bold">
                 {user.initials}
               </div>
             ) : (

@@ -37,6 +37,7 @@ function toDTO(p: {
     rating: p.avg_rating || 0,
     reviewCount: p.review_count || 0,
     inStock: p.available_stock > 0,
+    availableStock: p.available_stock,
     isFeatured: p.is_featured,
   };
 }
@@ -59,9 +60,9 @@ async function BrandsSection() {
   return <BrandsStrip brands={brands} />;
 }
 
-async function CategorySection() {
-  const { productService } = await getServices();
-  const categories = await productService.getCategoryTree();
+import type { Category } from '@nest/types';
+
+async function CategorySection({ categories }: { categories: Category[] }) {
   return <CategoryGrid categories={categories} />;
 }
 
@@ -78,17 +79,15 @@ export default async function HomePage() {
         <FeaturedProductsSection />
       </Suspense>
 
-      <Suspense fallback={<div className="container-nest section-gap"><div className="h-6 w-40 bg-surface-low animate-pulse rounded mb-5" /><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">{Array.from({length:5}).map((_,i)=>(<div key={i} className="aspect-[3/4] bg-surface-low animate-pulse rounded-md" />))}</div></div>}>
+      <Suspense fallback={<div className="container-nest section-gap"><div className="h-6 w-40 bg-[var(--color-border)] animate-pulse rounded mb-5" /><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">{Array.from({length:5}).map((_,i)=>(<div key={i} className="aspect-[3/4] bg-[var(--color-border)] animate-pulse rounded-md" />))}</div></div>}>
         <NewArrivalsSection />
       </Suspense>
 
-      <Suspense fallback={<div className="bg-surface-low border-y border-border py-6"><div className="container-nest flex gap-3 overflow-hidden">{Array.from({length:6}).map((_,i)=>(<div key={i} className="h-10 w-28 bg-white animate-pulse rounded-md flex-shrink-0" />))}</div></div>}>
+      <Suspense fallback={<div className="border-y border-[var(--color-border)] bg-[var(--color-surface)] py-6"><div className="container-nest flex gap-3 overflow-hidden">{Array.from({length:6}).map((_,i)=>(<div key={i} className="h-10 w-28 bg-[var(--color-border-strong)] animate-pulse rounded-md flex-shrink-0" />))}</div></div>}>
         <BrandsSection />
       </Suspense>
 
-      <Suspense fallback={<div className="container-nest section-gap"><div className="h-6 w-40 bg-surface-low animate-pulse rounded mb-5" /><div className="grid grid-cols-8 gap-3">{Array.from({length:8}).map((_,i)=>(<div key={i} className="aspect-square bg-surface-low animate-pulse rounded-md" />))}</div></div>}>
-        <CategorySection />
-      </Suspense>
+      <CategorySection categories={categories} />
     </>
   );
 }
