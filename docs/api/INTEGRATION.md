@@ -85,12 +85,18 @@ is the field that tells them apart:
 | `true` | the fee is what the customer owes — **including when it is `0`** because a free-shipping threshold was met | the amount, or "Free" |
 | `false` | **no address has been chosen yet**, so there is nothing to price; the `0` is a placeholder | "Delivery not yet calculated" |
 
-Today `shippingPriced` is `false` for every order. When real per-governorate rates land it
-becomes `true` **without any other field changing**. A client that branches on the amount
-will keep compiling, keep passing its tests, and start telling every free-shipping customer
-that their delivery has not been worked out.
+**Per-governorate rates have landed (D-8), so `shippingPriced` is now `true` on any quote or
+order that has an address.** Cairo and Giza are 50.00 EGP; the other 25 governorates are
+100.00 EGP. `false` means one thing only: **no address has been chosen yet.**
 
-This field exists specifically so the code you write today still tells the truth then.
+This paragraph used to read "today `shippingPriced` is `false` for every order" — written
+while the rate table was unresolved. It is corrected here rather than deleted, because the
+reason the field exists is the point: a client that had branched on
+`shippingFee.amount === 0` compiled fine, passed its tests, and would have started telling
+every Cairo customer their delivery was not worked out on the day the rates arrived. It
+would still do that on the day a free-shipping threshold lands.
+
+**So the rule is unchanged and permanent: branch on `shippingPriced`, never on the amount.**
 
 ---
 

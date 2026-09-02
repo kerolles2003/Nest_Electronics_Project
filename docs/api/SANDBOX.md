@@ -50,11 +50,28 @@ docker exec nest-electronics-mongo mongosh --quiet --eval \
 cp apps/api/.env.example apps/api/.env
 ```
 
-Then set `JWT_SECRET` to any locally generated string of at least 32 characters:
+**Then open `apps/api/.env` and replace the `JWT_SECRET` line.** Generate the value:
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
+
+```diff
+- JWT_SECRET=REPLACE_WITH_A_LOCALLY_GENERATED_KEY_OF_AT_LEAST_32_CHARS
++ JWT_SECRET=<paste the output above>
+```
+
+**This step is not optional and the API will not let you skip it.** The
+placeholder is 57 characters, so it used to satisfy the "at least 32" rule — and
+an API that boots on it is signing tokens with a key that is in the repository,
+identical on every machine that skipped the step. The schema now refuses any
+value starting with `REPLACE_`, and the error tells you this command. If you see
+
+```
+JWT_SECRET: Still set to the .env.example placeholder. Generate one: ...
+```
+
+that is what it means.
 
 The defaults in `.env.example` are already the sandbox ones. In particular:
 
@@ -86,6 +103,7 @@ pnpm install --frozen-lockfile
 pnpm --filter api seed            # 13 categories, 7 brands, 34 products (DEV ONLY)
 pnpm --filter api indexes:sync    # REQUIRED — see the note below
 pnpm --filter api shipping:seed   # REQUIRED — 27 governorate rates
+pnpm --filter api sandbox:seed    # the account you will actually use — §4
 pnpm --filter api dev
 ```
 
@@ -188,10 +206,16 @@ happened to see. Quote against **Home** and then **Work** and both bands are
 visible in a minute:
 
 ```bash
-# `addressId` comes from GET /users/me/addresses
-curl -s "http://127.0.0.1:3002/api/v1/checkout/quote?addressId=<HOME>"  -H "Authorization: Bearer <TOKEN>"
-curl -s "http://127.0.0.1:3002/api/v1/checkout/quote?addressId=<WORK>"  -H "Authorization: Bearer <TOKEN>"
+# The ids come from GET /users/me/addresses.
+# Note it is a POST with a body — a quote is per-cart, and there is nothing to cache.
+curl -s -X POST http://127.0.0.1:3002/api/v1/checkout/quote \
+  -H "Authorization: Bearer <TOKEN>" -H 'Content-Type: application/json' \
+  -d '{"addressId":"<HOME_ID>"}'
 ```
+
+Cairo answers `shippingFee` 50.00 EGP, Alexandria 100.00 EGP, and **omitting
+`addressId` entirely** answers `shippingPriced: false` — the third case, and the
+one a client most often gets wrong. `INTEGRATION.md` has the rule.
 
 ### Resetting it
 
@@ -336,6 +360,8 @@ pnpm --filter api sandbox:seed -- --reset
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `Conflict. The container name "/nest-electronics-mongo" is already in use` | a **second checkout** of this repo already has it up. The container name is fixed, so two working copies cannot both run it, and `down -v` from the second copy silently does nothing — it is a different compose project | stop it from whichever checkout started it, or `docker rm -f nest-electronics-mongo` |
+| `JWT_SECRET: Still set to the .env.example placeholder` | §2 was skipped | §2 — generate a key and paste it into `apps/api/.env` |
 | `Transaction numbers are only allowed on a replica set member` | standalone mongod, not the compose file | §1 |
 | `seed category development-boards is missing` | never seeded | `pnpm --filter api seed` |
 | Queries behave oddly; index assertions fail | seeded but no indexes | `pnpm --filter api indexes:sync` |

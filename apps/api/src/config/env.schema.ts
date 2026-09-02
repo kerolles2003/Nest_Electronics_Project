@@ -72,6 +72,16 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
   'JWT_SECRET',
 ]);
 
+/**
+ * A value that was never meant to be used — the shape `.env.example` ships.
+ *
+ * Anchored, so a real key that merely happens to contain the word is not
+ * refused. Exported because `test/config/env-example.spec.ts` asserts that the
+ * example file's own value matches it: the example must stay unusable, and that
+ * is a property worth failing a build over rather than trusting to review.
+ */
+export const PLACEHOLDER_SECRET = /^REPLACE_/i;
+
 export const envSchema = z.object({
   // ---- Application ----
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -144,12 +154,34 @@ export const envSchema = z.object({
    * silently. Minimum 32 characters is a frozen requirement
    * (CONFIGURATION-ARCHITECTURE.md §11) — below that the key is brute-forceable
    * offline from a single captured token.
+   *
+   * ## And the placeholder is refused, for exactly the same reason
+   *
+   * `.env.example` ships `JWT_SECRET=REPLACE_WITH_...`, which is **57
+   * characters** and therefore passed the length rule. `cp .env.example .env`
+   * and the API booted, seeded and served tokens signed with a key that is in
+   * the repository — identical on every machine that skipped the step, and
+   * readable by anyone who can read the source.
+   *
+   * "No default, deliberately" was true of the schema and false of the
+   * workflow: a placeholder nothing rejects IS a default. Found by following
+   * `docs/api/SANDBOX.md` literally on a clean clone, which is the only way to
+   * notice a step that everybody who already knows it never skips.
+   *
+   * Matched on the `REPLACE_` prefix rather than the exact string, so a future
+   * placeholder written in the same style is refused too.
    */
   JWT_SECRET: z
     .string()
     .min(32, { message: 'Must be at least 32 characters' })
     .refine((value) => value.trim().length >= 32, {
       message: 'Must be at least 32 characters',
+    })
+    .refine((value) => !PLACEHOLDER_SECRET.test(value.trim()), {
+      message:
+        'Still set to the .env.example placeholder. Generate one: ' +
+        'node -e "console.log(require(\'node:crypto\').randomBytes(32).toString(\'base64url\'))" ' +
+        'and put it in apps/api/.env',
     }),
 
   /** Access-token lifetime. Short by design: access tokens are NOT revocable. */

@@ -31,7 +31,17 @@ export class CancelOrderDto {
       'Why the order is being cancelled. Free text, shown back on the order and stored on the ' +
       'permanent record. Required.',
   })
-  @IsString()
+  /*
+   * The message on `@IsString` is the one a client sees when it sends no
+   * `reason` at all — the commonest mistake here, because "cancel this order"
+   * reads like it needs no body. class-validator's default, "reason must be a
+   * string", is true and unhelpful; this says what to do about it.
+   *
+   * Ordering across the three is handled centrally: `details[0]` is the most
+   * fundamental failure, so an absent field reports THIS rather than the
+   * 500-character ceiling. See `validation-exception.factory.ts`.
+   */
+  @IsString({ message: 'reason is required — say why the order is being cancelled' })
   @Transform(trim)
   @MinLength(3, { message: 'reason must be at least 3 characters' })
   @MaxLength(500, { message: 'reason must not exceed 500 characters' })

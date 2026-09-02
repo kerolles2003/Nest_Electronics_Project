@@ -3183,3 +3183,138 @@ a stranger.
 The seed is a script ending in `void main()`, so importing it to read a constant
 *runs the seed* — which is what the first version of the test did. Same split as
 `catalog.seed-data.ts` and `shipping.seed-data.ts`, for the same reason.
+
+---
+
+## The sandbox walkthrough, done adversarially (C3)
+
+Phase 3's acceptance was "the Flutter developer completes the journey from the
+docs alone", and **that walkthrough had never actually happened**. It has now:
+a fresh `git clone` into an empty directory, `docker compose down -v` to destroy
+the data volume, no `.env`, no `node_modules`, nothing cached — then
+`SANDBOX.md` followed **literally**, executing only commands it contains.
+
+Six defects. Two of them are the kind that only this exercise finds, because
+everyone who already knows the answer never notices the question.
+
+### 1 — `.env.example` shipped a working JWT signing key ⚠️ SECURITY
+
+`JWT_SECRET=REPLACE_WITH_A_LOCALLY_GENERATED_KEY_OF_AT_LEAST_32_CHARS` is **57
+characters**, and the schema's only rule was "at least 32". So:
+
+```
+cp apps/api/.env.example apps/api/.env     # §2, the first command
+pnpm --filter api seed                     # worked
+pnpm --filter api dev                      # booted
+curl .../auth/login                        # returned a signed token
+```
+
+A complete, serving API on a signing key that is **committed to the repository**,
+identical on every machine that skipped the step, forgeable by anyone who can
+read the source. §2 said "then set `JWT_SECRET`" and nothing enforced it — and
+the step is easy to skip precisely because everything works if you do.
+
+The schema's own comment read: *"No default, deliberately: a defaulted signing
+key is a token-forgery vulnerability that reaches production silently."* True of
+the schema, false of the workflow. **A placeholder nothing rejects is a
+default.**
+
+Fixed in three places, because a doc fix alone would have left the hole:
+
+- the schema refuses any `JWT_SECRET` starting with `REPLACE_`, and the refusal
+  prints the generator command and the file to put it in;
+- `test/infrastructure/env-example.spec.ts` reads `.env.example` and asserts the
+  schema **rejects** its value — the example must stay unusable, and that is a
+  property worth failing a build over rather than trusting to review;
+- §2 now shows the diff to make, not just the command to run.
+
+### 2 — a missing field reported the wrong rule
+
+`POST /orders/{id}/cancel` with `{}` answered:
+
+```
+details[0].message = "reason must not exceed 500 characters"
+```
+
+`INTEGRATION.md` tells every client that the actionable sentence is
+`details[0].message`, and the storefront's `customerMessage()` shows exactly
+that. So the commonest mistake on that endpoint — sending no body, because
+"cancel this order" reads like it needs none — produced a sentence about a
+500-character ceiling on a field the caller never wrote.
+
+The cause is general, not local: a field you did not send fails **every** rule
+declared on it at once, and class-validator's order put the length rules first.
+
+`validation-exception.factory.ts` now sorts each field's constraints
+most-fundamental-first, so `details[0]` is the sentence worth showing across
+every DTO in the API. `CancelOrderDto`'s `@IsString` message became "reason is
+required — say why the order is being cancelled".
+
+**No existing test moved.** The 846-test suite passes unchanged, because the
+cases that assert on `details[0]` were all single-constraint failures.
+
+### 3 — `INTEGRATION.md` was a release behind on shipping
+
+> "Today `shippingPriced` is `false` for every order. When real per-governorate
+> rates land it becomes `true`…"
+
+D-8 landed. The walkthrough quoted Cairo at 50.00 EGP and Alexandria at 100.00
+EGP, both `shippingPriced: true`. A mobile developer reading the SAFE section
+would have concluded `true` does not happen yet and coded for one case.
+
+Corrected rather than deleted, because the reason the field exists is the point:
+a client that had branched on `shippingFee.amount === 0` compiled fine, passed
+its tests, and would have started telling every Cairo customer their delivery
+was not worked out on the day the rates arrived. It would do the same again the
+day a free-shipping threshold lands.
+
+### 4 — my own §4 example had the wrong HTTP method
+
+I documented the quote as `GET /checkout/quote?addressId=…`. It is **`POST`**
+with a body. Written from memory, wrong, and caught by running it.
+
+### 5 — a second checkout cannot start the database, and says something unhelpful
+
+`docker-compose.dev.yml` pins `container_name: nest-electronics-mongo`, so a
+second working copy gets:
+
+```
+Conflict. The container name "/nest-electronics-mongo" is already in use
+```
+
+and `down -v` from the second copy silently does **nothing** — it is a different
+compose project, so it tears down a stack that was never up. Neither the message
+nor the doc says any of this. Added as a troubleshooting row with the fix.
+
+### 6 — §3's command block omitted the step §4 depends on
+
+The block a reader copies wholesale listed `seed`, `indexes:sync`,
+`shipping:seed` and `dev`, but not `sandbox:seed`. Added, and the §7 reset
+sequence now lists all four.
+
+### What the journey needed that no document said
+
+Beyond the above, running the full customer journey — browse → cart → address →
+quote → place → history → cancel, plus an anonymous basket — required knowing:
+
+| Needed | Where it was |
+|---|---|
+| `GET /users/me/addresses` is the path | the OpenAPI artifact only |
+| `POST /orders/{id}/cancel` is the path | the artifact only |
+| Cancellation **requires** a 3–500 character `reason` | **nowhere** |
+| `Idempotency-Key` is mandatory on `POST /orders` | INTEGRATION.md ✓ |
+| A retry answers `200`, not `201`, with an identical body | INTEGRATION.md ✓ |
+| VAT is **inclusive**; there is no additive tax line | the DTO description only |
+| The address book is capped at 10 | the error message only |
+| Order *list* returns a summary with no `items` and no address | the artifact only |
+
+None of these is a bug. All of them are why `MOBILE-HANDOFF.md` exists, and all
+of them are in it.
+
+### And it works now
+
+Re-run end to end after the fixes, on a second clean clone and a destroyed data
+volume: the API refuses to boot on the placeholder and names the fix, the guide
+runs start to finish, and the journey completes — login, browse, cart, both
+shipping bands, a placed order, an idempotent retry, history, a cancellation
+with a reason, and an anonymous basket priced with no token at all.
