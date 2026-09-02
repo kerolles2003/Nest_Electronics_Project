@@ -2577,7 +2577,7 @@
     },
     "/api/v1/admin/orders/{id}": {
       "get": {
-        "description": "The full order, for any customer. Returns the **canonical `OrderDto`** — the same model\n`POST /orders`, `GET /orders/{id}` and every lifecycle action below return, so an admin\nclient generates and shares one order type.\n\nThis exists because the queue alone is not operable: confirming a Cash-on-Delivery order\nmeans phoning the customer and reading back the delivery address, and shipping one means\nputting that address on a label.",
+        "description": "The full order, for any customer. Returns **`AdminOrderDto`** — the canonical `OrderDto`\nthat `POST /orders` and `GET /orders/{id}` return, plus the two things only an operator\nneeds: `allowedTransitions` and `statusHistory`. Every lifecycle action below returns the\nsame model, so an admin client generates and shares one order type.\n\n**Render the available actions from `allowedTransitions`, never from a transition map held\nin the client.** It is computed by the same function the engine calls before it writes, so\nthe buttons a console draws and the requests this API will accept cannot drift apart.\n\nThis exists because the queue alone is not operable: confirming a Cash-on-Delivery order\nmeans phoning the customer and reading back the delivery address, and shipping one means\nputting that address on a label.",
         "operationId": "AdminOrdersController_detail_v1",
         "parameters": [
           {
@@ -2598,7 +2598,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -2688,7 +2688,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -2788,7 +2788,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -2888,7 +2888,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -2988,7 +2988,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -3088,7 +3088,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -3188,7 +3188,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OrderResponseDto"
+                  "$ref": "#/components/schemas/AdminOrderResponseDto"
                 }
               }
             }
@@ -6429,6 +6429,263 @@
         },
         "required": [
           "reason"
+        ]
+      },
+      "AdminOrderTransitionDto": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "PLACED",
+              "CONFIRMED",
+              "SHIPPED",
+              "DELIVERED",
+              "DELIVERY_FAILED",
+              "CANCELLED",
+              "RETURNED"
+            ],
+            "example": "CONFIRMED",
+            "description": "The status this move would put the order in."
+          },
+          "action": {
+            "type": "string",
+            "example": "confirm",
+            "nullable": true,
+            "description": "The path segment to `POST /admin/orders/{id}/{action}`. **`null` means the transition is legal but this API exposes no staff route for it** — cancellation is the customer’s own operation. Render such a move as unavailable rather than as a button."
+          },
+          "requires": {
+            "example": [
+              "carrier",
+              "trackingNumber"
+            ],
+            "description": "Body fields this edge REQUIRES. Empty when the endpoint needs nothing beyond an optional note. Collect these before enabling the action; sending the request without them is a 400.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "to",
+          "action",
+          "requires"
+        ]
+      },
+      "OrderHistoryActorDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d",
+            "nullable": true,
+            "description": "The acting account. `null` only for a history entry written before an actor was recorded — no live code path can produce one."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "ADMIN",
+              "SUPER_ADMIN"
+            ],
+            "example": "ADMIN",
+            "description": "The role held at the moment of the action, snapshotted."
+          },
+          "name": {
+            "type": "string",
+            "example": "Mina Kerolles",
+            "description": "The name AS IT WAS. Snapshotted rather than joined, so renaming an account never rewrites what the trail says happened."
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "name"
+        ]
+      },
+      "OrderStatusHistoryEntryDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "enum": [
+              "PLACED",
+              "CONFIRMED",
+              "SHIPPED",
+              "DELIVERED",
+              "DELIVERY_FAILED",
+              "CANCELLED",
+              "RETURNED"
+            ],
+            "nullable": true,
+            "example": "PLACED",
+            "description": "The status left behind. `null` on the placement entry only."
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "PLACED",
+              "CONFIRMED",
+              "SHIPPED",
+              "DELIVERED",
+              "DELIVERY_FAILED",
+              "CANCELLED",
+              "RETURNED"
+            ],
+            "example": "CONFIRMED"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/OrderHistoryActorDto"
+          },
+          "note": {
+            "type": "string",
+            "example": "Customer confirmed by phone.",
+            "nullable": true,
+            "description": "The note or reason supplied with the transition. Internal."
+          },
+          "at": {
+            "type": "string",
+            "example": "2026-08-31T09:14:02.000Z",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "actor",
+          "note",
+          "at"
+        ]
+      },
+      "AdminOrderDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d",
+            "description": "The order id."
+          },
+          "orderNumber": {
+            "type": "string",
+            "example": "NE-20260830-0001",
+            "description": "Human-readable reference. `NE-<UTC date>-<sequence>`, where the sequence resets daily, so it discloses nothing about total order volume."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PLACED",
+              "CONFIRMED",
+              "SHIPPED",
+              "DELIVERED",
+              "DELIVERY_FAILED",
+              "CANCELLED",
+              "RETURNED"
+            ],
+            "example": "PLACED",
+            "description": "A newly placed order is ALWAYS `PLACED` — the status is server-controlled and no request body can set it. `CANCELLED` is reachable by the customer via `POST /orders/{id}/cancel` while the order is `PLACED` or `CONFIRMED`; every other transition is driven by the shop. Handle all seven values exhaustively."
+          },
+          "customer": {
+            "$ref": "#/components/schemas/OrderCustomerDto"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderItemDto"
+            }
+          },
+          "currency": {
+            "type": "string",
+            "example": "EGP",
+            "enum": [
+              "EGP"
+            ]
+          },
+          "pricing": {
+            "description": "The frozen financial record. `grandTotal` is the cash amount due on delivery.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PricingBreakdownDto"
+              }
+            ]
+          },
+          "payment": {
+            "$ref": "#/components/schemas/OrderPaymentDto"
+          },
+          "shippingAddress": {
+            "$ref": "#/components/schemas/OrderShippingAddressDto"
+          },
+          "customerNote": {
+            "type": "string",
+            "example": "Please call before delivery.",
+            "nullable": true
+          },
+          "cancellation": {
+            "nullable": true,
+            "description": "Why the order was cancelled, and by whom. `null` unless `status` is `CANCELLED`.",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderCancellationDto"
+              }
+            ]
+          },
+          "shipment": {
+            "nullable": true,
+            "description": "Carrier and tracking. `null` until the order reaches `SHIPPED`.",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderShipmentDto"
+              }
+            ]
+          },
+          "placedAt": {
+            "type": "string",
+            "example": "2026-08-30T14:22:31.000Z",
+            "format": "date-time"
+          },
+          "allowedTransitions": {
+            "description": "Every move a staff actor may make on this order right now, from the server’s own transition matrix, each with the endpoint that performs it. Render the available actions from THIS — never from a copy of the matrix held in the client. Empty for a terminal order, which is the complete answer and not a missing one.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrderTransitionDto"
+            }
+          },
+          "statusHistory": {
+            "description": "Every status change this order has been through, oldest first, each with the member of staff who made it. Append-only and written inside the same transaction as the status change, so an entry cannot be missing from a transition that took effect.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderStatusHistoryEntryDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "orderNumber",
+          "status",
+          "customer",
+          "items",
+          "currency",
+          "pricing",
+          "payment",
+          "shippingAddress",
+          "customerNote",
+          "cancellation",
+          "shipment",
+          "placedAt",
+          "allowedTransitions",
+          "statusHistory"
+        ]
+      },
+      "AdminOrderResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminOrderDto"
+          }
+        },
+        "required": [
+          "data"
         ]
       },
       "ConfirmOrderDto": {

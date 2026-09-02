@@ -30,8 +30,8 @@ import {
   ReturnOrderDto,
   ShipOrderDto,
 } from './dto/admin-order-request.dto';
+import { AdminOrderDto, AdminOrderResponseDto } from './dto/admin-order-response.dto';
 import { OrderHistoryQueryDto, OrderIdParamDto } from './dto/order-query.dto';
-import { OrderDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderHistoryResponseDto, OrderSummaryDto } from './dto/order-summary.dto';
 
 const NO_STORE = 'no-store';
@@ -140,16 +140,21 @@ export class AdminOrdersController {
   @ApiOperation({
     summary: 'Read any order',
     description: [
-      'The full order, for any customer. Returns the **canonical `OrderDto`** — the same model',
-      '`POST /orders`, `GET /orders/{id}` and every lifecycle action below return, so an admin',
-      'client generates and shares one order type.',
+      'The full order, for any customer. Returns **`AdminOrderDto`** — the canonical `OrderDto`',
+      'that `POST /orders` and `GET /orders/{id}` return, plus the two things only an operator',
+      'needs: `allowedTransitions` and `statusHistory`. Every lifecycle action below returns the',
+      'same model, so an admin client generates and shares one order type.',
+      '',
+      '**Render the available actions from `allowedTransitions`, never from a transition map held',
+      'in the client.** It is computed by the same function the engine calls before it writes, so',
+      'the buttons a console draws and the requests this API will accept cannot drift apart.',
       '',
       'This exists because the queue alone is not operable: confirming a Cash-on-Delivery order',
       'means phoning the customer and reading back the delivery address, and shipping one means',
       'putting that address on a label.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: OrderResponseDto })
+  @ApiOkResponse({ type: AdminOrderResponseDto })
   @ApiBadRequestResponse({
     type: ErrorResponseDto,
     description: 'VALIDATION_ERROR — `id` is not a 24-character hex id.',
@@ -160,10 +165,10 @@ export class AdminOrdersController {
   async detail(
     @Param() params: OrderIdParamDto,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     const order = await this.orders.findForStaff(new Types.ObjectId(params.id));
 
-    return { data: OrderDto.from(order, locale) };
+    return { data: AdminOrderDto.from(order, locale) };
   }
 
   @Post(':id/confirm')
@@ -181,7 +186,7 @@ export class AdminOrdersController {
       '`CONFIRMED`; that stops being true once the order ships.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: OrderResponseDto, description: 'Confirmed. `status` is `CONFIRMED`.' })
+  @ApiOkResponse({ type: AdminOrderResponseDto, description: 'Confirmed. `status` is `CONFIRMED`.' })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.badRequest })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.forbidden })
@@ -192,7 +197,7 @@ export class AdminOrdersController {
     @Body() dto: ConfirmOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     return this.run(params, principal, locale, OrderStatus.CONFIRMED, { note: dto.note ?? null });
   }
 
@@ -214,7 +219,7 @@ export class AdminOrdersController {
     ].join('\n'),
   })
   @ApiOkResponse({
-    type: OrderResponseDto,
+    type: AdminOrderResponseDto,
     description: 'Dispatched. `status` is `SHIPPED` and `shipment` is populated.',
   })
   @ApiBadRequestResponse({
@@ -232,7 +237,7 @@ export class AdminOrdersController {
     @Body() dto: ShipOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     return this.run(params, principal, locale, OrderStatus.SHIPPED, {
       note: dto.note ?? null,
       shipment: { carrier: dto.carrier, trackingNumber: dto.trackingNumber },
@@ -260,7 +265,7 @@ export class AdminOrdersController {
     ].join('\n'),
   })
   @ApiOkResponse({
-    type: OrderResponseDto,
+    type: AdminOrderResponseDto,
     description: 'Delivered. `status` is `DELIVERED` and `payment.status` is `PAID`.',
   })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.badRequest })
@@ -273,7 +278,7 @@ export class AdminOrdersController {
     @Body() dto: DeliverOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     return this.run(params, principal, locale, OrderStatus.DELIVERED, { note: dto.note ?? null });
   }
 
@@ -297,7 +302,7 @@ export class AdminOrdersController {
     ].join('\n'),
   })
   @ApiOkResponse({
-    type: OrderResponseDto,
+    type: AdminOrderResponseDto,
     description: 'Recorded. `status` is `DELIVERY_FAILED` and `shipment.deliveryAttempts` grew by one.',
   })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.badRequest })
@@ -310,7 +315,7 @@ export class AdminOrdersController {
     @Body() dto: DeliveryFailedDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     // The failure reason IS the note on this edge — there is no separate
     // cancellation-style record for a failed attempt.
     return this.run(params, principal, locale, OrderStatus.DELIVERY_FAILED, { note: dto.reason });
@@ -334,7 +339,7 @@ export class AdminOrdersController {
       'Touches no stock.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: OrderResponseDto, description: 'Re-dispatched. `status` is `SHIPPED`.' })
+  @ApiOkResponse({ type: AdminOrderResponseDto, description: 'Re-dispatched. `status` is `SHIPPED`.' })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.badRequest })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.forbidden })
@@ -345,7 +350,7 @@ export class AdminOrdersController {
     @Body() dto: RetryShipmentDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     return this.run(params, principal, locale, OrderStatus.SHIPPED, {
       note: dto.note ?? null,
       shipment: { carrier: dto.carrier, trackingNumber: dto.trackingNumber },
@@ -374,7 +379,7 @@ export class AdminOrdersController {
     ].join('\n'),
   })
   @ApiOkResponse({
-    type: OrderResponseDto,
+    type: AdminOrderResponseDto,
     description: 'Returned. `status` is `RETURNED` and the stock is back in the catalogue.',
   })
   @ApiBadRequestResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.badRequest })
@@ -387,7 +392,7 @@ export class AdminOrdersController {
     @Body() dto: ReturnOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
     @RequestLocale() locale: Locale,
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     return this.run(params, principal, locale, OrderStatus.RETURNED, { note: dto.reason });
   }
 
@@ -411,7 +416,7 @@ export class AdminOrdersController {
       note?: string | null;
       shipment?: { carrier?: string | undefined; trackingNumber?: string | undefined };
     },
-  ): Promise<OrderResponseDto> {
+  ): Promise<AdminOrderResponseDto> {
     const order = await this.lifecycle.transitionByStaff({
       // From the TOKEN. No DTO here carries an actor, so the history trail
       // cannot be forged.
@@ -422,6 +427,6 @@ export class AdminOrdersController {
       ...(input.shipment !== undefined ? { shipment: input.shipment } : {}),
     });
 
-    return { data: OrderDto.from(order, locale) };
+    return { data: AdminOrderDto.from(order, locale) };
   }
 }

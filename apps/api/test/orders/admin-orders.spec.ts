@@ -1110,7 +1110,31 @@ describe('admin work queue', () => {
     expect(badStatus.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('reads any customer order as the canonical OrderDto', async () => {
+  it('reads any customer order as the canonical OrderDto, WIDENED for staff', async () => {
+    /*
+     * ## This test changed, and the change is the point
+     *
+     * It used to assert `staffView.body.data` EQUALS `customerView.body.data`,
+     * and that `statusHistory` was undefined for staff too — "internals stay
+     * internal even for staff in this phase".
+     *
+     * That phase is over. The admin console is now driven by this API, and two
+     * things it cannot operate without were being withheld from it:
+     * `allowedTransitions` (so it stops carrying a transition map of its own)
+     * and `statusHistory` (so a money-path action is attributable to a person).
+     * The staff response is therefore a strict SUPERSET of the customer one.
+     *
+     * Every assertion below that is still true is kept unchanged. The equality
+     * is replaced by a superset check, which is a STRONGER statement than the
+     * one it replaces: it still pins every shared field to the identical value,
+     * and additionally pins exactly which fields staff get extra. A field
+     * quietly added to the staff view fails this; the old equality would have
+     * failed too, and nothing has been loosened to let the widening through.
+     *
+     * The customer side of the boundary — that no admin's name or id reaches
+     * the order owner by any route — is asserted in
+     * `test/orders/admin-order-attribution.spec.ts`.
+     */
     const bobOrder = await placeSimpleOrder(2, bob);
 
     const staffView = await http()
@@ -1122,12 +1146,28 @@ describe('admin work queue', () => {
       .set(...bearer(bob))
       .expect(200);
 
-    // ONE order model. The admin screen and the customer screen share it.
-    expect(staffView.body.data).toEqual(customerView.body.data);
+    const STAFF_ONLY = ['allowedTransitions', 'statusHistory'];
+
+    // ONE order model underneath. Every field the customer can see, the admin
+    // screen sees identically — same values, same types, no re-shaping.
+    const { allowedTransitions, statusHistory, ...shared } = staffView.body.data;
+    expect(shared).toEqual(customerView.body.data);
+
+    // And the widening is exactly those two fields — no more.
+    expect(Object.keys(staffView.body.data).sort()).toEqual(
+      [...Object.keys(customerView.body.data), ...STAFF_ONLY].sort(),
+    );
+    expect(allowedTransitions).toBeDefined();
+    expect(statusHistory).toBeDefined();
+
+    // The customer is still told neither.
+    for (const field of STAFF_ONLY) {
+      expect(customerView.body.data[field]).toBeUndefined();
+    }
+
     // The operator can read back the address to make the confirmation call.
     expect(staffView.body.data.shippingAddress.phone).toBe(ADDRESS.phone);
-    // Internals stay internal even for staff in this phase.
-    expect(staffView.body.data.statusHistory).toBeUndefined();
+    // These internals stay internal, for everybody, unchanged.
     expect(staffView.body.data.adminNote).toBeUndefined();
     expect(staffView.body.data.idempotencyKey).toBeUndefined();
   });

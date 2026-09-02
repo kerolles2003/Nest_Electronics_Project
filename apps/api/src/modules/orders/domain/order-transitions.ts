@@ -154,3 +154,22 @@ function assertMatrixIsCoherent(): void {
 }
 
 assertMatrixIsCoherent();
+
+/**
+ * Every status this actor may move an order to FROM `from`, right now.
+ *
+ * Derived by asking `checkTransition` about each candidate rather than by
+ * reading `ORDER_TRANSITIONS` directly, so the answer a client is given and the
+ * answer the engine enforces come from the same function. A second list — one
+ * for rendering buttons, one for refusing requests — is precisely the shape
+ * that made legacy's state machine advisory: the admin app held the matrix, the
+ * database held nothing, and the two could not be compared.
+ *
+ * The empty array is a complete answer, not a missing one: a terminal status
+ * has no outgoing edges, and an actor with no permitted edges is told so.
+ */
+export function allowedTransitions(from: OrderStatus, actorRole: Role): readonly OrderStatus[] {
+  return Object.values(OrderStatus).filter(
+    (candidate) => checkTransition(from, candidate, actorRole) === null,
+  );
+}
