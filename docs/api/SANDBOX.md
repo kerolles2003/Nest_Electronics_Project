@@ -108,7 +108,8 @@ pnpm install --frozen-lockfile
 pnpm --filter api seed            # 13 categories, 7 brands, 34 products (DEV ONLY)
 pnpm --filter api indexes:sync    # REQUIRED — see the note below
 pnpm --filter api shipping:seed   # REQUIRED — 27 governorate rates
-pnpm --filter api sandbox:seed    # the account you will actually use — §4
+pnpm --filter api sandbox:seed    # the customer you will actually use — §4
+pnpm --filter api dev-admin:seed  # the admin you will actually use — §4a (DEV ONLY)
 pnpm --filter api dev
 ```
 
@@ -242,6 +243,87 @@ third address.
 
 **It refuses to run with `NODE_ENV=production`.** The password is printed in
 this document; that is the point, and the guard is what keeps it local.
+
+---
+
+## 4a. The admin account, and how a real one is created
+
+There are two commands here and they are **not** variants of each other. One is a
+development fixture with a published password; the other is how a real member of staff
+gets an account, and it has no password of its own at all.
+
+### The development admin — local only
+
+```bash
+pnpm --filter api dev-admin:seed
+```
+
+| | |
+|---|---|
+| **Email** | `admin@nest-electronics.test` |
+| **Password** | `copper oscilloscope probe` |
+| Role | `SUPER_ADMIN` |
+
+Same bargain as the sandbox customer in §4, and the same three fences:
+
+- **`.test` is reserved** (RFC 2606) and unresolvable, so the address can never belong to
+  a person and can never receive mail.
+- **It refuses `NODE_ENV=production`**, and `StaffProvisioningService` independently
+  refuses a `.test` address there — so the seed failing open would still not create this
+  account in production.
+- **A test asserts this document, the seed and the password policy agree**
+  (`test/database/dev-admin-seed.spec.ts`), so the password printed above cannot drift
+  from the one the seed sets.
+
+Re-running repairs a drifted account — role restored, re-verified, un-deleted — rather
+than duplicating it. `-- --reset` removes it and its sessions so the creation path itself
+can be exercised.
+
+Sign in at the admin app's `/admin/login`. The admin authenticates against **this API**;
+it has no Supabase login.
+
+### A real staff account — `staff:create`
+
+```bash
+pnpm --filter api staff:create --   --email operations@your-domain.com   --name "Operations Lead"   --role ADMIN
+```
+
+**There is no `--password`, and there is no default.** The command prompts for it twice,
+with no echo, and creates nothing if the answer is empty or the two do not match. It
+prints the email and the role it created and never a credential — not the password, not a
+generated one, not a "temporary" one.
+
+It is deliberately awkward to run:
+
+| Guard | What it refuses |
+|---|---|
+| No password argument | A value in `ps`, in shell history, or in a CI log — and a thing that could be given a default |
+| The password policy | Anything a customer's password would be refused for: too short, too common, containing the address |
+| **The repository scan** | Any value that appears in a file in this repository — including the two passwords printed in this document |
+| Typed confirmation | The account's email, name and role are printed and you must **retype the address**. A `y/n` prompt is one keystroke from an accident |
+| Second super-admin | In production, a second `SUPER_ADMIN` is refused unless you pass `--acknowledge-existing-super-admin` |
+
+The repository scan is the one worth explaining. Length rules and character classes reject
+nothing that matters: the sandbox customer's passphrase in §4 is twenty-odd characters and
+passes every composition rule ever written — and it is printed in this document, so every
+person who can read the code already knows it. This project has already shipped a
+`JWT_SECRET` placeholder that **passed its own validator** because it was 57 characters
+long. A placeholder nothing rejects is a default; the only check that cannot be satisfied
+by an impressive-looking string is one that asks whether the value is already written
+down.
+
+So it asks, over every file in the checkout, and a refusal names the **files** and never
+the value:
+
+```
+refused (PASSWORD_IN_REPOSITORY): it appears in 2 tracked file(s) in this repository...
+  found in: apps/api/src/database/seed/sandbox.seed-data.ts
+  found in: docs/api/SANDBOX.md
+```
+
+If the repository cannot be read at all, the command **refuses** rather than assuming
+clean — run it from a checkout. There is no flag to skip the scan, because a bypass on a
+control like this becomes the documented way to run the command.
 
 ---
 

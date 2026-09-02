@@ -67,6 +67,21 @@ export interface CreateUserInput {
 }
 
 /**
+ * A STAFF account, created by an operator rather than by registration.
+ *
+ * Separate from `CreateUserInput` because the two differ in exactly the way
+ * that matters: this one names a role, and `create` deliberately cannot.
+ */
+export interface CreateStaffInput {
+  readonly email: string;
+  readonly passwordHash: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  /** ADMIN or SUPER_ADMIN. A customer is created by registration, not by this. */
+  readonly role: Role.ADMIN | Role.SUPER_ADMIN;
+}
+
+/**
  * The ONLY code in the system that reads or writes a password hash.
  *
  * Authority: docs/architecture/NESTJS-MODULE-MAP.md §1 — AuthModule owns "the
@@ -141,6 +156,74 @@ export class CredentialRepository {
 
       throw error;
     }
+  }
+
+  /**
+   * Creates a STAFF account, with the role the caller names.
+   *
+   * ## Why this is a second method and not a parameter on `create`
+   *
+   * `create` hard-codes `Role.CUSTOMER` and that is a security property, not a
+   * default: `RegisterDto` has no role field, so there is nothing for a client
+   * to inject into, and no argument for a future caller to pass by mistake.
+   * Adding an optional `role` to it would put a privilege escalation one typo
+   * away from the public registration path.
+   *
+   * This method has no HTTP route. Nothing in `presentation/` reaches it —
+   * `StaffProvisioningService` is its only caller, and that service is only
+   * ever driven from a command line by a person who already holds the database.
+   * Staff accounts are provisioned, never self-served (AUTHORIZATION-MODEL.md
+   * §3): there is no "sign up as an admin".
+   *
+   * ## Verified at creation, with no challenge
+   *
+   * `emailVerifiedAt` is set and `emailVerification` is null. Verification
+   * exists to prove that whoever registered controls the address; an operator
+   * standing at a terminal with database access has already established far
+   * more than that, and leaving the account unverified would only mean a
+   * freshly provisioned admin cannot sign in until a mail they never receive
+   * is clicked.
+   *
+   * Uniqueness is the DATABASE's, exactly as it is for a customer — the same
+   * unique index, the same translated refusal, and the same absence of a
+   * read-then-write race.
+   */
+  async createStaff(input: CreateStaffInput): Promise<UserLean> {
+    try {
+      const [created] = await this.model.create([
+        {
+          email: input.email,
+          passwordHash: input.passwordHash,
+          fullName: input.fullName,
+          phone: input.phone,
+          role: input.role,
+          emailVerifiedAt: new Date(),
+          emailVerification: null,
+          tokenVersion: 1,
+        },
+      ]);
+
+      if (created === undefined) {
+        throw new Error('staff insert returned no document');
+      }
+
+      return created.toObject<UserLean>();
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        (error as { code?: number }).code === DUPLICATE_KEY
+      ) {
+        throw AppException.duplicateEmail();
+      }
+
+      throw error;
+    }
+  }
+
+  /** How many accounts hold this role. Used to refuse a silent second super-admin. */
+  async countByRole(role: Role): Promise<number> {
+    return this.model.countDocuments({ role, deletedAt: null }).exec();
   }
 
   /** Login lookup. Returns null for an unknown address — the caller must not branch visibly on that. */

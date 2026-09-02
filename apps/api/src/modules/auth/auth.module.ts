@@ -9,6 +9,7 @@ import { AuthService } from './application/auth.service';
 import { EmailVerificationService } from './application/email-verification.service';
 import { PasswordResetService } from './application/password-reset.service';
 import { PasswordService } from './application/password.service';
+import { StaffProvisioningService } from './application/staff-provisioning.service';
 import { TokenService } from './application/token.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -67,6 +68,13 @@ import { AuthController } from './presentation/auth.controller';
     PasswordService,
     EmailVerificationService,
     PasswordResetService,
+    /*
+     * No controller reaches this. It is provided so the two provisioning
+     * scripts can resolve it from an application context, and it is NOT
+     * exported — the same rule that keeps `CredentialRepository` inside this
+     * module keeps the one service able to mint an ADMIN inside it too.
+     */
+    StaffProvisioningService,
     CredentialRepository,
     RefreshTokenRepository,
     JwtAuthGuard,
