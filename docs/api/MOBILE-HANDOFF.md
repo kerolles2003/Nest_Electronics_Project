@@ -44,7 +44,7 @@ downstream of the API.
 | 18 | Addresses | `/account/addresses` | The address book | yes |
 
 **"both"** on the cart is the important one: it renders for a signed-out visitor
-too, from a different endpoint. §5.
+too, from a different endpoint. §6.
 
 ---
 
@@ -99,7 +99,7 @@ The full parameter set, and nothing outside it:
 |---|---|---|
 | 1 | `GET /products/{slug}` | `404 PRODUCT_NOT_FOUND` if unknown **or not visible** |
 | 2 | `GET /products/{slug}/related` | Non-blocking — render the page without it |
-| 3 | `POST /cart/items` on "Add to cart" | Signed in only; see §5 for a guest |
+| 3 | `POST /cart/items` on "Add to cart" | Signed in only; see §6 for a guest |
 
 `ProductDetail` adds `description`, all `images`, `specs`, `stockOnHand`,
 `salesCount` and `weight` to the list shape.
@@ -117,7 +117,7 @@ shape**, which is the point — one widget, one model, one screen.
 | State | Read | Mutate |
 |---|---|---|
 | Signed in | `GET /cart` | `POST /cart/items` · `PATCH /cart/items/{productId}` · `DELETE /cart/items/{productId}` · `DELETE /cart` |
-| Signed out | `POST /cart/preview` with your local basket | your own local store; §5 |
+| Signed out | `POST /cart/preview` with your local basket | your own local store; §6 |
 
 **Every mutation returns the whole cart.** Replace your state wholesale; never
 merge a partial response. That is deliberate — a mutation can change more rows
@@ -284,7 +284,7 @@ session on every device.
 ```
 GET  /products                     browse
 POST /cart/items                   add          (signed in)
-POST /cart/preview                 price        (signed out — §5)
+POST /cart/preview                 price        (signed out — §6)
 GET  /users/me/addresses           choose
 POST /checkout/quote  {addressId}  the total
 POST /orders          {addressId}  + Idempotency-Key
@@ -431,7 +431,69 @@ prices are inclusive.
 
 ---
 
-## 5. The guest cart
+## 5. Images — the API never returns a URL
+
+**Every image field is an identifier, not a link.** You build the delivery URL.
+
+```
+https://res.cloudinary.com/<cloud>/image/upload/<transformation>/v<version>/<publicId>
+```
+
+| Field | Where | Shape |
+|---|---|---|
+| `primaryImage` | product card | `{publicId, version, format, width, height, alt}` or `null` |
+| `images[]` | product detail | the same, sorted; exactly one is primary |
+| `imagePublicId` | **cart line** | a bare string, **and no version** — see below |
+
+**Why the API stores no URL:** a stored URL makes changing CDN, account or
+bucket a data migration instead of a config change, and deleting an image means
+string-splitting a URL to recover the key. The legacy system did exactly that
+and paid for it. The cloud name belongs in your app's configuration, in one
+place.
+
+### The transformations the web storefront uses
+
+Match these and the two clients render the same images at the same cost. `f_auto`
+lets the CDN serve WebP or AVIF per client — which is why the upload pipeline
+deliberately does *not* convert formats on the way in.
+
+| Use | Transformation |
+|---|---|
+| Grids and cards | `f_auto,q_auto,c_fill,g_auto,w_400,h_400` |
+| Product detail | `f_auto,q_auto,c_limit,w_1200,h_1200` |
+| Gallery strip | `f_auto,q_auto,c_fill,g_auto,w_160,h_160` |
+
+`c_fill` on the fixed sizes because a grid needs every cell the same shape;
+`c_limit` on detail because there the photograph *is* the content and cropping
+it hides part of what the customer is buying.
+
+### `version` matters, and the cart does not have one
+
+Include `v<version>` whenever you have it: it is what makes replacing the
+photograph behind a `publicId` bust the CDN cache deterministically. Without it,
+customers keep seeing the old picture for as long as the edge holds it.
+
+`GET /cart` and `POST /cart/preview` return `imagePublicId` and **no version** —
+the cart keeps the smallest identifier that still resolves. A version-less URL
+works; accept the staleness on a cart thumbnail, which sits beside a name and a
+price the customer already recognises, and use the versioned form everywhere
+else.
+
+### Today, every one of these is empty
+
+**No product has an image yet** — the Cloudinary account is an owner
+deliverable. `primaryImage` is `null`, `images` is `[]`, `imagePublicId` is
+`null`. Build the placeholder path first and test it; it is the state you will
+develop against, and most of the catalogue will genuinely have no image even
+afterwards.
+
+Use `width` and `height` from the response to reserve space **before** the image
+loads. They are there so a grid does not reflow, which was a real defect in the
+legacy storefront.
+
+---
+
+## 6. The guest cart
 
 A visitor with no account still has a basket, and it lives on the device.
 
@@ -534,7 +596,7 @@ finds out at the payment screen, or when the parcel arrives.
 
 ---
 
-## 6. Errors
+## 7. Errors
 
 ### The envelope
 
@@ -592,7 +654,7 @@ The storefront's mapping, which is the reference implementation.
 | `IDEMPOTENCY_KEY_REUSED` | 409 | generic failure | no — a client bug |
 | `ADDRESS_LIMIT_REACHED` | 409 | the server's message | delete one |
 | `CONCURRENT_MODIFICATION` | 409 | "Please try again" | **retry** |
-| `RATE_LIMIT_EXCEEDED` | 429 | "Too many attempts. Try again shortly." | wait — §7 |
+| `RATE_LIMIT_EXCEEDED` | 429 | "Too many attempts. Try again shortly." | wait — §8 |
 | `SHIPPING_RATE_MISSING` | 500 | generic failure | no — report it |
 | `TRANSACTION_FAILED` | 500 | "Please try again" | **retry** |
 | `SERVICE_UNAVAILABLE` | 503 | "Please try again in a moment" | **retry** |
@@ -613,7 +675,7 @@ pretending to know a code.
 
 ---
 
-## 7. Rate limits
+## 8. Rate limits
 
 Every throttled route, at its production limit. Everything not listed shares the
 default allowance of **300 requests per minute**.
@@ -659,7 +721,7 @@ window rolls). Useful in a debug screen; do not build product behaviour on them
 
 ---
 
-## 8. What is NOT in v1
+## 9. What is NOT in v1
 
 **Absent by decision, not by oversight.** Do not design around any of these, and
 do not read their absence as something to work around.
@@ -686,7 +748,7 @@ not assume their current values are permanent.
 
 ---
 
-## 9. Before you write a line of Dart
+## 10. Before you write a line of Dart
 
 1. **Generate your models from [`openapi.v1.json`](./openapi.v1.json)**, not
    from this document and not from a live server. It is the frozen artifact and

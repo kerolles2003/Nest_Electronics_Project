@@ -3395,3 +3395,18 @@ Corrected, the full eleven-parameter set is now listed, and the mistake is left
 in the document as the reason to take names from the artifact rather than from
 prose. The check also found `RESOURCE_NOT_FOUND` — the generic 404 — missing
 from the error table; added.
+
+### One more gap the check did not catch, and a reader would have
+
+**The API never returns an image URL** — every image field is a Cloudinary
+`publicId` plus a `version`, and the client builds the delivery URL. That is
+documented, in one table row inside `INTEGRATION.md`'s **UNSTABLE** section,
+which is the last place somebody looks for a thing every screen depends on.
+
+`MOBILE-HANDOFF.md` §5 now covers it properly: the URL shape, why the API stores
+no URL (a stored URL makes changing CDN a data migration and deleting an image a
+string-split), the three transformations the web storefront uses so the two
+clients render the same images, why `version` matters for cache-busting, the one
+place it is legitimately absent — a cart line, and what that costs — and the
+fact that **no product has an image today**, so the placeholder path is the one
+to build first.
