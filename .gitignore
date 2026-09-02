@@ -46,5 +46,15 @@ rewrite2.js
 seed.js
 seed_data.json
 
+# Generated placeholder product images.
+# `pnpm --filter api media:placeholders` draws them from the seed so the
+# storefront can be looked at before the Cloudinary account exists. They are
+# dev assets, not content, and the generator is the artefact worth keeping.
+apps/api/dev-media/
+
+# QA screenshots (apps/storefront/e2e/qa/screenshot.mjs). Evidence for a
+# person to look at, regenerated on demand, meaningless in a diff.
+qa-shots/
+
 # Internal docs
 AGENTS.md

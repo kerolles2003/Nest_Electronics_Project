@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/**
+ * The shared component library is a source too.
+ *
+ * Tailwind v4 detects sources automatically, starting from this file and
+ * excluding anything under `node_modules`. `@nest/ui` is a workspace package
+ * reached through a `node_modules` symlink, so it was excluded — and every
+ * utility used ONLY there produced no CSS at all. Around 135 classes: the sale
+ * badge's background (white text on transparent, invisible), the gold star
+ * fill, `min-h-[38px]` on card titles (so cards in a row had different
+ * heights), the toast's width and z-index, the dialog's centring transforms,
+ * `sr-only`, the table's row borders, the skeleton's shimmer.
+ *
+ * Nothing looked obviously broken because the classes the storefront ALSO uses
+ * were emitted normally, so the library was styled in patches — which is a far
+ * worse failure than being unstyled, because it looks like a design.
+ *
+ * Path, not package name: this must resolve to real files on disk, and it is
+ * relative to this stylesheet.
+ */
+@source "../../../../packages/ui/src";
+
 @theme inline {
   /* Light mode (default) */
   --color-background: #ffffff;
@@ -36,6 +57,22 @@
   --color-destructive-foreground: #ffffff;
   --color-success: #16a34a;
   --color-success-light: rgba(22, 163, 74, 0.08);
+  /**
+   * The third semantic colour, which was simply absent.
+   *
+   * `StatusBadge` styles `pending`, `processing` and `pending_payment` with
+   * `bg-warning/10 text-warning border-warning/20`, and with no `--color-warning`
+   * defined none of those three utilities produced a rule — so an order waiting
+   * to be confirmed, which is where every cash-on-delivery order starts, drew a
+   * badge with no background, no border and inherited text.
+   *
+   * The value is the one this repository already chose for the role, in
+   * `packages/config/src/tailwind.preset.ts`. DESIGN.md's warning is `#EABE12`,
+   * but that is specified there for star fills and sale flashes — as TEXT on
+   * white it is about 1.7:1 and fails AA badly. This is 5.9:1.
+   */
+  --color-warning: #b45309;
+  --color-warning-light: rgba(180, 83, 9, 0.08);
   --color-woodmart-bg: #f8f8f8;
   --color-topbar: #1a1a2e;
   --color-topbar-foreground: rgba(255, 255, 255, 0.85);
@@ -118,6 +155,10 @@
   --color-destructive-foreground: #ffffff;
   --color-success: #22c55e;
   --color-success-light: rgba(34, 197, 94, 0.1);
+  /* Lighter than the light-mode value, for the same reason every other colour
+     here is: it has to read against #0c1322 rather than against white. */
+  --color-warning: #f59e0b;
+  --color-warning-light: rgba(245, 158, 11, 0.1);
   --color-woodmart-bg: #0c1322;
   --color-topbar: #080d18;
   --color-header-main: #0c1322;

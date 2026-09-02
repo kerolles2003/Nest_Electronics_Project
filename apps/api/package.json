@@ -16,7 +16,8 @@
     "sandbox:seed": "nest build && node dist/database/seed/sandbox.seed.js",
     "catalogue:import": "nest build && node dist/database/import/catalogue-import.js",
     "openapi:export": "nest build && node dist/openapi/export-openapi.js",
-    "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js"
+    "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js",
+    "media:placeholders": "nest build && node scripts/generate-placeholder-images.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",

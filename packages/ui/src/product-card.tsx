@@ -60,7 +60,36 @@ export function ProductCard({
   isAddingToCart = false,
   ...props
 }: ProductCardProps) {
+  /**
+   * The image fades in once it has loaded — and "has loaded" must be asked of
+   * the DOM, not waited for.
+   *
+   * This card is server-rendered, so the browser starts fetching the `<img>`
+   * as soon as the HTML arrives and very often finishes BEFORE React hydrates.
+   * The `load` event has then already fired by the time `onLoad` is attached,
+   * the state never flips, and the image sits at `opacity-0` for the life of
+   * the page: bytes fetched, decoded, laid out, and invisible.
+   *
+   * That is what the storefront was doing. Every product image in every grid,
+   * rail and search result was blank — and it was blank in precisely the
+   * conditions that matter most, because the faster the image arrives the more
+   * certainly the event is missed. A slow first load looked fine; a reload from
+   * cache showed nothing.
+   *
+   * `img.complete` is the authoritative answer to "did this already load", so
+   * the effect asks it once on mount. `onLoad` still handles the ordinary case
+   * where the fetch is still in flight.
+   */
+  const imgRef = React.useRef<HTMLImageElement | null>(null)
   const [imgLoaded, setImgLoaded] = React.useState(false)
+
+  React.useEffect(() => {
+    // `naturalWidth` distinguishes "loaded" from "failed": a broken image is
+    // also `complete`, and fading one in would replace the letter placeholder
+    // with nothing at all.
+    if (imgRef.current?.complete && imgRef.current.naturalWidth > 0) setImgLoaded(true)
+  }, [product.imageUrl])
+
   const outOfStock = !product.inStock
   const onSale = product.salePrice != null && product.salePrice < product.basePrice
   const discount = onSale ? Math.round(((product.basePrice - product.salePrice!) / product.basePrice) * 100) : 0
@@ -92,6 +121,7 @@ export function ProductCard({
         <a href={`/products/${product.slug}`} className="w-20 h-24 shrink-0 bg-surface-low rounded-sm overflow-hidden p-2 flex items-center justify-center relative group/img focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
           {product.imageUrl ? (
             <img
+              ref={imgRef}
               src={product.imageUrl}
               alt={product.name}
               className={cn(
@@ -179,6 +209,7 @@ export function ProductCard({
         <a href={`/products/${product.slug}`} className="relative z-0 block h-full w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
           {product.imageUrl ? (
             <img
+              ref={imgRef}
               src={product.imageUrl}
               alt={product.name}
               className={cn(

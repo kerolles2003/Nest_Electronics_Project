@@ -3410,3 +3410,137 @@ clients render the same images, why `version` matters for cache-busting, the one
 place it is legitimately absent — a cart line, and what that costs — and the
 fact that **no product has an image today**, so the placeholder path is the one
 to build first.
+
+---
+
+# Frontend QA — the first pass with a browser open
+
+Everything before this was reasoned from jsdom and a clean build. This is the
+first time the storefront has been rendered, screenshotted at real phone widths
+and looked at.
+
+## Part 0 — making it judgeable
+
+### The catalogue had no pixels
+
+Every product image field resolves through `imageUrl()`, which returns `null`
+without `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, so all 34 products rendered their
+letter placeholder. A grid of blank boxes is uniform in a way a grid of
+photographs never is: unequal card heights, clipped titles, aspect-ratio
+handling and the gallery are all invisible against it.
+
+`apps/api/scripts/generate-placeholder-images.mjs` draws one image per image the
+seed already declares, at the **exact** `width` and `height` the database holds
+— so the file matches the box the page reserved — and pushes the bytes through
+`processUploadedImage()`, the same function `MediaService.upload()` calls. The
+seed already had the awkward mix worth having: 25 images over 13 of 34 products,
+squares at 1200×1200, landscape at 1600×900, one portrait at 900×1600, five
+products with a three-image gallery, and 21 products with none at all.
+
+`apps/storefront/e2e/qa/` serves them to the browser by intercepting
+`res.cloudinary.com` **and** `/_next/image` — the grid uses a plain `<img>` and
+the detail page uses `next/image`, which fetches from the server where no
+browser-side route can see it. Intercepting only the first left every detail
+image broken and looked like a product bug.
+
+Nothing in `src/` knows any of this exists, and the URL the browser requests is
+the URL production will request.
+
+### Is this site Arabic?
+
+**No, and nothing in it is prepared to be.** `<html lang="en">`, no `dir`
+attribute anywhere, no Arabic character in `apps/storefront/src` or `packages/`,
+no locale routing, no message catalogue, and the storefront never sends
+`Accept-Language` — so the API's Arabic support is real and unreachable from the
+web client. The catalogue has no Arabic content seeded either: `name.ar` is
+`null` throughout. Details in the report; **no RTL work was started.**
+
+### What governs the design
+
+`DESIGN.md` plus `apps/storefront/src/app/globals.css`, which implements it.
+`packages/config/src/tailwind.preset.ts` is **dead** — nothing imports it, there
+is no `tailwind.config.*` anywhere, and the storefront is Tailwind v4 driven by
+`@theme inline` in `globals.css`. It also disagrees: blue `#1d4ed8` and
+Inter/Space Grotesk against the live rose `#e14a5c` and Albert Sans/Urbanist. It
+was used as a reference for one of its colours and is otherwise reported, not
+changed.
+
+## The defect underneath the whole storefront: **`packages/ui` was not a Tailwind source**
+
+Tailwind v4 detects its sources automatically from the stylesheet's directory
+and **excludes `node_modules`**. `@nest/ui` is a workspace package reached
+through a `node_modules` symlink, so it was never scanned: every utility used
+only in `packages/ui/src` and nowhere in `apps/storefront/src` produced **no CSS
+at all**.
+
+135 classes. Measured, not estimated — the compiled stylesheet was fetched from
+the dev server and every class token in `packages/ui/src` matched against it.
+What that was doing to the shipped site:
+
+| Missing | Effect |
+|---|---|
+| `bg-[#E14A5C]` | the sale badge: white text on a transparent background, over a light image box — **invisible** |
+| `fill-[#EABE12]` `text-[#EABE12]` | star ratings could never be gold |
+| `min-h-[38px]` | card titles reserved no second line, so cards in a row had different heights |
+| `text-[18px]` | the price rendered at the inherited size |
+| `z-[9999]` `w-80` `border-l-4` | the toast had no width, no stacking order and no colour bar |
+| `top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%]` | any `Dialog` was not centred |
+| `sr-only` | screen-reader-only text was **visible** |
+| `[&_tr]:border-b` `align-middle` `overflow-auto` | tables lost their row separators and their scroll |
+| the whole `before:*` set | the skeleton had no shimmer |
+
+The reason nobody noticed is the worst part: the classes the storefront happens
+to use as well *were* emitted, so the library was styled **in patches**. Patchy
+looks like a design decision. Unstyled looks like a bug.
+
+The fix is one line — `@source "../../../../packages/ui/src"` — and it took the
+compiled stylesheet from 118,986 to 132,123 bytes. 139 unresolved tokens became
+28, and those 28 are `tailwindcss-animate` utilities for a plugin that is not
+installed, two import strings the scanner cannot tell from classes, and
+`text-warning`.
+
+### `--color-warning` was simply absent
+
+`StatusBadge` styles `pending`, `processing` and `pending_payment` with
+`bg-warning/10 text-warning border-warning/20`. No `--color-warning` was
+defined, so none of the three produced a rule and **an order waiting to be
+confirmed — where every cash-on-delivery order starts — drew a badge with no
+background, no border and inherited text.** Defined now, at the value this
+repository already chose for the role in `tailwind.preset.ts` (`#b45309`, 5.9:1
+on white) rather than DESIGN.md's `#EABE12`, which is specified there for star
+fills and is about 1.7:1 as text.
+
+## Every product image on the site was invisible
+
+`ProductCard` renders its `<img>` at `opacity-0` and flips to `opacity-100` in
+`onLoad`. The card is **server-rendered**: the browser starts the fetch when the
+HTML arrives and very often finishes before React hydrates, so `load` has
+already fired by the time `onLoad` is attached, the state never flips, and the
+image sits at zero opacity for the life of the page — fetched, decoded, laid
+out, invisible.
+
+Measured on the home page before the fix: **12 of 21 images at `opacity: 0`,
+every one of them `complete` with a real `naturalWidth`.** The failure mode is
+inverted in the worst way — the *faster* the image arrives, the more certainly
+the event is missed, so a slow first load looks fine and a reload from cache
+shows nothing.
+
+Fixed in the primitive by asking the DOM instead of waiting for it:
+`img.complete && img.naturalWidth > 0` in a mount effect, with `onLoad` still
+handling the in-flight case. `naturalWidth` is what separates "already loaded"
+from "failed", and fading in a failed image would replace the letter placeholder
+with nothing.
+
+## Every product was rated zero stars
+
+`toProductCard` did `rating: product.rating.average / 100`, with a comment
+asserting the API sends hundredths. It does not: `ProductRatingDto.from` already
+does `Math.round(average) / 100` and `openapi.v1.json` documents the field as
+"Mean score, 0–5, one decimal". So 4.47 became 0.0447, `Math.floor` made it
+zero, and every product on the site drew five empty stars **beside its review
+count** — "29 people rated this nothing", which is worse than showing no rating
+at all.
+
+The same division was in the product detail page, where it also feeds
+`lib/json-ld.ts` — so the structured data offered to search engines said the
+entire catalogue was rated 0.04 out of 5.

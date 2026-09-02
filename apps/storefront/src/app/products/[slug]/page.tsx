@@ -156,7 +156,10 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
     salePrice: detail.pricing.salePrice === null ? null : detail.pricing.salePrice.amount / 100,
     stockOnHand: detail.stockOnHand,
     availableStock: detail.stockOnHand,
-    rating: detail.rating.average / 100,
+    // Not divided — see the note in `lib/api/view-model.ts`. The API's
+    // `average` is already 0-5 with one decimal; dividing again made every
+    // product a zero-star product, here and in the JSON-LD this page emits.
+    rating: detail.rating.average,
     reviewCount: detail.rating.count,
 
     // `specs` carries a unit the legacy attribute join had nowhere to put.

@@ -163,9 +163,21 @@ export function toProductCard(product: ProductListItem): ProductCardModel {
     basePrice: product.pricing.basePrice.amount / 100,
     salePrice: product.pricing.salePrice === null ? null : product.pricing.salePrice.amount / 100,
 
-    // The API sends the mean in hundredths (430 = 4.30); the card wants a
-    // decimal for its star row.
-    rating: product.rating.average / 100,
+    /*
+     * Passed through, NOT divided.
+     *
+     * This used to be `average / 100`, on the belief that the API sends the
+     * mean in hundredths. It does not: `ProductRatingDto.from` already does
+     * `Math.round(average) / 100`, and `openapi.v1.json` documents the field as
+     * "Mean score, 0-5, one decimal". So a genuine 4.5 arrived here and left as
+     * 0.045, `Math.floor` made it zero, and every product on the site drew five
+     * empty stars beside a review count — "29 people rated this nothing".
+     *
+     * It reached further than the stars: `lib/json-ld.ts` publishes this same
+     * number as `aggregateRating.ratingValue`, so the structured data offered
+     * to search engines said the whole catalogue was rated 0.04 out of 5.
+     */
+    rating: product.rating.average,
     reviewCount: product.rating.count,
 
     inStock: product.availability !== 'OUT_OF_STOCK',
