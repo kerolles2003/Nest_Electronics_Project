@@ -121,7 +121,23 @@ export default defineConfig({
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { API_BASE_URL: 'http://127.0.0.1:3002/api/v1' },
+      env: {
+        API_BASE_URL: 'http://127.0.0.1:3002/api/v1',
+        /*
+         * A bigger heap for `next dev`.
+         *
+         * Turbopack's dev server ran out of memory part-way through a full run
+         * once the suite started exercising CLIENT behaviour — until
+         * `allowedDevOrigins` was set, every `/_next/*` chunk was refused, so
+         * the dev server was never asked to compile and serve most of them.
+         * Doing the work it was always supposed to do needs more than Node's
+         * default heap on this machine.
+         *
+         * A harness setting, not a product one: `next build` is unaffected and
+         * production serves pre-built chunks.
+         */
+        NODE_OPTIONS: '--max-old-space-size=4096',
+      },
     },
   ],
 });

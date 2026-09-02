@@ -2335,3 +2335,130 @@ database, the same failure with a cheaper consequence.
 
 Recorded in PLAN §9.2 and changelog **30**, because a `[V]` that holds only while
 an unmonitored precondition happens to be true is worth naming as what it was.
+
+## Part 1 — the guest cart
+
+A thin store of `{productId, quantity}`, priced by the API at render, merged
+into the customer's cart on the first authenticated page load.
+
+### The merge, in the one order that survives being interrupted
+
+```
+1. plan     read-only. Nothing has changed if it fails.
+2. FREEZE   the absolute target quantities are persisted BEFORE any write.
+3. apply    converge each line to its target. Repeating changes nothing.
+4. confirm  the basket is emptied only now.
+```
+
+Step 2 is the whole guarantee and the easy one to leave out. Without it a retry
+re-plans against a cart that already holds some of the guest quantities and adds
+them a second time.
+
+That is also why the merge is **two server actions rather than one**: a single
+action would compute and write in one breath, and a dropped connection after the
+write but before the response would leave the browser holding a basket it
+believes is unmerged.
+
+### The rules as shipped
+
+| Situation | Result |
+|---|---|
+| guest items, empty server cart | all move |
+| guest items, different server items | union; the server's lines are not in the plan at all, so nothing can rewrite them |
+| **same product in both** | **quantities SUM**, then the API clamps to `min(99, onHand)` |
+| beyond stock after merging | clamped by the API, and the customer is told |
+| a line is unpurchasable | that line is skipped, the rest merge, sign-in is unaffected |
+| the merge is retried | absolute targets, so the answer is the same however far the first attempt got |
+| the merge fails | the basket is untouched and retried on the next authenticated page load |
+
+Summing is a product decision and is documented as one: a customer with two in
+their account and two in their basket wants four. `max()` silently discards the
+smaller intent; "server wins" throws away the basket they just built.
+
+**Stock is never consulted client-side.** The plan may ask for more than exists;
+the API clamps, and the notice is derived from the cart it returns rather than
+from what the writes claimed.
+
+### What was retired
+
+The store holds no prices, names or images. `syncCartToDatabase` sent `price`,
+`name` and `maxStock` FROM the client to a server action that trusted them — a
+price that round-trips through `localStorage` is a price the customer can edit.
+It is still in the tree; deleting it belongs to the T2 flip that stops calling
+it.
+
+### Tests
+
+**19 rule tests** as pure functions (`guest-cart-merge.spec.ts`) — no browser, no
+server. The storefront has no unit-test runner, and adding one for a single
+module would be more infrastructure than the module deserves.
+
+**8 browser tests** against the real API (`guest-cart-journey.spec.ts`), asserting
+the cart line by line from the API's own JSON rather than from the page. Two of
+them cover the retry:
+
+- the second server action is **aborted at the network layer**, the frozen plan
+  is asserted to be on disk, and the retry produces 5 — not 7, not 10;
+- and the deterministic twin: a plan that was already applied but whose response
+  was lost. That is the case a network abort cannot reliably produce, and the
+  one that doubles a basket if the plan is recomputed.
+
+One test signs in through the real form; the rest install the session cookies
+directly, because registration is throttled to 3/hour and login to 5/15min —
+right for humans, a hard ceiling for a suite that wanted an account each.
+
+## The bug underneath all of it: **the client had never been running**
+
+The merge did nothing. No error, no request, no console message. Four
+increasingly narrow probes later:
+
+```
+a trivial client component's useEffect on /shop   ->  never ran
+document.title set in that effect                 ->  unchanged
+/, /products, /shop                               ->  no client behaviour anywhere
+```
+
+**Next 16 blocks cross-origin requests for `/_next/*` dev resources, and treats
+`127.0.0.1` and `localhost` as different origins.** The suite drives
+`http://127.0.0.1:3100`; the dev server calls itself `localhost:3100`. Every
+client chunk was refused. React never booted on any page, in any test, ever.
+
+It hid for so long because nothing depended on it: pages server-render, forms
+still submit through progressive enhancement, and the only symptom was a failing
+HMR WebSocket — which reads exactly like dev noise. It sat in the
+`browser-health` ignore list as 77–84 suppressed problems per run.
+
+`allowedDevOrigins: ['127.0.0.1']` in `next.config.ts`, which is what Next's own
+warning tells you to do.
+
+### It also means I reported the 404 body wrongly in Phase 5a
+
+I wrote that `notFound()` after an `await` produces an empty document and that
+it could not be fixed from inside a page. **The client was not rendering
+anything.** With the browser actually running the application, the designed 404
+renders — and the three `test.fail()` cases I left as tripwires went red by
+passing, which is exactly what they were for.
+
+Corrected in `not-found.spec.ts`: the content is asserted directly, and the
+header records what actually happened. **The status fix was real and was
+needed;** the "empty body" was an artefact of measuring through a harness that
+had disabled the client.
+
+### Two further consequences
+
+- **The dev server now runs out of memory** doing the work it was never asked to
+  do before. `NODE_OPTIONS=--max-old-space-size=4096` for the e2e web server; a
+  harness setting, not a product one.
+- **A zustand trap, recorded where it bit.** The obvious sanitising hook,
+  `onRehydrateStorage: () => (state) => useGuestCartStore.setState(...)`,
+  references the store binding from inside `create()` before the `const` is
+  initialised. The `ReferenceError` is swallowed by the persist middleware and
+  hydration silently never completes — `hasHydrated()` false for ever, basket
+  reads empty, nothing in the console. `merge` is the correct hook and touches
+  no outer binding.
+
+### Counts
+
+jest **813 passed, 15 skipped** (828) — unchanged, no API code changed.
+Playwright **44 → 68**, all green. Build, type-check, lint and the drift gate
+green.

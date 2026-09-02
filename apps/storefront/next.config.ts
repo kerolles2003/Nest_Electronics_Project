@@ -1,6 +1,24 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Hosts allowed to request `/_next/*` dev resources.
+   *
+   * Development only — Next 16 blocks cross-origin requests for dev assets, and
+   * treats `127.0.0.1` and `localhost` as different origins. The e2e suite
+   * drives `http://127.0.0.1:3100` while the dev server calls itself
+   * `localhost:3100`, so **every client chunk was refused and React never
+   * booted**: pages server-rendered correctly, forms still worked through
+   * progressive enhancement, and no `useEffect` in the application ran at all.
+   *
+   * It went unnoticed because nothing in the suite had needed client-side
+   * behaviour until the guest-cart merge, which runs in an effect. The only
+   * visible symptom was a failing HMR WebSocket, which reads like dev noise.
+   *
+   * Next's own warning names this setting as the fix.
+   */
+  allowedDevOrigins: ['127.0.0.1'],
+
   transpilePackages: ['@nest/types', '@nest/config', '@nest/repositories', '@nest/providers', '@nest/services', '@nest/ui'],
   images: {
     /*

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { readSession } from '@/lib/api/session';
 import { logoutAction } from '@/actions/api-auth.actions';
+import { GuestCartMerge } from '@/components/cart/GuestCartMerge';
 
 /**
  * The API-backed storefront.
@@ -59,6 +60,13 @@ export default async function ShopLayout({ children }: { children: React.ReactNo
           </div>
         </nav>
       </header>
+
+      {/*
+        * Rendered only when there IS a session, so an anonymous visitor never
+        * mounts it and it cannot fire a merge for nobody. Inside the
+        * component, an empty basket with no pending plan costs no request.
+        */}
+      {signedIn ? <GuestCartMerge /> : null}
 
       <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
     </div>

@@ -31,31 +31,30 @@ import { expect, test } from './fixtures/browser-health';
  * dead link, against a skeleton on four routes — and reversible, because Phase
  * 5b owns `proxy.ts` and an existence check there would let them all come back.
  *
- * ## What is NOT fixed, and exactly why
+ * ## The body was never broken — the test harness was
  *
- * The 404 body is **empty**. Measured across every combination in Next 16.2.4:
+ * Phase 5a recorded the 404 BODY as empty and unfixable from inside a page:
+ * `notFound()` thrown after an `await` produced a document whose visible markup
+ * was empty, with the designed page present only in the RSC flight payload.
+ * The conclusion drawn was that the client never rendered it.
  *
- * ```
- * how notFound() is reached                     status   designed page
- * URL matches no route at all                     404     RENDERED
- * thrown synchronously, before any await          404     RENDERED
- * thrown after an await, no loading.tsx above     404     empty
- * thrown after an await, loading.tsx above        200     empty     <- was here
- * thrown from generateMetadata after an await     404     empty
- * ```
+ * The client never rendered ANYTHING. Next 16 blocks cross-origin `/_next/*`
+ * dev requests, and the suite drives `127.0.0.1:3100` while the dev server
+ * calls itself `localhost:3100` — so every client chunk was refused and React
+ * never booted on any page. Server-rendered HTML looked right, forms still
+ * worked through progressive enhancement, and no `useEffect` in the application
+ * ran at all. `allowedDevOrigins` fixes it (see `next.config.ts`).
  *
- * A data-driven 404 has to ask the API whether the thing exists, so it always
- * awaits — which is precisely the case Next's own docs warn about: *"Place
- * `notFound()` before those boundaries and before any `await` that may
- * suspend."* There is no in-page arrangement that satisfies both.
+ * With the browser actually running the application, the designed 404 renders.
+ * The status fix below is real and was needed; the "empty body" was an artefact
+ * of measuring through a harness that had disabled the client.
  *
- * So this moved every data-driven 404 from the last row to the third: **the
- * status is fixed, the body is not**. The remaining half needs the existence
- * check to move into `proxy.ts`, which is out of scope here.
- *
- * The content assertion below is therefore `test.fail()` — a real assertion that
- * is expected to fail today, and that turns the suite RED the moment it starts
- * passing, so the workaround gets removed rather than outliving the bug.
+ * What remains true, and is asserted rather than assumed: the visible markup is
+ * rendered by the CLIENT, so the server-sent HTML for a data-driven 404 carries
+ * the page in its payload rather than its markup. For a 404 that is
+ * unimportant — the status is correct and `noindex` is present, so nothing
+ * indexes it — but it is the reason this file no longer claims the body is
+ * server-rendered.
  */
 
 /** Routes that 404 from their own data — every one of them awaits first. */
@@ -90,7 +89,7 @@ test('a URL matching no route answers 404 AND renders the designed page', async 
 });
 
 for (const { url, label } of DATA_DRIVEN) {
-  test(`${label} answers 404`, async ({ page, health }) => {
+  test(`${label} answers 404 AND renders the designed page`, async ({ page, health }) => {
     health.allowConsoleError(EXPECTED_404_LOG);
 
     const response = await page.goto(url);
@@ -98,31 +97,19 @@ for (const { url, label } of DATA_DRIVEN) {
     // THE assertion. Every one of these was 200 before.
     expect(response?.status()).toBe(404);
 
+    // And the page a customer actually sees. This was a `test.fail()` for one
+    // session, on the belief that the body could not be rendered from inside a
+    // page; it was the harness, not the page.
+    await expect(page.getByRole('heading', { name: 'Page Not Found' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Go to Homepage' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Browse Products' })).toBeVisible();
+
     // Next's own mitigation, still in place and now belt-and-braces with the
     // status: a crawler that ignored the 404 must still not index this.
     await expect(page.locator('meta[name="robots"][content="noindex"]')).toHaveCount(1);
 
     // And it is genuinely not serving catalogue content under a 404.
     await expect(page.locator('main a[href^="/products/"]')).toHaveCount(0);
-  });
-
-  test(`${label} renders the designed page`, async ({ page, health }) => {
-    /*
-     * EXPECTED TO FAIL — see the file header for the measurement table.
-     *
-     * `test.fail()` rather than `test.skip()` deliberately. A skipped test
-     * proves nothing and rots quietly; this one runs, asserts the real thing,
-     * and Playwright fails the suite if it ever PASSES. That is the signal to
-     * delete this block and fold the assertion into the test above.
-     */
-    test.fail();
-    health.allowConsoleError(EXPECTED_404_LOG);
-
-    await page.goto(url);
-
-    await expect(page.getByRole('heading', { name: 'Page Not Found' })).toBeVisible({
-      timeout: 5_000,
-    });
   });
 }
 
