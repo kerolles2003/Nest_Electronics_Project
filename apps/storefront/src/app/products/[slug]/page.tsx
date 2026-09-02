@@ -204,7 +204,15 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
 
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-[13px] font-medium text-foreground-muted mb-8 bg-surface-low px-4 py-2.5 rounded-full inline-flex border border-border/50" aria-label="Breadcrumb">
+      {/*
+        `flex-wrap` and `max-w-full`, because this pill is `inline-flex`.
+
+        An inline-flex box sizes to its content and ignores the container's
+        width, so "Home · <category> · <product name capped at 200px>" plus the
+        pill's own padding came to 413px and pushed a 390px phone sideways. It
+        wraps to a second line now instead of leaving the screen.
+      */}
+      <nav className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-foreground-muted mb-8 bg-surface-low px-4 py-2.5 rounded-full inline-flex max-w-full border border-border/50" aria-label="Breadcrumb">
         <Link href="/" className="hover:text-primary transition-colors duration-300 flex items-center gap-1.5">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
           Home

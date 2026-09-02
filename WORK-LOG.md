@@ -3544,3 +3544,41 @@ at all.
 The same division was in the product detail page, where it also feeds
 `lib/json-ld.ts` — so the structured data offered to search engines said the
 entire catalogue was rated 0.04 out of 5.
+
+## The body scrolled sideways on a phone, on six routes, for three reasons
+
+Measured, not guessed: `document.documentElement.scrollWidth` against
+`clientWidth` at each breakpoint, with `e2e/qa/overflow.mjs` naming the element.
+At 360px the catalogue was **90px** wider than the screen.
+
+The naive detector — "list every element wider than the viewport" — finds
+nothing, because a block parent does not grow when a child overflows it. It has
+to look at every element's right edge, fixed ones included: a `position: fixed`
+bar with `left-0 right-0` stretches to the DOCUMENT width, so the mobile bottom
+navigation was being dragged off-screen as a symptom and looked like a cause.
+
+| Route | Cause |
+|---|---|
+| `/` | the New Arrivals grid item: default `min-width: auto` on a grid item means the track cannot be narrower than its content's min-content width, and the list card's was 439px |
+| `/products` and every filtered view | six sort chips in a row that neither wrapped nor scrolled — "Top Rated" and "Name: A-Z" were off the right edge of the screen, and the labels broke mid-phrase ("Price:/Low to/High") trying to fit |
+| `/products/<slug>` with a long name | the breadcrumb pill is `inline-flex`, so it sizes to its content and ignores its container: 413px of "Home · Development Boards · <name capped at 200px>" plus padding |
+
+`min-w-0`, `flex-wrap` + `whitespace-nowrap`, and `flex-wrap` + `max-w-full`.
+No layout was redesigned; the same elements in the same order now fit. Verified
+at 360 and 390 on all four routes: `scrollWidth === clientWidth` exactly.
+
+### The catalogue had no `<h1>`
+
+Every other route has exactly one. `/products` identified itself only through
+the last segment of its breadcrumb, which lives in a `<nav>` and is not a
+heading — so the most indexable page on the site had no top-level heading, and a
+screen reader's heading list showed it as untitled. Added as `sr-only`, because
+the design deliberately puts the page's identity in the breadcrumb and the
+toolbar; whether the catalogue should have a visible title is a question for the
+owner and is in the report, not decided here.
+
+### And one thing that was reported closed and actually is
+
+**Exactly one `<main>` on every route at every one of the five breakpoints** —
+24 routes × 5 widths, counted in the DOM rather than in the source. The root
+layout owns the only one and no page adds a second.

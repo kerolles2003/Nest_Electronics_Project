@@ -161,6 +161,41 @@ const SCREENS = [
   { id: 'account-signedout', path: '/account' },
 ];
 
+/**
+ * The screens behind sign-in, shot in a second context.
+ *
+ * The sandbox account is seeded with a real placed order and two addresses —
+ * one in Cairo and one outside it — so order history, order detail and the
+ * checkout quote all have something to render. Without it these five screens
+ * are the sign-in page five times.
+ */
+const SIGNED_IN = [
+  { id: 'account', path: '/account' },
+  { id: 'account-orders', path: '/account/orders' },
+  { id: 'account-addresses', path: '/account/addresses' },
+  { id: 'account-profile', path: '/account/profile' },
+  { id: 'checkout', path: '/checkout' },
+  { id: 'cart-full', path: '/cart' },
+];
+
+const SANDBOX = {
+  email: process.env.QA_EMAIL ?? 'sandbox@nest-electronics.test',
+  password: process.env.QA_PASSWORD ?? 'brass thermionic valve',
+};
+
+/** Signs in through the real form, so the session is a real session. */
+async function signIn(context) {
+  const page = await context.newPage();
+  await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
+  await page.fill('input[name="email"]', SANDBOX.email);
+  await page.fill('input[name="password"]', SANDBOX.password);
+  await Promise.all([
+    page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 }),
+    page.click('button[type="submit"]'),
+  ]);
+  await page.close();
+}
+
 async function shoot(context, screen, viewport, report) {
   const page = await context.newPage();
   const consoleErrors = [];
@@ -230,6 +265,27 @@ async function main() {
     }
 
     await context.close();
+
+    if (process.env.QA_SKIP_AUTH === undefined && only.length === 0) {
+      const authed = await browser.newContext({
+        viewport: { width: viewport.width, height: viewport.height },
+        isMobile: viewport.isMobile,
+        hasTouch: viewport.isMobile,
+        deviceScaleFactor: 1,
+      });
+      await servePlaceholderMedia(authed);
+
+      try {
+        await signIn(authed);
+        for (const screen of SIGNED_IN) {
+          await shoot(authed, screen, viewport, report);
+        }
+      } catch (error) {
+        process.stdout.write(`  sign-in FAILED: ${String(error).slice(0, 160)}\n`);
+      }
+
+      await authed.close();
+    }
   }
 
   await browser.close();

@@ -28,9 +28,20 @@ export function NewArrivals({ products }: NewArrivalsProps) {
 
         <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
           {products.slice(0, 8).map((product, index) => (
-            <div 
+            /*
+             * `min-w-0` is load-bearing.
+             *
+             * A grid item's default `min-width: auto` means the track cannot be
+             * narrower than the item's min-content width. The list card inside
+             * is a flex row — 80px thumbnail, an info column, a 40px button —
+             * whose min-content came to 439px, so on a 390px phone the whole
+             * PAGE scrolled sideways by 68px. Nothing looked broken; the body
+             * was simply wider than the screen, which also stretched the fixed
+             * bottom navigation past the edge.
+             */
+            <div
               key={product.id}
-              className="animate-impeccable-reveal"
+              className="animate-impeccable-reveal min-w-0"
               style={{ animationDelay: `${index * 50}ms` }}
             >
               <ProductCard
@@ -53,7 +64,7 @@ export function NewArrivalsSkeleton() {
           <div className="h-6 w-32 bg-[var(--color-border)] animate-pulse rounded" />
           <div className="h-4 w-16 bg-[var(--color-border)] animate-pulse rounded" />
         </div>
-        <div className="grid gap-x-8 gap-y-2 md:grid-cols-2">
+        <div className="grid gap-x-8 gap-y-2 md:grid-cols-2 [&>*]:min-w-0">
           {Array.from({ length: 8 }).map((_, i) => (
             <ProductListSkeleton key={i} />
           ))}

@@ -171,6 +171,23 @@ export default async function ProductsPage(
 
   return (
     <div className="container-nest section-gap">
+      {/*
+        The catalogue had no `<h1>` at all.
+
+        Every other page has one; this one identified itself only by the last
+        segment of a breadcrumb, which is inside a `<nav>` and is not a heading.
+        A screen reader's heading list showed the page as untitled, and the most
+        important indexable page on the site had no top-level heading for a
+        crawler either.
+
+        It is visually hidden rather than drawn, because the design puts the
+        page's identity in the breadcrumb and the toolbar, and inventing a
+        display heading here would be a design change rather than a fix. That
+        the catalogue has no visible title is raised in the QA report as a
+        question for the owner, not decided here.
+      */}
+      <h1 className="sr-only">All products</h1>
+
       {/* Breadcrumbs */}
       <nav className="flex items-center gap-1.5 text-xs text-foreground-muted mb-4" aria-label="Breadcrumb">
         <Link href="/" className="hover:text-primary transition-colors">Home</Link>
@@ -178,17 +195,32 @@ export default async function ProductsPage(
         <span className="text-foreground font-medium">All Products</span>
       </nav>
 
-      {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-foreground-muted">{result.meta.total} products found</p>
-        <div className="flex items-center gap-2">
+      {/*
+        Toolbar.
+
+        Everything here wraps, and the chips do not break internally.
+
+        It used to be one non-wrapping row of six sort links. On a 390px phone
+        that row was 374px wide starting 77px in, so "Top Rated" and "Name: A-Z"
+        were off the right edge of the SCREEN — reachable only by scrolling the
+        whole body sideways, which also dragged the fixed bottom navigation with
+        it. The labels themselves broke mid-phrase ("Price:/Low to/High"), and
+        "34 products found" was squeezed into three lines to make room.
+
+        `whitespace-nowrap` keeps each chip whole; `flex-wrap` lets the row
+        become two rows instead of leaving the viewport. Same chips, same order,
+        same styling — they just fit now.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4">
+        <p className="shrink-0 text-sm text-foreground-muted">{result.meta.total} products found</p>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-foreground-muted hidden sm:inline">Sort:</span>
-          <div className="flex items-center gap-0.5">
+          <div className="flex flex-wrap items-center gap-0.5">
             {sortOptions.map((opt) => (
               <Link
                 key={opt.value}
                 href={buildUrl(currentParams, { sort: opt.value, page: undefined })}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors duration-150 ${
+                className={`whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors duration-150 ${
                   activeSort === opt.value
                     ? "bg-foreground text-white rounded-full"
                     : "text-foreground-muted hover:text-foreground hover:bg-surface rounded-md"
