@@ -93,15 +93,9 @@ export const couponSchema = z.object({
 });
 export type CouponInput = z.infer<typeof couponSchema>;
 
-// ---- Order Lookup Schema (guest tracking) ----
-export const orderLookupSchema = z.object({
-  order_number: z.string().min(1, 'Order number required'),
-  phone: z
-    .string()
-    .regex(/^([+]?20|0)?1[0-2,5]{1}[0-9]{8}$/, 'Invalid Egyptian phone number')
-    .min(1, 'Phone required'),
-});
-export type OrderLookupInput = z.infer<typeof orderLookupSchema>;
+// The guest order-lookup schema was removed with the tracking page: nothing
+// referenced it once `/order-tracking` was deleted, and leaving a validator for
+// a feature that has no endpoint reads like one is on the way. PLAN.md 9.
 
 export const cartItemSchema = z.object({
   productId: z.string().uuid(),

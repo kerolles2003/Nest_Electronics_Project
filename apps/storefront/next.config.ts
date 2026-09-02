@@ -72,6 +72,20 @@ const nextConfig: NextConfig = {
       // The catch-all LAST: a product page under the old slice.
       gone('/shop/:slug', '/products/:slug'),
       gone('/shop', '/products'),
+
+      /*
+       * Guest order tracking is gone, not moved.
+       *
+       * The page looked up an order by number and phone with no session. That
+       * only made sense while a guest could place one, and guest checkout was
+       * removed by a frozen decision: every order now belongs to an account.
+       * So "where is my order?" has exactly one answer, and it is behind
+       * sign-in. The redirect lands on it; the proxy then sends a signed-out
+       * visitor to `/login?redirect=%2Faccount%2Forders`, which is the correct
+       * next step rather than a dead end. PLAN.md 9 records what would have to
+       * change for the public page to come back.
+       */
+      gone('/order-tracking', '/account/orders'),
     ];
   },
 

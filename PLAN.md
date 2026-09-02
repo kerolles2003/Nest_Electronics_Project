@@ -208,10 +208,55 @@ The existing 40-endpoint surface `[V]` is sound and consumed by `/shop` (verifie
 |---|---|---|
 | ~~Storefront T2~~ | ~~`PATCH /users/me`; `POST /auth/forgot-password`; `POST /auth/reset-password`~~ **LANDED (5a) `[V]`** — all three exist with the §2.8 discipline: hashed at rest, single-use, 1-hour TTL, neutral responses, `tokenVersion` bump and full refresh-token revocation in one transaction. | The API half of `/account/profile` and `/forgot-password` is done; the PAGES are 5b. **This row named the reset pair wrongly** — `password-reset/request` and `/confirm` — and the wrong names were built before the mistake was caught. **`AUTHORIZATION-MODEL.md` §2.8 is the authority and the paths above are its.** Corrected in the source rather than aliased: see changelog 28. |
 | Storefront T2 (D-8) | Shipping-rate read inside the existing quote (no new public endpoint — `FulfilmentService` body change + the frozen Mongo **`shippingRates`** collection) | See §3 shipping row and Phase 5. **Name and field shape are taken from the frozen `MONEY-MODEL.md` §6 / `MONGODB-DESIGN.md` §11, not invented here.** |
-| Storefront (frozen promise) | Guest order tracking endpoint per `GUEST-CHECKOUT.md` (“secure server-side endpoint”) `[P]` — order number + email/phone proof, heavily throttled | `/order-tracking` page exists with a client store today `[V]`. Built in Phase 8. |
+| ~~Storefront (frozen promise)~~ | ~~Guest order tracking endpoint per `GUEST-CHECKOUT.md`~~ **DROPPED — see §9.3.** | The promise was conditional on guests being able to place orders. They cannot. **Not built; not deferred; withdrawn.** The page, its client store and its nav link were deleted 2026-09-02. |
 | Admin | products/categories/brands CRUD (+slug rules per `CATALOG-MODEL.md`); media upload (§13, ADR-MEDIA-001); inventory adjustment/restock (§14); customers list/detail/role change; **shipping-rules CRUD (D-8)**; admin audit trail per `AUDIT-MODEL.md` | The admin/orders lifecycle surface already exists `[V]` — the admin UI just doesn’t call it. |
 | Rebuild domains (D-5 — required) | coupons (per the already-frozen `DISCOUNT-MODEL.md` spec `[V]`: model, redemptions collection, validation codes, checkout apply/remove), reviews (+ moderation endpoints), wishlist, blog | Phase 8; the discount envelope already exists in pricing (`discountTotal` `[V]`). |
 | Deferred | ~~Google OAuth~~ — **post-launch by D-3** | Recorded, not scheduled. |
+
+### 9.3 Guest order tracking — WITHDRAWN 2026-09-02
+
+`GUEST-CHECKOUT.md` §3 says **“KEEP guest order tracking — completely redesigned as a
+secure server-side endpoint”**, and §3.2 specifies `POST /api/v1/orders/track`. That promise
+was never withdrawn when the thing underneath it was.
+
+**Why it is withdrawn.** Guest checkout was removed by a frozen decision. Every order is
+placed by an authenticated customer and belongs to an account, so there is no order a guest
+could be tracking. The endpoint would take an order number and a phone number, prove nothing
+that a session does not already prove, and answer questions about somebody's purchase to
+anyone who can guess two fields — which is why §3 was careful about throttling in the first
+place. Building it would add an unauthenticated read of order data whose only user does not
+exist.
+
+Read the promise in context and it is already conditional: every justification in §3.4
+(“the UI already exists”, “reasonable expectation for a COD store”) is about a customer who
+checked out *without an account*.
+
+**The condition under which it revives.** If guest checkout returns, this comes back with it,
+and `GUEST-CHECKOUT.md` §3.2–§3.6 is still the specification — the reduced public view, the
+excluded fields (§3.5: no PII, no items, no money, no tracking number) and the throttle. That
+document is kept for that reason, not as a backlog item.
+
+**What was deleted** (2026-09-02, T3 follow-up):
+
+| Removed | Was |
+|---|---|
+| `app/order-tracking/page.tsx` | a live, nav-linked page |
+| `components/order-tracking/` (4 components) | `OrderTracker`, `OrderTimeline`, `ShipmentInfo`, `TrackOrderToggle` |
+| `stores/orderTrackingStore.ts` | a Zustand store querying **Supabase directly from the browser** for `orders`, joined to `order_items` and `order_status_history` |
+| `orderLookupSchema` / `OrderLookupInput` (`packages/types`) | referenced by nothing else |
+| `TOP_NAV_LINKS` “Track Order” entry | the only route into the page |
+
+`/order-tracking` now **301s to `/account/orders`**, where a signed-out visitor meets
+`/login?redirect=%2Faccount%2Forders`. That is the honest destination: the question is still
+“where is my order?”, and answering it now requires being the person who placed it.
+
+**Worth recording about the store, because it was live.** It ran a browser-side Supabase query
+against the `orders` table filtered only by `order_number`, fetched the whole row, and compared
+the phone number **in the browser** afterwards. The row — items, addresses, totals, status
+history — crossed to the client before any check was made, so whatever RLS did or did not
+allow, the ownership test itself was client-side. It could not have found a real order either
+way: orders live in MongoDB and have since T2. This is the last browser-side Supabase read
+outside the blog path.
 
 ### 9.1 Where documents and the served surface disagreed — RESOLVED 2026-09-02
 
@@ -591,7 +636,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 
 ---
 
-### Phase 8 — Rebuild the four domains: wishlist → blog → reviews → coupons (+ guest order tracking)
+### Phase 8 — Rebuild the four domains: wishlist → blog → reviews → coupons
 
 **Goal** — coupons, reviews, wishlist and blog run on the API end-to-end (model + endpoints + tests + admin screen + storefront UI), per D-5. No feature is dropped.
 **Why** — these are the last customer-visible legacy surfaces after T2, and D-5 rules out removal. **This phase grew**: honest estimate **~13–16 working days (~2.5–3 weeks)**, reflected here rather than absorbed silently.
@@ -602,7 +647,7 @@ Priorities follow the mandated rule: reachability → checkout/account blockers 
 2. **Blog (~3–4 days).** Content model (slug, title, body, cover via the **Phase-4** media pipeline `[O]`, publish state), admin authoring, storefront list/detail rendering. Read-mostly, no money.
 3. **Reviews (~4–5 days).** UGC: model (user, product, rating, body, status), submit endpoint (verified-purchase rule per owner preference — confirm in implementation review `[A]`), **moderation endpoints + admin screen wired BEFORE any public read exposes content** (owner requirement), PDP rendering + rating aggregates.
 4. **Coupons (~4–5 days).** Implement the frozen `DISCOUNT-MODEL.md` spec: collections + unique redemption index, validation table, checkout apply/remove field, application inside the quote/placement path via the existing `discountTotal` envelope and the frozen fee formula; admin management re-pointed. **Money-touching:** same idempotency/validation discipline as order placement; last position is deliberate — riskiest, most deferrable.
-5. **Guest order tracking (small, independent):** the `GUEST-CHECKOUT.md`-promised endpoint (order number + contact proof, heavily throttled) + re-point the `/order-tracking` page.
+5. ~~**Guest order tracking**~~ — **REMOVED FROM THIS PHASE 2026-09-02. §9.3.** The promise is conditional on guests being able to place orders, and they cannot: the feature has no user. The page, its store and its nav link were deleted rather than left waiting for an endpoint nobody should build. It revives only if guest checkout does, and `GUEST-CHECKOUT.md` §3.2–§3.6 remains its specification for that case.
 **Dependencies** — Phase 5 (storefront layer, quote path), Phase 7 (admin layer). **The media pipeline for blog covers / review images is NO LONGER a Phase 7 dependency — the upload API ships in Phase 4 `[O]`, so blog covers are unblocked as soon as Phase 4 lands.** Only the *admin authoring screen* still waits on Phase 7. Wishlist needs only Phase 5.
 **Risks** — coupons interact with money → mitigated by the frozen spec, ordering (last), and §20 item 6 tests; reviews expose UGC → moderation-first gate; deferral of items 3–4 is an owner checkpoint, recorded in §25 if taken.
 **Acceptance criteria** — per domain: journey works end-to-end on canonical URLs with the health fixture silent; coupon order shows correct `discountTotal`, fee computed on the post-discount subtotal, and double-redemption structurally refused; unmoderated review content is never publicly readable.

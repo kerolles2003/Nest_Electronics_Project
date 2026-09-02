@@ -2,6 +2,23 @@
 
 **Status:** FROZEN · **Date:** 2026-08-30 · **ADR:** ADR-AUTH-006, ADR-ORDER-005
 
+> ### Half of this decision was withdrawn on 2026-09-02
+>
+> **Guest checkout: unchanged.** An account is still required to place an order.
+>
+> **Guest order tracking: WITHDRAWN, not deferred.** §3 below promises a
+> redesigned `POST /orders/track`. It was never built, and it will not be while
+> guest checkout is gone: every order belongs to an account, so the feature has
+> no user, and shipping it would mean an unauthenticated read of order data that
+> nobody needs. The `/order-tracking` page, its client-side store and its nav
+> link were deleted; the URL 301s to `/account/orders`.
+>
+> **§3 is retained as a specification, not as a plan.** If guest checkout ever
+> returns, tracking returns with it, and §3.2–§3.6 — the reduced public view,
+> the excluded fields, the throttle — is what to build. Read it that way.
+>
+> Authority for the withdrawal: `PLAN.md` §9.3.
+
 ---
 
 ## 1. Decision
@@ -49,6 +66,10 @@ Registration is friction at the point of purchase, and some conversion is lost. 
 ---
 
 ## 3. Guest order tracking: KEEP, fully redesigned
+
+> **WITHDRAWN 2026-09-02 — see the banner at the top.** Everything below remains
+> the specification to build *if guest checkout returns*. Nothing below is
+> scheduled, and nothing below is implemented.
 
 Separate question, different answer.
 

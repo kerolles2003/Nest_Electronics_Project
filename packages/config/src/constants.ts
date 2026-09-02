@@ -47,8 +47,15 @@ export const ROUTES = {
   faq: '/faq',
 } as const;
 
+/*
+ * "Track Order" is deliberately absent.
+ *
+ * Guest order tracking was dropped with guest checkout: every order now belongs
+ * to an account, so the destination for "where is my order?" is
+ * `/account/orders`, which the account menu already reaches. PLAN.md 9 records
+ * the condition under which the public page comes back.
+ */
 export const TOP_NAV_LINKS = [
-  { label: 'Track Order', href: '/order-tracking' },
   { label: 'About', href: '/about' },
   { label: 'Contact', href: '/contact' },
   { label: 'FAQs', href: '/faq' },

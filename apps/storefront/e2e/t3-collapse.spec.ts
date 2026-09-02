@@ -37,6 +37,14 @@ const REDIRECTS: readonly [string, string][] = [
   ['/shop/orders/68b000000000000000000001', '/account/orders/68b000000000000000000001'],
   ['/shop/raspberry-pi-pico-2-w', '/products/raspberry-pi-pico-2-w'],
   ['/shop/verify-email', '/verify-email'],
+
+  /*
+   * Not a /shop URL, and here anyway because it is the same class of promise:
+   * a live, nav-linked page that was deleted. Guest order tracking went with
+   * guest checkout — every order belongs to an account now, so the answer to
+   * "where is my order?" is behind sign-in. PLAN.md 9.3.
+   */
+  ['/order-tracking', '/account/orders'],
 ];
 
 test.describe('the /shop slice is gone', () => {
@@ -63,6 +71,38 @@ test.describe('the /shop slice is gone', () => {
 
     await expect(page).toHaveURL('/products/raspberry-pi-pico-2-w');
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Raspberry Pi Pico 2 W');
+  });
+
+  test('a bookmarked /order-tracking lands on the sign-in step, not a dead end', async ({
+    page,
+  }) => {
+    /*
+     * The redirect on its own would be satisfied by pointing anywhere. What
+     * matters is that the visitor ends up somewhere they can act: signed out,
+     * `/account/orders` is guarded, so the proxy carries them to the sign-in
+     * page WITH the destination attached — after which they land on their
+     * orders rather than on the home page having forgotten why they came.
+     */
+    await page.goto('/order-tracking');
+
+    await expect(page).toHaveURL(/\/login\?redirect=%2Faccount%2Forders/);
+  });
+
+  test('nothing links to the retired tracking page any more', async ({ page }) => {
+    // A 301 that is still linked is a redirect nobody removed, not a deletion.
+    await page.goto('/');
+
+    await expect(page.locator('a[href="/order-tracking"]')).toHaveCount(0);
+
+    /*
+     * "Track Order" as WORDS is fine and stays. The footer offers it and sends
+     * the customer to their own order list, which is the same question with the
+     * only answer that still exists. What must not survive is the old
+     * destination — so this asserts where the phrase points rather than that
+     * nobody may say it.
+     */
+    const footerLink = page.getByRole('link', { name: 'Track Order' });
+    await expect(footerLink).toHaveAttribute('href', '/account/orders');
   });
 
   test('the sitemap lists no /shop URL', async ({ page }) => {

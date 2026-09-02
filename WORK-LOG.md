@@ -3065,3 +3065,56 @@ can gain reputation. That is worth knowing for two reasons: the block is real
 but intermittent, and this machine is no longer a reproduction of it. Everything
 above about the WASM path was therefore proven by forcing the fallback, not by
 happening to be on it.
+
+---
+
+## Guest order tracking: withdrawn, not deferred (C1)
+
+`GUEST-CHECKOUT.md` §3 promised a redesigned `POST /orders/track`, and Phase 8
+carried it as item 5. **The promise was conditional on something that no longer
+exists.** Guest checkout was removed by a frozen decision; every order belongs to
+an account. There is no order a guest could be tracking, so the endpoint would
+be an unauthenticated read of order data with no user — answering questions
+about somebody's purchase to anyone who can guess an order number and a phone
+number.
+
+Read §3.4 again and it says so itself: every justification given ("the UI
+already exists", "a reasonable expectation for a COD store") is about a customer
+who checked out *without an account*.
+
+**Not built. Deleted, and the deletion recorded** — PLAN.md §9.3, the §9 table
+row, the Phase 8 item, and a banner on `GUEST-CHECKOUT.md` so the promise is not
+read as pending. §3 is retained as the specification for *if guest checkout
+returns*, which is the only condition that revives it.
+
+### What the page actually was
+
+Worth writing down, because it was live and linked from the top nav.
+
+`stores/orderTrackingStore.ts` ran a **browser-side Supabase query** against
+`orders` filtered only by `order_number`, selected the whole row joined to
+`order_items` and `order_status_history`, and then compared the phone number
+**in the browser**. The row — items, addresses, totals, status history — crossed
+to the client before any ownership check happened; whatever RLS did or did not
+allow, the test itself was client-side.
+
+It could not have found a real order in any case: orders have lived in MongoDB
+since T2. So it was a page that could only ever say "Order not found", reachable
+from every page of the site. This was also the last browser-side Supabase read
+outside the blog path.
+
+### Removed
+
+`app/order-tracking/`, `components/order-tracking/` (4 components),
+`stores/orderTrackingStore.ts`, `orderLookupSchema` / `OrderLookupInput` from
+`packages/types` (referenced by nothing else), and the `TOP_NAV_LINKS` entry.
+
+`/order-tracking` now **301s to `/account/orders`**. Signed out, the proxy then
+carries the visitor to `/login?redirect=%2Faccount%2Forders`, so a bookmark
+lands on the sign-in step with its destination attached rather than on a dead
+end — asserted in `t3-collapse.spec.ts`, not just configured.
+
+**The footer's "Track Order" link stays.** It already pointed at
+`/account/orders`: the same question, with the only answer that still exists.
+The test asserts where the phrase points rather than forbidding anyone from
+saying it — a test that banned the words would have failed on correct code.
