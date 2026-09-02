@@ -3378,3 +3378,20 @@ verified against a running API during the walkthrough rather than asserted.
 
 Linked from the top of both `SANDBOX.md` and `INTEGRATION.md` — a handoff
 document nobody can find is not a handoff.
+
+### And the handoff document was checked against the contract, not trusted
+
+Writing 35 endpoint references from a reading of the source is exactly the way a
+document acquires a wrong path. So every `METHOD /path` in `MOBILE-HANDOFF.md`
+is matched against `openapi.v1.json`, and every backticked error code against
+`ErrorCode`.
+
+**It found one, in my own text:** the home screen said
+`GET /products?isFeatured=true`. The parameter is **`featured`**. Because
+unknown query parameters are a `400 UNKNOWN_FIELD` rather than a silent ignore,
+that would have been a dead first screen for whoever copied it.
+
+Corrected, the full eleven-parameter set is now listed, and the mistake is left
+in the document as the reason to take names from the artifact rather than from
+prose. The check also found `RESOURCE_NOT_FOUND` — the generic 404 — missing
+from the error table; added.

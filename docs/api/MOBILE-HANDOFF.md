@@ -54,7 +54,7 @@ too, from a different endpoint. §5.
 
 | Order | Call | Sends | Renders |
 |---|---|---|---|
-| 1 | `GET /products?isFeatured=true&limit=8` | — | Product cards |
+| 1 | `GET /products?featured=true&limit=8` | — | Product cards |
 | 2 | `GET /categories/tree` | — | Category navigation |
 
 Both public, both cacheable. Fire in parallel.
@@ -73,9 +73,18 @@ One endpoint drives all four. They differ only in the parameters.
 Response: `{ data: ProductListItem[], meta: { total, page, limit, … }, facets }`.
 `meta.total` is the **true** match count, not the page size.
 
+The full parameter set, and nothing outside it:
+`page` · `limit` · `q` · `category` · `brand` · `minPrice` · `maxPrice` ·
+`inStock` · `featured` · `spec` · `sort`.
+
 - **`facets`** carries the available filters (categories, brands, price range,
   spec values) with counts. Build the filter sheet from it rather than from a
   hardcoded list.
+- **Take the names from the artifact, not from this table.** `featured`, for
+  instance, is not `isFeatured` — an earlier draft of this document had it
+  wrong, and the reward is a `400 UNKNOWN_FIELD` rather than a silently ignored
+  parameter. That is the control working, and it is why the list above is worth
+  checking against `openapi.v1.json` before you type it.
 - **Unknown query parameters are rejected with `400 UNKNOWN_FIELD`.** This is a
   security control, not a strictness setting. Send only what the artifact
   documents.
@@ -569,6 +578,7 @@ The storefront's mapping, which is the reference implementation.
 | `UNSUPPORTED_SORT` | 400 | generic failure | no — a client bug |
 | `MALFORMED_REQUEST` | 400 | generic failure | no — a client bug |
 | `MISSING_IDEMPOTENCY_KEY` | 400 | generic failure | no — a client bug |
+| `RESOURCE_NOT_FOUND` | 404 | an empty state — the generic 404, when nothing more specific applies | navigate away |
 | `PRODUCT_NOT_FOUND` | 404 | an empty state, not an error dialog | navigate away |
 | `CATEGORY_NOT_FOUND` · `BRAND_NOT_FOUND` | 404 | an empty state | navigate away |
 | `ORDER_NOT_FOUND` | 404 | "Order not found" | navigate away |
