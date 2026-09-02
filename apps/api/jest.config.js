@@ -30,7 +30,17 @@ module.exports = {
    * which is where the 225 live calls came from. `email-isolation.spec.ts`
    * asserts the guard is actually in force.
    */
-  setupFiles: ['<rootDir>/test/setup/email-isolation.ts'],
+  /**
+   * Rate limits pinned to the production numbers for EVERY suite.
+   *
+   * `RATE_LIMIT_RELAXED` is set for the API process the browser suite starts,
+   * and for nothing else. This stops a stray shell export or a leftover `.env`
+   * line from relaxing the limits here, where the throttle is actually proven.
+   */
+  setupFiles: [
+    '<rootDir>/test/setup/email-isolation.ts',
+    '<rootDir>/test/setup/production-like-limits.ts',
+  ],
 
   // ts-jest compiles with the project tsconfig, so `emitDecoratorMetadata` is
   // honoured (Nest DI needs it) and a type error fails the run.

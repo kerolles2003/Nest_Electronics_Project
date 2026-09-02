@@ -76,6 +76,25 @@ async function apply(targets: GuestLine[]): Promise<MergeOutcome> {
     return { merged: false, message: null };
   }
 
+  /*
+   * The basket is cleared as ONE unit, not line by line.
+   *
+   * If three lines merge and the fourth fails, all four stay in the basket and
+   * the retry re-applies all four. That is safe because the targets are
+   * absolute — re-applying a line that already landed sets it to the number it
+   * already holds — so the only cost is a stale badge for the customer: the
+   * basket still shows items that are already in their account, until the next
+   * authenticated page load re-applies and clears.
+   *
+   * Clearing per line would close that window, and it was considered and
+   * rejected. It means mutating the frozen plan as the writes land, and the
+   * plan is the one thing in this flow that must not change: it is what makes a
+   * retry produce the same answer however far the first attempt got. A
+   * mutating plan has to be written back after every line, which is another
+   * partial-failure surface in the exact place partial failure is being
+   * defended against. One frozen plan beats a mutating one, and the window it
+   * costs is a single page load.
+   */
   useGuestCartStore.getState().completeMerge();
 
   return { merged: true, message: describeMergeNotices(applied.notices) };

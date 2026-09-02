@@ -1,6 +1,16 @@
-import { ExecutionContext, Injectable } from '@nestjs/common';
-import { ThrottlerGuard, type ThrottlerLimitDetail } from '@nestjs/throttler';
+import { ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import {
+  InjectThrottlerOptions,
+  InjectThrottlerStorage,
+  ThrottlerGuard,
+  ThrottlerStorage,
+  type ThrottlerLimitDetail,
+  type ThrottlerModuleOptions,
+  type ThrottlerRequest,
+} from '@nestjs/throttler';
 import type { Response } from 'express';
+import { throttleConfig, type ThrottleConfig } from '../../../config/throttle.config';
 import { THROTTLE_BY_EMAIL_KEY } from '../../../common/decorators/throttle-by-email.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 
@@ -16,6 +26,9 @@ import { AppException } from '../../../common/errors/app.exception';
  * 2. A rejection uses the project's error envelope. The library throws its own
  *    exception shape, which would be a second response format — exactly what
  *    the single envelope exists to prevent.
+ * 3. Every declared limit passes through one multiplier, so a test environment
+ *    can raise the ceiling without any route's number being rewritten and
+ *    without the guard being switched off. See `config/throttle.config.ts`.
  *
  * Storage is in-memory, which is correct for ONE instance and silently wrong
  * for more than one: with N instances the effective limit becomes N × the
@@ -24,6 +37,36 @@ import { AppException } from '../../../common/errors/app.exception';
  */
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
+  /*
+   * The base class's own parameter decorators are not inherited, so its two
+   * library-internal tokens have to be named again here. They are the same
+   * ones it uses; the only new parameter is the last.
+   */
+  constructor(
+    @InjectThrottlerOptions() options: ThrottlerModuleOptions,
+    @InjectThrottlerStorage() storageService: ThrottlerStorage,
+    reflector: Reflector,
+    @Inject(throttleConfig.KEY) private readonly throttle: ThrottleConfig,
+  ) {
+    super(options, storageService, reflector);
+  }
+
+  /**
+   * Applies the one multiplier to whatever limit the route declared.
+   *
+   * `requestProps.limit` is already resolved from the route's `@Throttle`
+   * metadata, so this is the single point every limit in the API passes
+   * through — which is what makes relaxing them for a test run one decision
+   * rather than an env var per endpoint. The multiplier is 1 in every normal
+   * process, and the schema refuses to let it be anything else in production.
+   */
+  protected handleRequest(requestProps: ThrottlerRequest): Promise<boolean> {
+    return super.handleRequest({
+      ...requestProps,
+      limit: requestProps.limit * this.throttle.limitMultiplier,
+    });
+  }
+
   protected generateKey(context: ExecutionContext, suffix: string, name: string): string {
     const base = super.generateKey(context, suffix, name);
 

@@ -45,6 +45,11 @@ import { ProvidersModule } from './providers/providers.module';
      *
      * Storage is in-memory: correct for one instance, silently wrong for more
      * than one. That is the documented Redis trigger (REDIS-DECISION.md §4).
+     *
+     * This limit, and every per-route override, is multiplied by
+     * `throttle.limitMultiplier` in `AppThrottlerGuard`. It is 1 everywhere
+     * except a test environment that asked for more headroom, and the env
+     * schema refuses to let it be anything else in production.
      */
     ThrottlerModule.forRoot({
       throttlers: [{ name: 'global', ttl: 60_000, limit: 300 }],

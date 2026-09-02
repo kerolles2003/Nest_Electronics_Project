@@ -14,6 +14,20 @@ function productLinks(page: import('@playwright/test').Page) {
   return page.locator('main a[href^="/products/"]');
 }
 
+/**
+ * A single reading, taken now. **It does not wait.**
+ *
+ * The product grid streams behind its own Suspense boundary and lands AFTER
+ * the `load` event that `page.goto()` resolves on — measured at up to four
+ * seconds on a cold dev route. So a bare `countProducts` immediately after a
+ * navigation reads the shell and returns 0.
+ *
+ * Every caller must therefore either be asserting that the grid is EMPTY (after
+ * waiting for the empty-state heading, which is the thing that proves the
+ * boundary resolved), or wait for the grid first — with `expect.poll`, or with
+ * an auto-waiting assertion on a product link. Three cases here did neither
+ * and passed on timing alone until the harness got slower.
+ */
 async function countProducts(page: import('@playwright/test').Page): Promise<number> {
   const hrefs = await productLinks(page).evaluateAll((nodes) =>
     nodes.map((node) => node.getAttribute('href')),
@@ -66,7 +80,7 @@ test.describe('/products', () => {
     await page.goto('/products?page=3');
 
     // 34 products, 16 per page -> page 3 holds the last two.
-    expect(await countProducts(page)).toBe(2);
+    await expect.poll(() => countProducts(page)).toBe(2);
   });
 
   test('filters by category, and the filter is removable', async ({ page }) => {
@@ -91,6 +105,9 @@ test.describe('/products', () => {
     // ?min_price=1000 means 1,000.00 EGP -> 100000 piastres on the wire. Send
     // the number unconverted and this returns every product in the catalogue.
     await page.goto('/products?min_price=1000');
+
+    // Wait for the streamed grid before reading it; five products match.
+    await expect(productLinks(page).first()).toBeVisible();
 
     const count = await countProducts(page);
     expect(count).toBeGreaterThan(0);
@@ -224,11 +241,13 @@ test.describe('/search', () => {
     // first-class match; a `LIKE` over the name column would find nothing here.
     await page.goto('/search?q=RPI-PICO-2W');
 
-    expect(await countProducts(page)).toBeGreaterThan(0);
+    // The href assertion auto-waits, so it also serves as the wait for the
+    // streamed grid. Counting first would read the shell.
     await expect(productLinks(page).first()).toHaveAttribute(
       'href',
       '/products/raspberry-pi-pico-2-w',
     );
+    expect(await countProducts(page)).toBeGreaterThan(0);
   });
 
   test('renders the no-results state', async ({ page }) => {

@@ -27,6 +27,26 @@ import { defineConfig, devices } from '@playwright/test';
  * everything it creates; that is a cleanup, not a licence.
  */
 /**
+ * The ONE host, used three ways that must agree.
+ *
+ * `next dev` refuses cross-origin requests for `/_next/*` dev assets, and it
+ * treats `127.0.0.1` and `localhost` as different origins. So three things have
+ * to name the same host or the browser gets no client chunks and React never
+ * boots:
+ *
+ *   1. the origin the tests drive        -> `baseURL` below
+ *   2. the host the dev server binds to  -> `next dev --hostname`
+ *   3. the origin the dev server trusts  -> `allowedDevOrigins` in next.config
+ *
+ * They used to be written out separately, two of them in another file, and they
+ * drifted — which cost every browser test in the suite its client-side
+ * behaviour for months without a single failure. They are one constant now, and
+ * the hydration canary in `e2e/fixtures/browser-health.ts` fails every spec
+ * immediately if they ever disagree again.
+ */
+const HOST = process.env['E2E_HOST'] ?? '127.0.0.1';
+
+/**
  * A dedicated port, not 3000.
  *
  * A developer very often already has `next dev` on 3000. Next.js does not fail
@@ -36,7 +56,7 @@ import { defineConfig, devices } from '@playwright/test';
  * CI or a second checkout can move it.
  */
 const PORT = process.env['E2E_PORT'] ?? '3100';
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+const BASE_URL = `http://${HOST}:${PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -87,7 +107,7 @@ export default defineConfig({
     {
       command: 'pnpm --filter api build && pnpm --filter api start',
       cwd: '../..',
-      url: 'http://127.0.0.1:3002/api/v1/health',
+      url: `http://${HOST}:3002/api/v1/health`,
       timeout: 180_000,
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'pipe',
@@ -109,20 +129,47 @@ export default defineConfig({
         // no network call at all, so no test can send real mail.
         EMAIL_PROVIDER: 'console',
         SITE_URL: BASE_URL,
+        /**
+         * Rate limits raised for THIS process only — see
+         * `apps/api/src/config/rate-limits.ts` for the multiplier and the
+         * reasoning.
+         *
+         * The production limits (3 registrations an hour, 5 logins per 15
+         * minutes) are right for the internet and a hard ceiling for a suite
+         * that needs an account or two per run: a second run inside the hour
+         * failed on the throttle rather than on the code. A suite that fails
+         * for environmental reasons teaches everyone to disregard failures,
+         * which is how a real one gets missed.
+         *
+         * The guard itself is still tested, against the real numbers, in
+         * `apps/api/test/auth/auth-guards.spec.ts` — jest pins them so this
+         * relaxation cannot reach it.
+         */
+        RATE_LIMIT_RELAXED: 'true',
       },
     },
     {
-      // `next dev` directly rather than through the `dev` script, so the port
-      // is passed without depending on pnpm argument forwarding.
-      command: `pnpm exec next dev --port ${PORT}`,
+      // `next dev` directly rather than through the `dev` script, so the host
+      // and port are passed without depending on pnpm argument forwarding.
+      // `--hostname` is what makes the dev server call itself the same thing
+      // the tests call it.
+      command: `pnpm exec next dev --hostname ${HOST} --port ${PORT}`,
       cwd: '.',
-      url: `${BASE_URL}/shop`,
+      // The hydration canary's page (`HYDRATION_CANARY_PATH`), so readiness
+      // also warms the route every test loads first.
+      url: `${BASE_URL}/`,
       timeout: 180_000,
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
-        API_BASE_URL: 'http://127.0.0.1:3002/api/v1',
+        API_BASE_URL: `http://${HOST}:3002/api/v1`,
+        /**
+         * The third use of HOST: the origin `next dev` will serve `/_next/*`
+         * to. Passed rather than written out in `next.config.ts`, so there is
+         * no second place for it to drift from.
+         */
+        DEV_ORIGIN_HOST: HOST,
         /*
          * A bigger heap for `next dev`.
          *

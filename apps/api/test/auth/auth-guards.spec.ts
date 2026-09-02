@@ -8,6 +8,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { validationExceptionFactory } from '../../src/common/pipes/validation-exception.factory';
 import { authConfig, type AuthConfig } from '../../src/config/auth.config';
+import { throttleConfig, type ThrottleConfig } from '../../src/config/throttle.config';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
 
@@ -18,6 +19,15 @@ import { User, type UserLean } from '../../src/modules/users/infrastructure/sche
  * A separate application instance is used precisely because
  * `@nestjs/throttler`'s in-memory storage is per-instance — so this suite's
  * counters cannot exhaust another suite's budget, and vice versa.
+ *
+ * ## This is the ONE place the throttle runs at production strength
+ *
+ * `RATE_LIMIT_RELAXED` raises every limit by a fixed multiplier so the browser
+ * suite can create the accounts it needs; it is set for the API process
+ * Playwright starts and nowhere else. The first case below asserts that the
+ * relaxation is NOT in force here before any of the others count a request, so
+ * this coverage cannot be lost by someone quieting a suite elsewhere — the
+ * limits it asserts are the ones the internet sees.
  */
 
 const RUN_ID = randomUUID();
@@ -89,6 +99,23 @@ afterAll(async () => {
 }, 60_000);
 
 describe('rate limiting', () => {
+  /**
+   * Asserted FIRST, and asserted on the running application rather than on the
+   * environment, because the environment is only how the value gets in.
+   *
+   * Without this, relaxing the limits — a stray shell export, a leftover `.env`
+   * line, someone widening the jest setup — would turn the cases below into
+   * tests of nothing: the fourth registration would simply succeed, and the
+   * suite would fail with "expected 429, got 201", which reads like a broken
+   * guard rather than a mis-set variable. This says which it is.
+   */
+  it('runs against the PRODUCTION limits, not a relaxed test ceiling', () => {
+    const throttle = app.get<ThrottleConfig>(throttleConfig.KEY);
+
+    expect(throttle.relaxed).toBe(false);
+    expect(throttle.limitMultiplier).toBe(1);
+  });
+
   it('caps registration at 3 per hour and answers with the frozen envelope', async () => {
     const attempt = (n: number): request.Test =>
       http()

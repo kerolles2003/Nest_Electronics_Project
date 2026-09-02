@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
    *
    * Development only — Next 16 blocks cross-origin requests for dev assets, and
    * treats `127.0.0.1` and `localhost` as different origins. The e2e suite
-   * drives `http://127.0.0.1:3100` while the dev server calls itself
+   * drove `http://127.0.0.1:3100` while the dev server called itself
    * `localhost:3100`, so **every client chunk was refused and React never
    * booted**: pages server-rendered correctly, forms still worked through
    * progressive enhancement, and no `useEffect` in the application ran at all.
@@ -15,9 +15,14 @@ const nextConfig: NextConfig = {
    * behaviour until the guest-cart merge, which runs in an effect. The only
    * visible symptom was a failing HMR WebSocket, which reads like dev noise.
    *
-   * Next's own warning names this setting as the fix.
+   * The value is NOT written here any more. `playwright.config.ts` owns one
+   * HOST constant and passes it in, so the origin the tests drive and the
+   * origin the dev server trusts cannot become two different strings — which is
+   * precisely how this happened. The literal below is only for a developer
+   * running `pnpm dev` by hand and browsing 127.0.0.1; nothing the suite does
+   * depends on it.
    */
-  allowedDevOrigins: ['127.0.0.1'],
+  allowedDevOrigins: [process.env['DEV_ORIGIN_HOST'] ?? '127.0.0.1'],
 
   transpilePackages: ['@nest/types', '@nest/config', '@nest/repositories', '@nest/providers', '@nest/services', '@nest/ui'],
   images: {

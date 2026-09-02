@@ -193,7 +193,8 @@ Notes that will save you time:
   purpose: anything else is an account-existence oracle.
 - **Rate limits are real in the sandbox.** `register` is **3/hour per IP** and `login` is
   **5 per 15 minutes**. If you are scripting sign-ups you will hit these. The throttler is
-  in-memory, so restarting the API resets the counters.
+  in-memory, so restarting the API resets the counters — and §5 has the supported way to
+  raise them for an automated run.
 
 ---
 
@@ -213,6 +214,31 @@ Two things to know:
    believe anything about your sign-up UX.
 2. **It cannot be set in production.** The env schema refuses to boot with
    `NODE_ENV=production` and this set to `false` — the escape hatch cannot escape.
+
+### Raising the rate limits for an automated run
+
+Registration at 3 an hour is right for the internet and a hard ceiling for a test suite
+that needs an account or two per run. Rather than restarting the API to clear the
+in-memory counters:
+
+```bash
+RATE_LIMIT_RELAXED=true
+```
+
+Every declared limit is multiplied by 200 — so registration becomes 600 an hour — and
+nothing else changes: the guard still runs, still keys login on IP **and** email, still
+sets `Retry-After`, and still answers in the standard error envelope. The per-route
+numbers are not rewritten anywhere; there is one multiplier, in
+`apps/api/src/config/throttle.config.ts`.
+
+Same two caveats as above, plus one:
+
+1. You are testing a different ceiling from production.
+2. **It cannot be set in production** — the schema refuses to boot.
+3. The jest suite pins it to `false` for every suite, so the throttle stays proven
+   against the real numbers in `apps/api/test/auth/auth-guards.spec.ts`. Setting this in
+   your shell or in `.env` will not quieten that suite; it will fail loudly if it ever
+   does take effect there.
 
 ---
 

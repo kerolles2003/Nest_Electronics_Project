@@ -2462,3 +2462,172 @@ had disabled the client.
 jest **813 passed, 15 skipped** (828) — unchanged, no API code changed.
 Playwright **44 → 68**, all green. Build, type-check, lint and the drift gate
 green.
+
+## Phase 5b prerequisites — making the harness honest
+
+Three pieces of protection, plus one machine problem that had to be solved
+before anything could be measured at all.
+
+### P1 — a hydration canary, and one host
+
+React never booted in any browser test for the whole of phases 1 to 5a and
+nothing noticed. Pinning the origin fixes today's instance; it does not stop
+tomorrow's. Two things now do.
+
+**The canary.** `browser-health.ts` loads a page and waits for React to take
+over BEFORE every spec's body runs. It looks for React's own internal markers —
+`__reactContainer$…` on the hydration container, `__reactFiber$…` on host nodes
+— because those cannot be faked by server HTML and need nothing from the
+application. If they never appear the spec fails immediately with a message
+that distinguishes the two cases: no client runtime at all (the chunks never
+arrived — a serving or origin problem) from a runtime that loaded and then
+failed to hydrate (an application problem).
+
+**The host.** There was one HOST constant needed in three places, and it had
+been written out separately in two files, which is how they drifted. It is now
+`HOST` in `playwright.config.ts`, used for the tests' `baseURL`, passed to
+`next dev --hostname`, and passed on to `allowedDevOrigins` through
+`DEV_ORIGIN_HOST`. `next.config.ts` no longer names a host of its own for the
+suite.
+
+**The canary is itself tested.** `hydration-canary.spec.ts` aborts every
+`/_next/**` request in its own browser context, which reproduces exactly the
+state the engagement was in, and asserts the probe reports a dead client — and
+that the page still LOOKS fine while it does, which is the whole problem. The
+positive case asserts a live one. A canary nobody has watched die is just a
+bird.
+
+### P2 — the HMR ignore is gone
+
+`DEV_SERVER_NOISE` held one entry, `/_next\/webpack-hmr/`, on the reasoning that
+the hot-reload socket cannot always complete under Playwright. **That reasoning
+was wrong.** The socket was failing because the dev server was refusing every
+cross-origin `/_next/*` request — the same refusal that stopped React booting.
+The rule was not suppressing dev noise, it was suppressing the only visible
+symptom of the bug that invalidated every browser test in the suite, at 77–84
+occurrences a run.
+
+Removed, and the suite is green without it: **`browser-health: nothing was
+ignored in this run`** on a run of the specs that used to report the most.
+
+Six suppressions remain across a full run and every one is a per-test
+declaration with a reason at the call site, not a global rule:
+
+| Rule | Count | Where, and why |
+|---|---|---|
+| `Failed to load resource.*404` | 4 | `not-found.spec.ts` — the tests are *about* 404s |
+| `Failed to (load resource\|fetch)\|net::ERR_FAILED` | 1 | the merge interrupted at the network layer, on purpose |
+| `Invalid login credentials\|400\|AuthApiError` | 1 | `guest-cart-login.spec.ts` — a login that fails is the probe |
+
+The list stays as a named, empty thing rather than being deleted, with the
+history written at it. The counting machinery stays too: it exists because this
+entry went unexamined for months.
+
+### P3 — the throttle stops bounding the suite
+
+Registration is 3 an hour per IP and login 5 per 15 minutes. Right for the
+internet; a hard ceiling for a suite that needs an account or two per run, and
+Part 2 adds more auth journeys. A suite that fails environmentally teaches
+everyone to disregard failures, which is how a real one gets missed.
+
+**One multiplier, one place.** No route's limit is rewritten. `@Throttle`
+still carries the frozen numbers at the route it protects, and
+`AppThrottlerGuard.handleRequest` multiplies whatever the route declared by
+`throttle.limitMultiplier` — 1 in every normal process, 200 in a relaxed one.
+`RATE_LIMIT_RELAXED=true` is set for the API process Playwright starts, and
+nowhere else.
+
+Multiplied rather than switched off deliberately: turning the guard off would
+stop exercising the tracker, the IP+email key, the `Retry-After` header and the
+error envelope in every browser run.
+
+**The 429 keeps its test, at production strength.** `auth-guards.spec.ts` is
+that spec, and it now asserts the pin *first*:
+
+```ts
+it('runs against the PRODUCTION limits, not a relaxed test ceiling', () => {
+  const throttle = app.get<ThrottleConfig>(throttleConfig.KEY);
+  expect(throttle.relaxed).toBe(false);
+  expect(throttle.limitMultiplier).toBe(1);
+});
+```
+
+Asserted on the running application rather than on the environment, because the
+environment is only how the value gets in. Without it, someone relaxing the
+limits globally would turn the cases below it into tests of nothing and the
+failure would read "expected 429, got 201" — a broken guard, not a mis-set
+variable.
+
+`test/setup/production-like-limits.ts` pins `RATE_LIMIT_RELAXED=false` for every
+jest suite, so a stray shell export or a leftover `.env` line cannot quieten it.
+`setupFiles` rather than `setupFilesAfterEnv`, and dotenv does not overwrite a
+variable that is already set, so it wins over `.env` too.
+
+**Production is untouched, and cannot be touched.** The default is `false`, and
+the env schema refuses to boot with `NODE_ENV=production` and this set — the
+same shape as `AUTH_REQUIRE_EMAIL_VERIFICATION`.
+
+**Proof:** two consecutive full e2e runs against the SAME API process, inside
+the same hour — four registrations against a limit of three — both 70/70. That
+run used to fail on the second pass.
+
+### Three tests were passing on timing alone
+
+`t1-catalogue.spec.ts` had three cases that counted products immediately after
+`page.goto`: pagination, the price filter, and search-by-SKU. The product grid
+streams behind its own Suspense boundary and lands AFTER the `load` event that
+`goto` resolves on — measured at up to four seconds on a cold dev route — so
+those counts were reading the shell.
+
+They failed the moment the harness got slower. Measured rather than guessed at:
+the server HTML was correct (`curl` returns 2 products for `?page=3`), the API
+was correct, and a probe showed 0 links at `load` and the right number four
+seconds later. They now use `expect.poll` or wait on an auto-waiting assertion
+first, and `countProducts` carries a docstring saying it does not wait and what
+every caller therefore owes.
+
+The sibling test that asserts an EMPTY grid is unaffected and still correct: it
+waits for the empty-state heading, which is what proves the boundary resolved.
+
+### The machine stopped being able to run any of it
+
+Mid-session, **21 of 34 jest suites and the API itself stopped starting**:
+
+```
+ERR_DLOPEN_FAILED: An Application Control policy has blocked this file.
+  …\@img\sharp-win32-x64\lib\sharp-win32-x64-0.35.4.node
+```
+
+Windows **Smart App Control** switched to enforcement on this machine today
+(`VerifiedAndReputablePolicyState = 1`; the CodeIntegrity log shows it blocking
+unsigned DLLs in other applications too, including the browser's). It blocks
+sharp's unsigned native binary, and sharp is imported by `MediaModule` at module
+load, so nothing that builds the application graph could start.
+
+Nothing in the repository changed to fix it. sharp's documented fallback —
+`@img/sharp-wasm32`, a WebAssembly build with no native binary to block — was
+placed in the local `node_modules` hoist directory along with its
+`@emnapi/runtime` dependency. **No tracked file, no lockfile and no
+`package.json` was touched**, because this is one machine's security policy and
+not a property of the project.
+
+It works: libvips 8.18.6 through WebAssembly, and every image suite passes on it
+— `image-format`, `media-upload`, `image-import` and the Cloudinary integration
+included. Two things the owner should know:
+
+1. **It is undone by the next `pnpm install`.** If it comes back, the two
+   packages go back in the same place, or the durable fix is chosen below.
+2. **Local image tests now exercise the WASM libvips, not the native one.** They
+   all pass, which is good evidence the two agree, but it is not the same
+   binary that production runs.
+
+The durable options are the owner's call: turn Smart App Control off (Windows
+Security → App & browser control — **irreversible without a Windows reset**), or
+add `@img/sharp-wasm32` to the project as an explicit optional dependency, which
+costs everyone the download and changes the lockfile.
+
+### Counts
+
+jest **814 passed, 15 skipped** (829) — one new, the production-limits pin.
+Playwright **68 → 70**, all green, twice in a row inside the same hour.
+Build, type-check, lint and the drift gate green.

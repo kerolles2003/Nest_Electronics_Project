@@ -175,6 +175,21 @@ export const envSchema = z.object({
    */
   AUTH_REQUIRE_EMAIL_VERIFICATION: booleanFromString.default('true'),
 
+  /**
+   * Relaxes every rate limit by a fixed multiplier. **Test environments only.**
+   *
+   * The limits themselves stay where they are, declared per route. This only
+   * moves the ceiling so a browser suite can create the accounts it needs
+   * without failing on a throttle that has nothing to do with the code under
+   * test. `throttle.config.ts` holds the multiplier and the reasoning; the
+   * superRefine below makes this impossible to set in production.
+   *
+   * The guard is still tested against the REAL numbers — jest pins this to
+   * false for every suite (`test/setup/production-like-limits.ts`) and
+   * `test/auth/auth-guards.spec.ts` asserts the pin before asserting the 429.
+   */
+  RATE_LIMIT_RELAXED: booleanFromString.default('false'),
+
   // ---- Fulfilment (shipping cost policy) ----
 
   /**
@@ -190,8 +205,10 @@ export const envSchema = z.object({
    * rather than deprecated. A knob that is read by nothing is worse than an
    * absent one: someone sets it, nothing happens, and nothing says why.
    *
-   * A governorate may also carry a threshold of its own, which wins for that
-   * governorate. No seeded row sets one.
+   * There is deliberately no per-governorate override: one threshold, global,
+   * from configuration. A row-level threshold was written and then removed —
+   * see the note on `shipping-rate.schema.ts` for why an undocumented
+   * precedence rule is worse than an absent feature.
    */
   FREE_SHIPPING_THRESHOLD: z.coerce.number().int().min(0).optional(),
 
@@ -298,6 +315,16 @@ const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['AUTH_REQUIRE_EMAIL_VERIFICATION'],
       message: "Must be true when NODE_ENV='production'",
+    });
+  }
+
+  // Rate limiting is a production security control, not a preference. Same
+  // shape as the rule above it, and for the same reason.
+  if (value.NODE_ENV === 'production' && value.RATE_LIMIT_RELAXED) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RATE_LIMIT_RELAXED'],
+      message: "Must be false when NODE_ENV='production'",
     });
   }
 
