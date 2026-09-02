@@ -4,6 +4,11 @@
 **Goal:** a working API on your machine, with a catalogue, and a way to complete email
 verification without any mail ever being sent.
 
+**Then read, in this order:** [`MOBILE-HANDOFF.md`](./MOBILE-HANDOFF.md) — every
+customer screen and the calls that feed it · [`INTEGRATION.md`](./INTEGRATION.md)
+— what is stable and what is not · [`openapi.v1.json`](./openapi.v1.json) — the
+frozen contract your models are generated from.
+
 Everything below runs offline. No vendor account, no API key, no DNS, no credentials.
 
 ---

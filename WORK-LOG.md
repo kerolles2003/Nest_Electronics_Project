@@ -3318,3 +3318,63 @@ volume: the API refuses to boot on the placeholder and names the fix, the guide
 runs start to finish, and the journey completes — login, browse, cart, both
 shipping bands, a placed order, an idempotent retry, history, a cancellation
 with a reason, and an anonymous basket priced with no token at all.
+
+---
+
+## `docs/api/MOBILE-HANDOFF.md` (C4)
+
+The artefact the mobile developer needed and did not have. `SANDBOX.md` gets an
+environment running, `INTEGRATION.md` says what is stable, `openapi.v1.json` is
+the contract — **none of them says which endpoints feed which screen, in what
+order, or what to do when one fails.** That mapping existed only inside the
+Next.js storefront.
+
+Nine sections, all reference material — tables and step lists, no prose walls:
+
+1. **Screen inventory** — 18 customer-facing screens, route, purpose, whether
+   auth is needed. The cart is marked "both", which is the one that surprises.
+2. **Per screen** — the calls, in order, what each sends and renders. Four
+   screens share one endpoint and say so.
+3. **Six flows end to end** — registration/verification, login and silent
+   refresh, browse → cart → address → quote → place, history, self-cancel,
+   password reset. Every step, and what each failure means.
+4. **Shipping semantics** — the `priced: false` / `priced: true, fee: 0` trap,
+   with a worked example of each against the sandbox account's two addresses.
+5. **The guest cart** — what to store, how to price it, and the merge rules
+   including whole-merge clearing and why.
+6. **Errors** — 30 codes, the HTTP status, what the web UI shows, and whether
+   the customer can recover.
+7. **Rate limits** — every throttled route at its production number, what
+   `Retry-After` means, and what not to do on a 429.
+8. **What is NOT in v1** — twelve entries, each with its reason.
+9. **Before you write a line of Dart** — seven contract conventions.
+
+### Three things it says that nothing else did
+
+**Cancellation requires a reason, 3–500 characters.** Written in a callout,
+because sending `{}` is the single likeliest mistake on that endpoint — "cancel
+this order" reads like it needs no body — and because the API's message for it
+was itself misleading until this task fixed it. With the instruction that it must
+**not** be defaulted: a reason nobody typed reads on the permanent record like
+something the customer said.
+
+**VAT is inclusive and there is no additive tax line.** `vatInclusive` and
+`vatRateBps` are in every pricing block and a developer who assumes they are a
+tax to add would overcharge every customer. The formula for displaying the
+included amount is given precisely so nobody derives a different one.
+
+**`shippingPriced: true` with `fee: 0` means FREE.** It cannot happen today —
+no threshold exists — and the document says handle it anyway, because that is
+the entire reason the field was shipped before the feature.
+
+### Where the numbers came from
+
+Not from memory. The endpoint list is generated from `openapi.v1.json` (50
+operations, of which the customer-facing subset is documented here); the rate
+limits are read out of the `@Throttle` decorators; the error table is the
+storefront's own `ApiErrorCode` union and `customerMessage()` mapping; and the
+response shapes, the headers, the VAT fields and the address cap were each
+verified against a running API during the walkthrough rather than asserted.
+
+Linked from the top of both `SANDBOX.md` and `INTEGRATION.md` — a handoff
+document nobody can find is not a handoff.

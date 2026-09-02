@@ -10,6 +10,13 @@ The contract itself is [`openapi.v1.json`](./openapi.v1.json) — the frozen art
 into git and guarded in CI by a drift gate. Build against **that file**, not against a
 running server's `/docs-json`, which is whatever happens to be deployed at that moment.
 
+> **Building the customer app?** This document says what is *stable*.
+> [`MOBILE-HANDOFF.md`](./MOBILE-HANDOFF.md) says what to *call* — every MVP
+> screen, the endpoints that feed it in order, the error codes each flow can
+> return and what the web UI does with them, and what is deliberately not in v1.
+> [`SANDBOX.md`](./SANDBOX.md) gets you a running environment with a seeded
+> account.
+
 ---
 
 ## ✅ SAFE — stable, build on it now
