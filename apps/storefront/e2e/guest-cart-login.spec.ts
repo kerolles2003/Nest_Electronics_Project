@@ -11,86 +11,82 @@ import { expect, test } from './fixtures/browser-health';
  * 5xx. Everything below merely walks the page into the state where the bug used
  * to appear.
  *
+ * ## What the T2 flip changed about it
+ *
+ * The basket it seeds is the real one: `{productId, quantity}` under
+ * `nest-guest-cart`. It used to seed `nest-cart-storage` — the legacy Zustand
+ * store that held whole product objects including prices — and that key belongs
+ * to a store which no longer exists, so the "full cart" in the test's name had
+ * quietly become an empty one.
+ *
+ * The Supabase console-error allowance went with it. A failed sign-in is now an
+ * API call in a server action: the browser sees an ordinary action response and
+ * logs nothing, so there is nothing left to declare. **An allowance that
+ * suppresses nothing is worse than no allowance** — it is a licence nobody is
+ * checking, and this suite has already been bitten once by exactly that.
+ *
  * ## Why the cart is seeded rather than clicked together
  *
- * The guest cart is a Zustand store persisted to `localStorage`; the legacy
- * product pages that would add to it read their catalogue from Supabase. Making
- * this spec click through those pages would make a proxy-and-form regression
- * test depend on the contents of a legacy database that D-6 has already
- * declared disposable — a test that fails for reasons unrelated to what it
- * checks. Writing the persisted state directly is the same starting condition
- * with none of that coupling, and it is honest about what is under test: the
- * SUBMIT path, not the add-to-cart path.
+ * Writing the persisted state directly is the same starting condition with none
+ * of the coupling to add-to-cart, and it is honest about what is under test:
+ * the SUBMIT path.
  *
  * ## Why a login that fails is the right probe
  *
- * The bug never needed valid credentials. It needed a form whose submit handler
+ * The bug never needed valid credentials. It needed a form whose submit path
  * awaited something that could throw — and before the fix, an unhandled throw
- * left `loading` true for ever, with no message and a dead button. So this
- * asserts the recovery contract directly: the form comes back, says something,
- * and lets the customer try again.
+ * left the button disabled for ever, with no message. So this asserts the
+ * recovery contract directly: the form comes back, says something, and lets the
+ * customer try again.
  */
 
-const SEEDED_CART = {
+/** The store key and shape `stores/guest-cart-store.ts` persists. */
+const STORE_KEY = 'nest-guest-cart';
+
+const SEEDED_BASKET = {
   state: {
-    items: [
-      {
-        id: 'e2e-guest-line',
-        product_id: 'e2e-guest-product',
-        quantity: 2,
-        product: {
-          id: 'e2e-guest-product',
-          name_en: 'Guest Cart Probe',
-          slug: 'guest-cart-probe',
-          sku: 'E2E-GUEST-1',
-          base_price: 10000,
-          sale_price: null,
-          available_stock: 50,
-          is_active: true,
-          images: [],
-        },
-      },
-    ],
-    cartVersion: 1,
+    // A product id that does not resolve, on purpose. The API prices what it
+    // can and flags what it cannot; neither may break the sign-in form, which
+    // is the only thing this spec is about.
+    items: [{ productId: '000000000000000000000001', quantity: 2 }],
+    pendingMerge: null,
   },
   version: 0,
 };
 
-test.describe('a guest with a full cart can use the sign-in form', () => {
+test.describe('a guest with a full basket can use the sign-in form', () => {
   test.beforeEach(async ({ page }) => {
     // Runs before any page script, so the store rehydrates from it rather than
     // starting empty and being overwritten.
-    await page.addInitScript((cart) => {
-      window.localStorage.setItem('nest-cart-storage', JSON.stringify(cart));
-    }, SEEDED_CART);
+    await page.addInitScript(
+      ([key, cart]) => {
+        window.localStorage.setItem(key, cart);
+      },
+      [STORE_KEY, JSON.stringify(SEEDED_BASKET)] as const,
+    );
   });
 
-  test('submitting the login form never strands it or throws', async ({ page, health }) => {
-    /*
-     * Supabase answers a bad password with a 400 and the client logs it. That
-     * is the endpoint working correctly, not the page misbehaving, so it is
-     * declared rather than silently tolerated — and it is scoped to the
-     * credential message, so any OTHER console error still fails the test.
-     */
-    health.allowConsoleError(/Invalid login credentials|400|AuthApiError/i);
-
+  test('submitting the login form never strands it or throws', async ({ page }) => {
     await page.goto('/login');
 
-    await page.getByLabel(/email/i).fill(`e2e-guest.${randomUUID().slice(0, 8)}@example.test`);
-    await page.getByLabel(/password/i).first().fill('not-the-right-password');
+    await page.getByLabel('Email Address').fill(`e2e-guest.${randomUUID().slice(0, 8)}@example.test`);
+    await page.getByLabel('Password', { exact: true }).fill('not-the-right-password');
 
-    const submit = page.getByRole('button', { name: /sign in|log in/i }).first();
+    const submit = page.getByRole('button', { name: 'Sign In' });
     await submit.click();
 
     /*
      * The recovery contract, and the actual regression assertion.
      *
-     * Before the fix, an unhandled throw in this handler left `loading` true
-     * for ever: the button stayed disabled and no message appeared. Requiring
-     * the button to be usable again is what "the form is not stranded" means in
-     * a way a test can check.
+     * Before the fix, an unhandled throw in the submit path left the button
+     * disabled for ever and no message appeared. Requiring the button to be
+     * usable again, and a message to be present, is what "the form is not
+     * stranded" means in a way a test can check.
      */
     await expect(submit).toBeEnabled({ timeout: 30_000 });
+    // Scoped: Next renders a permanent, empty `role="alert"` route announcer
+    // outside `main`, so an unscoped query is ambiguous.
+    await expect(page.locator('main').getByRole('alert')).toBeVisible();
 
     // And the page is still the page — not a Next.js error overlay.
     await expect(page).toHaveURL(/\/login/);

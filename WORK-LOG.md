@@ -2860,3 +2860,50 @@ jest **825 passed, 15 skipped** (840).
 Playwright **83 → 94**, all green.
 Build, type-check, lint and the drift gate green. The built route list contains
 no `/shop`.
+
+### Two more things the flip exposed
+
+**The relaxation can be silently bypassed, and now says so.**
+
+`RATE_LIMIT_RELAXED=true` is set on the API process *Playwright starts* — but
+`reuseExistingServer` means an API a developer already had running is used
+instead, and that one does not have it. The failure is genuinely confusing:
+specs fail on `expect(registered.ok()).toBe(true)` inside a helper, several
+files apart, with nothing on screen about rate limits. I hit it myself, having
+started an API by hand for a build.
+
+`e2e/global-setup.ts` now refuses the run before any test executes. One
+deliberately-wrong sign-in reads `X-RateLimit-Limit-global`, which reports the
+ceiling *after* `AppThrottlerGuard` has applied the multiplier — so the number
+is the whole answer, and it is asserted rather than the environment variable,
+because the variable is only how the value gets in and the suite may be talking
+to a server it did not start.
+
+Proven by pointing the suite at a production-limits API: it stops with a message
+naming the cause and the fix.
+
+**`guest-cart-login.spec.ts` was testing an empty basket and suppressing
+nothing.**
+
+It seeded `nest-cart-storage` — the legacy Zustand key, deleted in T2 — so "a
+guest with a full cart" had quietly become a guest with none. And it declared
+`allowConsoleError(/Invalid login credentials|400|AuthApiError/i)` for Supabase
+errors that can no longer happen: a failed sign-in is a server action now and
+the browser logs nothing.
+
+Both fixed. The allowance is gone, and the suite is green without it —
+`browser-health: nothing was ignored in this run` for that file. An allowance
+that suppresses nothing is worse than no allowance; it is a licence nobody is
+checking, and this suite has already been bitten once by exactly that.
+
+**The origin is one module now.** `e2e/origin.ts` holds HOST, PORT, BASE_URL and
+API_BASE_URL; the Playwright config, the global setup and every spec that needed
+a literal read it. The specs had four hardcoded copies of `127.0.0.1:3002` and
+`127.0.0.1:3100` between them, which is the same drift the canary exists to
+catch, one layer down.
+
+### Final counts for the branch
+
+jest **825 passed, 15 skipped** (840 total, 34 suites).
+Playwright **94 passed**, twice in a row against the same API process inside one
+hour. Build, type-check, lint (0 errors) and the drift gate green.

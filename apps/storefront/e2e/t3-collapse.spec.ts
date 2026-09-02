@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, BrowserContext } from '@playwright/test';
 import { expect, test } from './fixtures/browser-health';
 import { E2E_EMAIL_PREFIX } from './global-teardown';
+import { API_BASE_URL, BASE_URL, HOST } from './origin';
 
 /**
  * The T3 collapse: `/shop` is gone, and the URLs it had still resolve.
@@ -41,7 +42,7 @@ const REDIRECTS: readonly [string, string][] = [
 test.describe('the /shop slice is gone', () => {
   test('every retired URL answers 301 and names its canonical destination', async ({ request }) => {
     for (const [from, to] of REDIRECTS) {
-      const response = await request.get(`http://127.0.0.1:3100${from}`, {
+      const response = await request.get(`${BASE_URL}${from}`, {
         maxRedirects: 0,
       });
 
@@ -139,7 +140,7 @@ async function signIn(
   request: APIRequestContext,
   email: string,
 ): Promise<void> {
-  const api = 'http://127.0.0.1:3002/api/v1';
+  const api = API_BASE_URL;
   const password = 'brass thermionic valve';
 
   const registered = await request.post(`${api}/auth/register`, {
@@ -160,7 +161,7 @@ async function signIn(
       { name: 'nest_rt', value: body.data.refreshToken },
     ].map((cookie) => ({
       ...cookie,
-      domain: '127.0.0.1',
+      domain: HOST,
       path: '/',
       httpOnly: true,
       secure: false,

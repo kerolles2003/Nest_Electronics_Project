@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { API_BASE_URL, BASE_URL, HOST, PORT } from './e2e/origin';
 
 /**
  * Browser end-to-end configuration.
@@ -26,40 +27,21 @@ import { defineConfig, devices } from '@playwright/test';
  * at a DISPOSABLE environment — never at production. `globalTeardown` removes
  * everything it creates; that is a cleanup, not a licence.
  */
-/**
- * The ONE host, used three ways that must agree.
- *
- * `next dev` refuses cross-origin requests for `/_next/*` dev assets, and it
- * treats `127.0.0.1` and `localhost` as different origins. So three things have
- * to name the same host or the browser gets no client chunks and React never
- * boots:
- *
- *   1. the origin the tests drive        -> `baseURL` below
- *   2. the host the dev server binds to  -> `next dev --hostname`
- *   3. the origin the dev server trusts  -> `allowedDevOrigins` in next.config
- *
- * They used to be written out separately, two of them in another file, and they
- * drifted — which cost every browser test in the suite its client-side
- * behaviour for months without a single failure. They are one constant now, and
- * the hydration canary in `e2e/fixtures/browser-health.ts` fails every spec
- * immediately if they ever disagree again.
+/*
+ * HOST, PORT, BASE_URL and API_BASE_URL all come from `e2e/origin.ts` — one
+ * module, so the origin the tests drive, the host the dev server binds to and
+ * the origin it trusts cannot become three different strings. See that file for
+ * what went wrong when they were written out separately.
  */
-const HOST = process.env['E2E_HOST'] ?? '127.0.0.1';
-
-/**
- * A dedicated port, not 3000.
- *
- * A developer very often already has `next dev` on 3000. Next.js does not fail
- * in that case — it quietly starts on the next free port — so the suite would
- * sit waiting for a server that came up somewhere else and then time out with
- * a message about the web server rather than about the port. Overridable, so
- * CI or a second checkout can move it.
- */
-const PORT = process.env['E2E_PORT'] ?? '3100';
-const BASE_URL = `http://${HOST}:${PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
+  /*
+   * Runs before anything else and refuses a run against an API that will
+   * throttle it — see the file for why that failure is worth catching early
+   * rather than letting it surface as unrelated specs failing in a helper.
+   */
+  globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
 
   // One worker: the journey is inherently sequential and shares one catalogue.
@@ -107,7 +89,7 @@ export default defineConfig({
     {
       command: 'pnpm --filter api build && pnpm --filter api start',
       cwd: '../..',
-      url: `http://${HOST}:3002/api/v1/health`,
+      url: `${API_BASE_URL}/health`,
       timeout: 180_000,
       reuseExistingServer: process.env['CI'] === undefined,
       stdout: 'pipe',
@@ -163,7 +145,7 @@ export default defineConfig({
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
-        API_BASE_URL: `http://${HOST}:3002/api/v1`,
+        API_BASE_URL,
         /**
          * The third use of HOST: the origin `next dev` will serve `/_next/*`
          * to. Passed rather than written out in `next.config.ts`, so there is

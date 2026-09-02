@@ -147,5 +147,10 @@ test('the product LISTING keeps its skeleton, and still answers 200', async ({ p
   const response = await page.goto('/products');
 
   expect(response?.status()).toBe(200);
-  await expect(page.getByText('34 products found')).toBeVisible();
+  /*
+   * Scoped to `main`: React streams a Suspense boundary through a
+   * `<div hidden>` appended to `<body>`, so for a moment the same text is in
+   * the document twice and an unscoped match is ambiguous.
+   */
+  await expect(page.locator('main').getByText('34 products found')).toBeVisible();
 });

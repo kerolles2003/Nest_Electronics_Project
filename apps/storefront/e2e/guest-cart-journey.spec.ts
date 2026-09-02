@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
 import { expect, test } from './fixtures/browser-health';
 import { E2E_EMAIL_PREFIX } from './global-teardown';
+import { API_BASE_URL, HOST } from './origin';
 
 /**
  * The guest-cart merge, in a real browser against the real API.
@@ -40,7 +41,7 @@ import { E2E_EMAIL_PREFIX } from './global-teardown';
 
 test.describe.configure({ mode: 'serial' });
 
-const API = process.env['API_BASE_URL'] ?? 'http://127.0.0.1:3002/api/v1';
+const API = API_BASE_URL;
 const PASSWORD = 'brass thermionic valve';
 
 const STORE_KEY = 'nest-guest-cart';
@@ -177,7 +178,7 @@ async function signInWithCookies(context: BrowserContext, session: Account): Pro
     {
       name: 'nest_at',
       value: session.token,
-      domain: '127.0.0.1',
+      domain: HOST,
       path: '/',
       httpOnly: true,
       secure: false,
@@ -186,7 +187,7 @@ async function signInWithCookies(context: BrowserContext, session: Account): Pro
     {
       name: 'nest_rt',
       value: session.refreshToken,
-      domain: '127.0.0.1',
+      domain: HOST,
       path: '/',
       httpOnly: true,
       secure: false,

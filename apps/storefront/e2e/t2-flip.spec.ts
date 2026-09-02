@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, BrowserContext } from '@playwright/test';
 import { expect, test } from './fixtures/browser-health';
 import { E2E_EMAIL_PREFIX } from './global-teardown';
+import { API_BASE_URL, BASE_URL, HOST } from './origin';
 
 /**
  * The T2 flip's own guarantees.
@@ -16,7 +17,7 @@ import { E2E_EMAIL_PREFIX } from './global-teardown';
  * a happy-path journey.
  */
 
-const API = 'http://127.0.0.1:3002/api/v1';
+const API = API_BASE_URL;
 const PASSWORD = 'brass thermionic valve';
 const RUN = randomUUID().slice(0, 8);
 
@@ -40,7 +41,7 @@ async function signInWithCookies(context: BrowserContext, session: Account): Pro
       { name: 'nest_rt', value: session.refreshToken },
     ].map((cookie) => ({
       ...cookie,
-      domain: '127.0.0.1',
+      domain: HOST,
       path: '/',
       httpOnly: true,
       secure: false,
@@ -127,7 +128,9 @@ test.describe('the auth pages are the API’s', () => {
     // An unknown email and a wrong password are indistinguishable by design,
     // so the assertion is that SOMETHING sane is said and the customer is
     // still on the form — not which of the two it was.
-    await expect(page.getByRole('alert')).toBeVisible();
+    // Scoped: Next renders a permanent, empty `role="alert"` route announcer
+    // outside `main`, so an unscoped query is ambiguous.
+    await expect(page.locator('main').getByRole('alert')).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
   });
 
@@ -227,7 +230,7 @@ test.describe('the proxy guard', () => {
      * Sent with NO session, to a guarded path, which is exactly the case that
      * used to redirect.
      */
-    const response = await request.post('http://127.0.0.1:3100/checkout', {
+    const response = await request.post(`${BASE_URL}/checkout`, {
       headers: { 'Next-Action': 'probe-not-a-real-action-id' },
       data: '[]',
       maxRedirects: 0,
