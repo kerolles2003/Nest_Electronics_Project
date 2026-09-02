@@ -61,9 +61,9 @@ The defaults in `.env.example` are already the sandbox ones. In particular:
 | Variable | Sandbox value | Why |
 |---|---|---|
 | `MONGODB_URI` | `mongodb://127.0.0.1:27017/nest_electronics_dev` | the container above — **the development default, always** |
-| `EMAIL_PROVIDER` | `console` | prints mail instead of sending it — see §4 |
+| `EMAIL_PROVIDER` | `console` | prints mail instead of sending it — see §5 |
 | `EMAIL_FROM_ADDRESS` | `no-reply@nest-electronics.invalid` | RFC 2606 reserved; can never deliver |
-| `AUTH_REQUIRE_EMAIL_VERIFICATION` | `true` | matches production; see §5 to relax it |
+| `AUTH_REQUIRE_EMAIL_VERIFICATION` | `true` | matches production; see §6 to relax it |
 | `SITE_URL` | `http://localhost:3000` | the host in the verification links you will click |
 
 > **Never point `MONGODB_URI` at a shared or cloud database for development.**
@@ -152,7 +152,75 @@ triggering a restart loop.
 
 ---
 
-## 4. Email verification with no mail server
+## 4. The sandbox account — start here
+
+```bash
+pnpm --filter api sandbox:seed
+```
+
+One permanent, already-verified customer, with a history:
+
+| | |
+|---|---|
+| **Email** | `sandbox@nest-electronics.test` |
+| **Password** | `brass thermionic valve` |
+| Addresses | **Home** — Cairo (default) · **Work** — Alexandria |
+| Orders | one placed order, with a real order number |
+| Cart | 2 lines waiting |
+
+```bash
+curl -s -X POST http://127.0.0.1:3002/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"sandbox@nest-electronics.test","password":"brass thermionic valve"}'
+```
+
+**Use this account for everything that is not specifically about signing up.**
+`POST /auth/register` is capped at **3 per hour per IP**, and a developer who
+re-registers while building will hit that within minutes and read the `429` as a
+broken API. Nothing else here is throttled anywhere near as hard.
+
+### Why the two addresses matter
+
+Delivery is **50.00 EGP inside Cairo and Giza, 100.00 EGP everywhere else**
+(D-8). With one address you cannot see the fee move, cannot tell a quote that
+priced shipping from one that did not, and will hard-code whichever number you
+happened to see. Quote against **Home** and then **Work** and both bands are
+visible in a minute:
+
+```bash
+# `addressId` comes from GET /users/me/addresses
+curl -s "http://127.0.0.1:3002/api/v1/checkout/quote?addressId=<HOME>"  -H "Authorization: Bearer <TOKEN>"
+curl -s "http://127.0.0.1:3002/api/v1/checkout/quote?addressId=<WORK>"  -H "Authorization: Bearer <TOKEN>"
+```
+
+### Resetting it
+
+```bash
+pnpm --filter api sandbox:seed -- --reset
+```
+
+Removes this account's orders, gives the catalogue back **exactly** the stock
+they took, clears its cart and sessions, then rebuilds the state in the table
+above. Re-running **without** `--reset` is safe and idempotent: it repairs a
+changed password or an un-verified flag, and it does not add a second order or a
+third address.
+
+> The seed places its order by calling the same `CheckoutService.placeOrder`
+> the HTTP layer calls, and creates the account through the real registration
+> path. So the history is a real one — real pricing, a real shipping fee, a real
+> stock decrement, a real inventory event — and the password above is provably
+> one the API's own policy accepts.
+
+**It refuses to run with `NODE_ENV=production`.** The password is printed in
+this document; that is the point, and the guard is what keeps it local.
+
+---
+
+## 5. Email verification with no mail server
+
+> You do **not** need this to start building — §4 hands you a verified account.
+> This section is for when you are implementing the sign-up screen itself and
+> need to see what a real registration does.
 
 `EMAIL_PROVIDER=console` runs the *entire* pipeline — template compilation, strict variable
 resolution, data mapping, the port call — and replaces only the final network hop. A missing
@@ -193,12 +261,12 @@ Notes that will save you time:
   purpose: anything else is an account-existence oracle.
 - **Rate limits are real in the sandbox.** `register` is **3/hour per IP** and `login` is
   **5 per 15 minutes**. If you are scripting sign-ups you will hit these. The throttler is
-  in-memory, so restarting the API resets the counters — and §5 has the supported way to
+  in-memory, so restarting the API resets the counters — and §6 has the supported way to
   raise them for an automated run.
 
 ---
 
-## 5. Skipping verification while you build
+## 6. Skipping verification while you build
 
 If clicking through verification on every run is slowing you down:
 
@@ -242,17 +310,29 @@ Same two caveats as above, plus one:
 
 ---
 
-## 6. Resetting
+## 7. Resetting
+
+Everything, including the database:
 
 ```bash
 docker compose -f docker-compose.dev.yml down -v   # -v discards the data volume
 docker compose -f docker-compose.dev.yml up -d --wait
-pnpm --filter api seed && pnpm --filter api indexes:sync
+pnpm --filter api seed
+pnpm --filter api indexes:sync
+pnpm --filter api shipping:seed
+pnpm --filter api sandbox:seed
+```
+
+Just the sandbox account's history, leaving the catalogue and your own accounts
+alone — which is what you want nine times out of ten:
+
+```bash
+pnpm --filter api sandbox:seed -- --reset
 ```
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -264,7 +344,7 @@ pnpm --filter api seed && pnpm --filter api indexes:sync
 | Checkout 500s with `SHIPPING_RATE_MISSING` | `shippingRates` has no row for that governorate | `pnpm --filter api shipping:seed` |
 | Delivery shows as "not calculated" in a quote | no address chosen yet — that is `shippingPriced: false`, not an error | choose an address |
 | Boot fails listing env keys | a required variable is missing or malformed | read the list; values are never echoed for secrets |
-| `429` on register/login | the real rate limits (§4) | wait, or restart the API |
+| `429` on register/login | the real rate limits (§5) | wait, or restart the API — or use the §4 account, which needs neither |
 | No verification link in the terminal | `EMAIL_PROVIDER` is not `console` | set it; no key needed |
 | Verification link 404s in a browser | `SITE_URL` points at a storefront you are not running | you only need the `token`, not the page |
 

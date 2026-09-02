@@ -3118,3 +3118,68 @@ end — asserted in `t3-collapse.spec.ts`, not just configured.
 `/account/orders`: the same question, with the only answer that still exists.
 The test asserts where the phrase points rather than forbidding anyone from
 saying it — a test that banned the words would have failed on correct code.
+
+---
+
+## A permanent sandbox account (C2)
+
+```
+pnpm --filter api sandbox:seed              converge
+pnpm --filter api sandbox:seed -- --reset   erase this account's history first
+```
+
+`sandbox@nest-electronics.test` / `brass thermionic valve`, verified, with a
+Cairo address (default), an Alexandria address, one placed order and a two-line
+cart. Documented in `SANDBOX.md` §4.
+
+**Why it is worth a script at all.** `POST /auth/register` is 3 per hour per IP.
+A mobile developer re-registering while building hits that within minutes and
+reads the `429` as a broken API. That is the worst possible first impression and
+it is entirely avoidable.
+
+### Two decisions worth the words
+
+**It places a REAL order** — `CheckoutService.placeOrder`, the same method the
+HTTP layer calls. An order document written by hand is a guess about the order
+model that goes stale the first time that model changes, silently, because
+nothing type-checks a `db.orders.insertOne`. This way the history has real
+pricing, a real shipping fee resolved from the governorate, a real stock
+decrement, a real inventory event, and the cart cleared in the same transaction.
+
+**And it creates the account through `AuthService.register`**, so the password
+in the docs is provably one the real policy accepts. A seed that inserted a
+bcrypt hash directly could happily document a password registration would
+reject.
+
+### Two addresses, in two rate bands
+
+Cairo 50.00 EGP, Alexandria 100.00 EGP. A developer with one address cannot see
+that the fee moves, cannot tell a quote that priced shipping from one that did
+not, and will hard-code whichever number they saw. This is the exact trap the
+contract freeze exists to prevent, and one extra seeded row disarms it.
+
+### Reset gives the stock back
+
+Deleting an order does not restock. A reset that only deleted documents would
+drain the seeded catalogue one run at a time until a product the docs name went
+out of stock, with nothing to point at. The reversal reads the **inventory
+events** rather than the order lines — those are the authority for what actually
+moved, so it stays exact even for a partially fulfilled order.
+
+Verified: stock and `salesCount` for both ordered products are identical before
+and after `--reset` followed by a re-place.
+
+### The credentials are a promise, so they are a test
+
+`test/database/sandbox-seed.spec.ts` reads `SANDBOX.md` and the seed data and
+compares them. A document is exactly the thing that drifts — someone changes the
+seed, the docs keep the old value, and the first thing a new developer does is
+fail to log in and conclude the API is broken. Nothing else in the repository
+would have noticed. It also asserts the password passes the real policy and that
+the address is on a reserved `.test` domain, so a development run can never mail
+a stranger.
+
+**One thing this forced:** the constants had to move to `sandbox.seed-data.ts`.
+The seed is a script ending in `void main()`, so importing it to read a constant
+*runs the seed* — which is what the first version of the test did. Same split as
+`catalog.seed-data.ts` and `shipping.seed-data.ts`, for the same reason.
