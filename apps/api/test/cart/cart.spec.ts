@@ -11,6 +11,7 @@ import { validationExceptionFactory } from '../../src/common/pipes/validation-ex
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { CartRepository } from '../../src/modules/cart/infrastructure/repositories/cart.repository';
 import { Cart, type CartLean } from '../../src/modules/cart/infrastructure/schemas/cart.schema';
+import { MAX_GUEST_CART_LINES } from '../../src/modules/cart/presentation/dto/cart-request.dto';
 import { SEED_PRODUCTS } from '../../src/database/seed/catalog.seed-data';
 import { Category } from '../../src/modules/catalog/infrastructure/schemas/category.schema';
 import { Product } from '../../src/modules/catalog/infrastructure/schemas/product.schema';
@@ -1092,6 +1093,206 @@ describe('POST /cart/preview — the anonymous basket', () => {
     const response = await preview([]).expect(200);
 
     expect(response.headers['cache-control']).toBe('no-store');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * What an ANONYMOUS caller is allowed to learn.
+ *
+ * This endpoint reuses a projection built for a signed-in customer and serves
+ * it to the open internet, which is the shape most accidental data exposure
+ * takes. So the audit is written down as tests rather than as a paragraph
+ * somebody read once:
+ *
+ *   1. the exact field list, so a field added to `CartLineDto` for the account
+ *      cart cannot reach the anonymous one without this failing;
+ *   2. that a hidden product cannot be told apart from an imaginary one,
+ *      because a public endpoint that takes ids and answers differently for
+ *      "exists but you may not see it" is an enumeration oracle.
+ */
+describe('POST /cart/preview - what an anonymous caller may learn', () => {
+  const preview = (items: unknown): request.Test =>
+    http().post('/api/v1/cart/preview').send({ items });
+
+  /**
+   * Every field an anonymous line carries, and where a visitor can already see
+   * it without one:
+   *
+   *   productId, slug, sku, name, imagePublicId  GET /products (grid + detail)
+   *   unitPrice, previousUnitPrice, lineTotal    pricing.effectivePrice
+   *   availableQuantity                          ProductDetailDto.stockOnHand
+   *   quantity, effectiveQuantity, addedAt       the caller's own request
+   *   status                                     derived from the above
+   *
+   * `costPrice`, `isActive`, `deletedAt`, `salesCount`, the internal category
+   * and brand ids and `brandName` are absent BY CONSTRUCTION - none is a field
+   * on `CartLineDto`, so no decorator has to be remembered for them to stay out
+   * (DTO-STRATEGY.md 6).
+   */
+  const ANONYMOUS_LINE_FIELDS = [
+    'addedAt',
+    'availableQuantity',
+    'effectiveQuantity',
+    'imagePublicId',
+    'lineTotal',
+    'name',
+    'previousUnitPrice',
+    'productId',
+    'quantity',
+    'sku',
+    'slug',
+    'status',
+    'unitPrice',
+  ];
+
+  it('returns EXACTLY the audited field list and nothing else', async () => {
+    const response = await preview([
+      { productId: productId.plentiful.toHexString(), quantity: 1 },
+    ]).expect(200);
+
+    const items = response.body.data.items as Record<string, unknown>[];
+
+    expect(items).toHaveLength(1);
+    expect(Object.keys(items[0] as Record<string, unknown>).sort()).toEqual(
+      [...ANONYMOUS_LINE_FIELDS].sort(),
+    );
+  });
+
+  it('carries no cost price, no internal flags and no brand', async () => {
+    const response = await preview([
+      { productId: productId.onSale.toHexString(), quantity: 2 },
+      { productId: productId.plentiful.toHexString(), quantity: 1 },
+    ]).expect(200);
+
+    const body = JSON.stringify(response.body);
+
+    for (const forbidden of [
+      'costPrice',
+      'isActive',
+      'deletedAt',
+      'snapshot',
+      'brandName',
+      'salesCount',
+      'lowStockThreshold',
+      'userId',
+    ]) {
+      expect(body).not.toContain(forbidden);
+    }
+  });
+
+  it('cannot tell a hidden product apart from one that never existed', async () => {
+    /*
+     * THE enumeration property.
+     *
+     * `findPurchasableByIds` returns delisted and soft-deleted products on
+     * purpose, so a signed-in customer keeps seeing a line they added before
+     * the product vanished. Served anonymously that becomes an oracle: post an
+     * id, and a populated line means "real but hidden" while a blank one means
+     * "never existed" - which turns 24 hex characters into a queryable index of
+     * the unpublished catalogue, complete with names and prices.
+     *
+     * All three must be identical apart from the id the caller sent.
+     */
+    type Line = Record<string, unknown>;
+
+    /**
+     * The one line an id produces, with the two fields that cannot carry
+     * information about the product removed:
+     *
+     *   productId  the caller's own input, echoed back
+     *   addedAt    the server clock at request time — three requests, three
+     *              different milliseconds, and nothing to do with the id
+     *
+     * `addedAt` is checked separately below rather than merely dropped, so a
+     * future change that derived it from the product (a real creation date,
+     * say) would still be caught.
+     */
+    const answerFor = async (id: Types.ObjectId): Promise<Line> => {
+      const response = await preview([{ productId: id.toHexString(), quantity: 2 }]).expect(200);
+      const items = response.body.data.items as Line[];
+
+      expect(items).toHaveLength(1);
+
+      const line = items[0] as Line;
+
+      // Within the last minute: the request clock, not a stored timestamp.
+      const addedAt = Date.parse(String(line['addedAt']));
+      expect(Date.now() - addedAt).toBeLessThan(60_000);
+      expect(Date.now() - addedAt).toBeGreaterThanOrEqual(0);
+
+      const rest = { ...line };
+      delete rest['productId'];
+      delete rest['addedAt'];
+
+      return rest;
+    };
+
+    const delisted = await answerFor(productId.inactive);
+    const softDeleted = await answerFor(productId.removed);
+    const imaginary = await answerFor(new Types.ObjectId());
+
+    expect(delisted).toEqual(imaginary);
+    expect(softDeleted).toEqual(imaginary);
+
+    // And the shared answer says nothing about any of them.
+    expect(delisted.status).toBe('UNAVAILABLE');
+    expect(delisted.name).toBe('');
+    expect(delisted.sku).toBe('');
+    expect(delisted.slug).toBe('');
+    expect(delisted.imagePublicId).toBeNull();
+    expect(delisted.availableQuantity).toBe(0);
+    expect((delisted.unitPrice as { amount: number }).amount).toBe(0);
+  });
+
+  it('does not price a hidden product into anybody\'s subtotal', async () => {
+    const response = await preview([
+      { productId: productId.inactive.toHexString(), quantity: 3 },
+      { productId: productId.removed.toHexString(), quantity: 3 },
+    ]).expect(200);
+
+    expect(response.body.data.itemsSubtotal.amount).toBe(0);
+    expect(response.body.data.hasBlockingIssues).toBe(true);
+  });
+
+  it('SKIPS unknown ids rather than failing the request that carries them', async () => {
+    /*
+     * A basket is old. A product in it was delisted last week. That must not
+     * turn every subsequent page load into an error the visitor cannot clear
+     * without knowing to empty their own localStorage.
+     */
+    const response = await preview([
+      { productId: new Types.ObjectId().toHexString(), quantity: 1 },
+      { productId: productId.plentiful.toHexString(), quantity: 2 },
+      { productId: productId.inactive.toHexString(), quantity: 1 },
+    ]).expect(200);
+
+    const good = (response.body.data.items as Record<string, unknown>[]).find(
+      (line) => line['productId'] === productId.plentiful.toHexString(),
+    );
+
+    expect(good).toBeDefined();
+    expect(good?.['status']).toBe('OK');
+    expect((good?.['lineTotal'] as { amount: number }).amount).toBeGreaterThan(0);
+    expect(response.body.data.itemsSubtotal).toEqual(good?.['lineTotal']);
+  });
+
+  it('caps the basket and says which rule refused it', async () => {
+    const line = { productId: productId.plentiful.toHexString(), quantity: 1 };
+
+    // The cap is a real boundary, so both sides of it are asserted: 50 is a
+    // basket, 51 is somebody using the endpoint as a bulk price lookup.
+    await preview(Array.from({ length: MAX_GUEST_CART_LINES }, () => line)).expect(200);
+
+    const refused = await preview(
+      Array.from({ length: MAX_GUEST_CART_LINES + 1 }, () => line),
+    ).expect(400);
+
+    expect(refused.body.error.code).toBe('VALIDATION_ERROR');
+    expect(JSON.stringify(refused.body.error.details)).toContain(
+      `items must not exceed ${String(MAX_GUEST_CART_LINES)} products`,
+    );
   });
 });
 

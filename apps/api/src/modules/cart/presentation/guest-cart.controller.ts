@@ -7,11 +7,26 @@ import { RequestLocale } from '../../../common/decorators/locale.decorator';
 import { ErrorResponseDto } from '../../../common/dto/error-response.dto';
 import type { Locale } from '../../../common/localization/locale';
 import { CartService } from '../application/cart.service';
-import { PreviewGuestCartDto } from './dto/cart-request.dto';
+import { MAX_GUEST_CART_LINES, PreviewGuestCartDto } from './dto/cart-request.dto';
 import { CartDto, CartResponseDto } from './dto/cart-response.dto';
 
 /** Nothing here is stored, but the answer is per-basket. Never cache it. */
 const NO_STORE = 'no-store';
+
+/**
+ * Requests per minute per IP.
+ *
+ * Public, unauthenticated and it reads the catalogue, so it gets a limit of its
+ * own rather than the default allowance. Generous for a person — a basket
+ * changes a handful of times a minute at most — and low enough that it is not a
+ * free way to hammer the product collection.
+ *
+ * `AppThrottlerGuard` multiplies this by `throttle.limitMultiplier`, which is 1
+ * everywhere except a relaxed test environment, so the number below is what the
+ * internet gets. `test/auth/auth-guards.spec.ts` proves it at production
+ * strength.
+ */
+const ANONYMOUS_PREVIEW_LIMIT_PER_MINUTE = 120;
 
 /**
  * The anonymous half of the cart.
@@ -48,13 +63,7 @@ export class GuestCartController {
   @Public()
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', NO_STORE)
-  /*
-   * Public, unauthenticated and it reads the catalogue, so it gets a limit of
-   * its own rather than the default allowance. Generous for a person — a
-   * basket changes a handful of times a minute at most — and low enough that
-   * it is not a free way to hammer the product collection.
-   */
-  @Throttle({ global: { limit: 120, ttl: 60_000 } })
+  @Throttle({ global: { limit: ANONYMOUS_PREVIEW_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Price an anonymous basket',
     description: [
@@ -79,6 +88,25 @@ export class GuestCartController {
       '',
       'Duplicate products in `items` are summed, matching what posting the same product twice',
       'to a real cart does. An empty array returns an empty cart rather than an error.',
+      '',
+      '### An id it will not price is an id it says nothing about',
+      '',
+      'A product that is delisted, soft-deleted or simply not real all produce the SAME line: ',
+      '`UNAVAILABLE`, an empty `name`, `sku` and `slug`, a zero `unitPrice` and a zero',
+      '`availableQuantity`. This endpoint is public, and answering differently for a hidden',
+      'product would turn it into a way to enumerate the unpublished catalogue.',
+      '',
+      'A client should therefore treat an `UNAVAILABLE` line with an empty `name` as "this is no',
+      'longer for sale" and offer to remove it, rather than showing a blank row. A stored cart',
+      '(`GET /cart`) still names such a line, because there the customer added it while it was',
+      'real and the cart kept a snapshot.',
+      '',
+      '### Limits',
+      '',
+      `At most ${String(MAX_GUEST_CART_LINES)} distinct products per request, and ` +
+        `${String(ANONYMOUS_PREVIEW_LIMIT_PER_MINUTE)} requests per minute per IP. Both exist ` +
+        'because this is an unauthenticated route that reads the catalogue: a basket needs',
+      'neither, and a scraper needs both.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: CartResponseDto })

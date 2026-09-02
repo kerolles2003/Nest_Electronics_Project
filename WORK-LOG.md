@@ -2907,3 +2907,82 @@ catch, one layer down.
 jest **825 passed, 15 skipped** (840 total, 34 suites).
 Playwright **94 passed**, twice in a row against the same API process inside one
 hour. Build, type-check, lint (0 errors) and the drift gate green.
+
+---
+
+## POST /cart/preview: the projection audit (A1–A3)
+
+**The endpoint reused a projection built for a signed-in customer and served it
+to the open internet.** That is the shape most accidental exposure takes, so the
+audit was done field by field rather than by asserting that the cart's own
+projection must be safe.
+
+### Every field an anonymous caller receives
+
+| Field | Where a visitor can already see it |
+|---|---|
+| `productId`, `slug`, `sku`, `name`, `imagePublicId` | `GET /products` grid and `GET /products/:slug` |
+| `unitPrice`, `previousUnitPrice`, `lineTotal` | `pricing.effectivePrice` on both |
+| `availableQuantity` | `ProductDetailDto.stockOnHand` — already public |
+| `quantity`, `effectiveQuantity`, `addedAt` | the caller's own request; `addedAt` is the request clock |
+| `status` | derived from the above |
+
+`costPrice`, `isActive`, `deletedAt`, `salesCount`, `lowStockThreshold`, the
+internal category/brand ids and `brandName` are absent **by construction** —
+none is a field on `CartLineDto`, so nothing has to be remembered for them to
+stay out. `brandName` is the interesting one: it exists on the domain `CartView`
+because checkout snapshots it onto an order line, and it stops at the DTO.
+
+The list is now a test. A field added to `CartLineDto` for the account cart
+cannot reach the anonymous one without `returns EXACTLY the audited field list`
+failing.
+
+### One field failed, and it was a whole class
+
+`findPurchasableByIds` deliberately returns delisted and soft-deleted products
+— a signed-in cart must keep showing a line the customer added before the
+product vanished. Served anonymously, that resolved **hidden products**: post
+the id of an unpublished or soft-deleted product and the response came back with
+its real name, SKU, slug, image, price and live stock count. None of those is
+reachable from any public page.
+
+Worse than the disclosure was the oracle. An imaginary id produced a blank line;
+a hidden id produced a populated one. **That is an enumeration primitive** — it
+turns the endpoint into a queryable index of the unpublished catalogue, complete
+with names and prices, for anyone willing to walk ObjectIds.
+
+**The fix is one line in `previewGuestCart`:** non-purchasable products are
+dropped from the resolved map *before* the snapshots are built, so a hidden
+product and an imaginary one produce byte-identical lines — `UNAVAILABLE`, empty
+`name`/`sku`/`slug`, zero price, zero stock. The filter reads
+`PurchasableProduct.purchasable`, the same boolean the cart, checkout and order
+placement already treat as authoritative, rather than a second copy of
+`isActive && deletedAt === null` written as a Mongo filter that could drift.
+
+A signed-in cart is untouched: it still names such a line, because there the
+customer added it while it was real and the cart kept a snapshot.
+
+### The cap, and the throttle
+
+Both already existed; what was missing was proof.
+
+- **50 distinct products per request**, `@ArrayMaxSize`, `400 VALIDATION_ERROR`
+  naming the rule. Asserted on **both** sides of the boundary — 50 is a basket,
+  51 is somebody using the endpoint as a bulk price lookup.
+- **120 requests per minute per IP**, through the P3 multiplier, so a relaxed
+  test environment is not bound by it. The 429 is asserted in
+  `auth-guards.spec.ts` — **the one suite that runs at production strength**.
+  Proving a ceiling where the multiplier is 200 would prove nothing about what
+  the internet gets. The limit is read from `X-RateLimit-Limit-global` rather
+  than written twice, which is the same evidence `e2e/global-setup.ts` uses.
+- An unknown id is **skipped, not errored**: a basket whose product was delisted
+  last week must not turn every page load into an error the visitor cannot clear
+  without knowing to empty their own `localStorage`.
+
+### The artifact did not move, and that is the right answer
+
+`openapi:export` produced a one-line diff — the operation description. The
+contract did not change; **what the endpoint is willing to resolve did.** The
+description now states the indistinguishability property and tells a client to
+treat an `UNAVAILABLE` line with an empty `name` as "no longer for sale" rather
+than rendering a blank row. Drift gate: OK.

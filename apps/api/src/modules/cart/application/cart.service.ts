@@ -147,6 +147,23 @@ export class CartService {
    * here, and inventing a comparison would produce a warning about a change
    * nobody can show.
    *
+   * ## The second difference: it can only see what a visitor can see
+   *
+   * `findPurchasableByIds` deliberately returns delisted and soft-deleted
+   * products, because a SIGNED-IN cart has to keep showing a line the customer
+   * put there before it vanished. This path has no such history to honour —
+   * nobody added a hidden product from a page that does not render — and it is
+   * unauthenticated, so resolving one would answer two questions a stranger
+   * must not be able to ask:
+   *
+   *   - "what is this unlisted product called, and what does it cost?"
+   *   - "does this id exist at all?", by telling a hidden product apart from
+   *     an imaginary one
+   *
+   * So non-purchasable products are dropped BEFORE the snapshots are built,
+   * which makes them indistinguishable from ids that were never real: same
+   * UNAVAILABLE status, same empty name, same zero price, same zero stock.
+   *
    * Nothing is written and no session is required. Two callers a second get
    * two independent answers and neither leaves a trace.
    */
@@ -176,7 +193,9 @@ export class CartService {
     }
 
     const lines = [...merged.values()];
-    const products = await this.products.findPurchasableByIds(lines.map((l) => l.productId));
+    const products = CartService.visibleOnly(
+      await this.products.findPurchasableByIds(lines.map((l) => l.productId)),
+    );
     const now = new Date();
 
     const asCartItems: CartItem[] = lines.map((line) => {
@@ -191,6 +210,26 @@ export class CartService {
     });
 
     return CartService.project(asCartItems, products, null, null);
+  }
+
+  /**
+   * Everything an anonymous visitor is allowed to be told about.
+   *
+   * Drops every product that is delisted or soft-deleted, so the anonymous
+   * preview resolves exactly the set a visitor could have reached from a
+   * product page. See `previewGuestCart` for why that is a security property
+   * and not a tidiness one.
+   *
+   * It filters the RESOLVED map rather than the query, so the visibility rule
+   * is `PurchasableProduct.purchasable` — the same boolean the cart, checkout
+   * and order placement already treat as authoritative — instead of a second
+   * copy of `isActive && deletedAt === null` written as a Mongo filter that
+   * could drift from it.
+   */
+  private static visibleOnly(
+    products: ReadonlyMap<string, PurchasableProduct>,
+  ): ReadonlyMap<string, PurchasableProduct> {
+    return new Map([...products].filter(([, product]) => product.purchasable));
   }
 
   /**

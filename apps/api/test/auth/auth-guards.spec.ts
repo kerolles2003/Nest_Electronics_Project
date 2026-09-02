@@ -30,6 +30,15 @@ import { User, type UserLean } from '../../src/modules/users/infrastructure/sche
  * limits it asserts are the ones the internet sees.
  */
 
+/**
+ * The production ceiling on `POST /cart/preview`, per minute per IP.
+ *
+ * Written here rather than imported from the controller so that changing the
+ * decorator cannot silently change what this suite claims to have proven - the
+ * point of the case below is that a specific number reaches the internet.
+ */
+const ANONYMOUS_PREVIEW_LIMIT = 120;
+
 const RUN_ID = randomUUID();
 const PASSWORD = 'brass thermionic valve';
 
@@ -179,6 +188,47 @@ describe('rate limiting', () => {
     expect(bystanderResponse.status).toBe(401);
     expect(bystanderResponse.body.error.code).toBe('INVALID_CREDENTIALS');
   }, 60_000);
+
+  /**
+   * The other unauthenticated write, and the only public one that reads the
+   * catalogue: `POST /cart/preview`.
+   *
+   * It takes a list of product ids and answers with prices, which is a cheap
+   * bulk-scraping surface if it is left on the default allowance. It is
+   * asserted HERE, beside the auth throttles, because this is the one suite
+   * that runs at production strength - proving the ceiling somewhere the
+   * multiplier is 200 would prove nothing about what the internet gets.
+   */
+  it('caps the anonymous cart preview and reports the ceiling it enforced', async () => {
+    const preview = (): request.Test =>
+      http()
+        .post('/api/v1/cart/preview')
+        .send({ items: [] });
+
+    const first = await preview().expect(200);
+
+    /*
+     * Read from the response rather than asserted as a literal in two places:
+     * this is the number AFTER `AppThrottlerGuard` has applied the multiplier,
+     * so it proves both that the route declares its own limit and that the
+     * relaxation is not in force - the same evidence `e2e/global-setup.ts`
+     * uses, one layer down.
+     */
+    const limit = Number(first.headers['x-ratelimit-limit-global']);
+
+    expect(limit).toBe(ANONYMOUS_PREVIEW_LIMIT);
+
+    // Sequential on purpose. Fired concurrently, which request crosses the
+    // line is a race, and the test would flake on the boundary it exists for.
+    for (let sent = 1; sent < limit; sent += 1) {
+      await preview().expect(200);
+    }
+
+    const blocked = await preview().expect(429);
+
+    expect(blocked.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+  }, 120_000);
 });
 
 describe('email verification requirement', () => {
