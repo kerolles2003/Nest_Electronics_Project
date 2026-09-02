@@ -73,6 +73,29 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Marks a message on a secret key as safe to print.
+ *
+ * `formatIssues` redacts every message for a `SECRET_KEYS` entry, because a
+ * validation message can interpolate the value it rejected and a boot failure
+ * must never echo a credential into a log. That default is right and stays.
+ *
+ * But it is a blanket rule, and it silently ate the remedies: a developer who
+ * left the `.env.example` placeholder in place, or set a 10-character key, got
+ * `JWT_SECRET  Invalid or missing value` and no idea which of the two it was or
+ * what to do. The guard fired and told them nothing — which was half the point
+ * of having it.
+ *
+ * So a message can OPT IN, and only by being written that way on purpose. The
+ * two below carry no value: one names a command to run, the other a length.
+ * Anything that does not declare itself safe is still redacted, including every
+ * message Zod generates on its own.
+ */
+const SAFE_MESSAGE = 'valueFreeMessage';
+
+/** The `params` payload that opts a custom issue's message out of redaction. */
+const SAFE = { params: { [SAFE_MESSAGE]: true } } as const;
+
+/**
  * A value that was never meant to be used — the shape `.env.example` ships.
  *
  * Anchored, so a real key that merely happens to contain the word is not
@@ -176,12 +199,14 @@ export const envSchema = z.object({
     .min(32, { message: 'Must be at least 32 characters' })
     .refine((value) => value.trim().length >= 32, {
       message: 'Must be at least 32 characters',
+      ...SAFE,
     })
     .refine((value) => !PLACEHOLDER_SECRET.test(value.trim()), {
       message:
         'Still set to the .env.example placeholder. Generate one: ' +
         'node -e "console.log(require(\'node:crypto\').randomBytes(32).toString(\'base64url\'))" ' +
         'and put it in apps/api/.env',
+      ...SAFE,
     }),
 
   /** Access-token lifetime. Short by design: access tokens are NOT revocable. */
@@ -445,11 +470,26 @@ const envSchemaWithConditionals = envSchema.superRefine((value, ctx) => {
 
 export type Env = Readonly<z.infer<typeof envSchema>>;
 
-/** Formats issues as `KEY  message`, redacting any message that could echo a secret. */
+/**
+ * Formats issues as `KEY  message`, redacting any message that could echo a
+ * secret.
+ *
+ * A message on a secret key is printed only when it was explicitly declared
+ * value-free (see `SAFE_MESSAGE`). Everything else — including every message
+ * Zod writes itself, some of which interpolate the received value — is replaced.
+ * The default is redaction; showing a message is the opt-in.
+ */
 export function formatIssues(error: z.ZodError): string[] {
   return error.issues.map((issue) => {
     const key = issue.path.join('.') || '(root)';
-    const message = SECRET_KEYS.has(key) ? 'Invalid or missing value' : issue.message;
+
+    const declaredSafe =
+      issue.code === z.ZodIssueCode.custom &&
+      (issue.params as Record<string, unknown> | undefined)?.[SAFE_MESSAGE] === true;
+
+    const message =
+      SECRET_KEYS.has(key) && !declaredSafe ? 'Invalid or missing value' : issue.message;
+
     return `${key.padEnd(20)} ${message}`;
   });
 }
