@@ -195,10 +195,17 @@ async function signInWithCookies(context: BrowserContext, session: Account): Pro
   ]);
 }
 
-/** Lands on an authenticated page, which is what mounts the merge. */
-async function openShop(page: Page): Promise<void> {
-  await page.goto('/shop');
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+/**
+ * Lands on an authenticated page, which is what mounts the merge.
+ *
+ * It used to open `/shop` and wait for that layout's "Sign out" button. The
+ * slice is gone, and the merge is mounted in the ROOT layout now — so ANY page
+ * runs it once a session exists. The account area is the honest choice: it is
+ * guarded, so arriving there at all is proof the session took.
+ */
+async function openSignedInPage(page: Page): Promise<void> {
+  await page.goto('/account/orders');
+  await expect(page.getByRole('heading', { name: /Order History|No Orders Yet/ })).toBeVisible();
 }
 
 /**
@@ -287,7 +294,7 @@ test('a guest basket UNIONS with different items already in the account', async 
   await seedGuestCart(page, [{ productId: first.id, quantity: 3 }]);
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   // Both survive, and the untouched line keeps its exact quantity — the plan
@@ -305,7 +312,7 @@ test('the SAME product in both is SUMMED, not replaced', async ({ page, context,
   await seedGuestCart(page, [{ productId: product.id, quantity: 2 }]);
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   /*
@@ -328,7 +335,7 @@ test('a quantity beyond stock is CLAMPED, and the customer is told', async ({
   await addToServerCart(request, account.token, product.id, 1);
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   const cart = await serverCart(request, account.token);
@@ -362,13 +369,13 @@ test('an unpurchasable line is skipped, the rest merge, and sign-in still works'
   ]);
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   // The good line merged; the dead one did not block it, and did not block the
   // sign-in either — the page below is a signed-in page.
   expect(await serverCart(request, account.token)).toEqual({ [product.id]: 2 });
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Order History|No Orders Yet/ })).toBeVisible();
 
   await expect(page.getByTestId('guest-cart-merge-notice')).toBeVisible();
   await expect(page.getByTestId('guest-cart-merge-notice')).toContainText('no longer available');
@@ -440,7 +447,7 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
   });
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
 
   /*
    * The plan was frozen and the write was interrupted, so the basket is still
@@ -467,7 +474,7 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
 
   // --- the retry -----------------------------------------------------------
   await page.unroute('**/*');
-  await page.goto('/shop');
+  await page.goto('/account/orders');
   await waitForMerge(page);
 
   /*
@@ -506,7 +513,7 @@ test('a merge whose plan was already applied is not applied twice', async ({
   );
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   // Still 5. A recomputed plan would have made it 7.
@@ -521,7 +528,7 @@ test('the merged cart is what the cart PAGE shows', async ({ page, context }) =>
   await seedGuestCart(page, [{ productId: product.id, quantity: 2 }]);
 
   await signInWithCookies(context, account);
-  await openShop(page);
+  await openSignedInPage(page);
   await waitForMerge(page);
 
   await page.goto('/shop/cart');

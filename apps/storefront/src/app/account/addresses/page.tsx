@@ -4,7 +4,7 @@ import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { customerMessage } from '@/lib/api/errors';
 import { readSession } from '@/lib/api/session';
-import { AddressBook } from '@/components/shop/AddressBook';
+import { AddressBook } from '@/components/account/AddressBook';
 
 /**
  * The address book.

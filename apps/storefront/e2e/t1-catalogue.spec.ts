@@ -9,6 +9,20 @@ import { expect, test } from './fixtures/browser-health';
  * gallery, a product with no reviews, an out-of-stock card, a discount badge.
  */
 
+/**
+ * Assertions on page text are scoped to `main`, and that is not decoration.
+ *
+ * React streams a Suspense boundary by writing its content into a `<div hidden>`
+ * appended to `<body>` and then moving it into place. For the moment between
+ * those two steps the same text exists TWICE in the document — once hidden,
+ * once not — and an unscoped `getByText` resolves to both. That is a strict-mode
+ * violation, which Playwright raises rather than retries, so it lands as a
+ * confusing hard failure that reproduces perhaps one run in three.
+ *
+ * The hidden copy is outside `main`. Scoping there makes the assertion mean
+ * what it says: the text is in the page's content, not in a staging buffer.
+ */
+
 /** Every link to a product in a grid. Cards link twice, so counts de-duplicate. */
 function productLinks(page: import('@playwright/test').Page) {
   return page.locator('main a[href^="/products/"]');
@@ -72,7 +86,7 @@ test.describe('/products', () => {
     await page.goto('/products');
 
     // 34 seeded products, 16 per page.
-    await expect(page.getByText('34 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('34 products found')).toBeVisible();
     expect(await countProducts(page)).toBe(16);
   });
 
@@ -86,7 +100,7 @@ test.describe('/products', () => {
   test('filters by category, and the filter is removable', async ({ page }) => {
     await page.goto('/products?category=tools');
 
-    await expect(page.getByText('3 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('3 products found')).toBeVisible();
     // The active-filter chip resolves the slug to a NAME from the category
     // list, so a chip reading "tools" would mean the lookup failed.
     await expect(page.locator('main').getByRole('link', { name: /Tools & Equipment/ })).toBeVisible();
@@ -94,11 +108,11 @@ test.describe('/products', () => {
 
   test('filters by brand and by stock', async ({ page }) => {
     await page.goto('/products?brand=espressif');
-    await expect(page.getByText('4 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('4 products found')).toBeVisible();
 
     await page.goto('/products?in_stock=true');
     // 34 products, 3 of them out of stock.
-    await expect(page.getByText('31 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('31 products found')).toBeVisible();
   });
 
   test('filters by price, converting the URL major units to the API minor units', async ({ page }) => {
@@ -126,14 +140,14 @@ test.describe('/products', () => {
     // `featured` is not a sort in the frozen API enum, so it is mapped to the
     // `featured=true` FILTER. Eight products are featured.
     await page.goto('/products?sort=featured');
-    await expect(page.getByText('8 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('8 products found')).toBeVisible();
   });
 
   test('does not error on a hand-edited sort value', async ({ page }) => {
     // An unrecognised `?sort=` would be a 400 UNSUPPORTED_SORT if forwarded.
     await page.goto('/products?sort=totally-made-up');
 
-    await expect(page.getByText('34 products found')).toBeVisible();
+    await expect(page.locator('main').getByText('34 products found')).toBeVisible();
   });
 
   test('renders the empty state when nothing matches', async ({ page }) => {

@@ -135,7 +135,7 @@ test.describe('/brands/[slug]', () => {
     await page.goto('/brands/sparkfun');
 
     await expect(page.getByRole('heading', { level: 1, name: 'SparkFun' })).toBeVisible();
-    await expect(page.getByText('No products found')).toBeVisible();
+    await expect(page.locator('main').getByText('No products found')).toBeVisible();
     await expect(page.locator('main').getByText('0 products')).toBeVisible();
   });
 

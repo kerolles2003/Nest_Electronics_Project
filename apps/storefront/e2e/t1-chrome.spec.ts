@@ -62,10 +62,15 @@ test('every browse-menu entry links to its category page', async ({ page }) => {
 });
 
 test('the header renders identically on pages that do NOT read the catalogue', async ({ page }) => {
-  // `/shop` has its own data and does not need a category tree. It still gets
-  // the same header, and before T1 that header was the last Supabase query on
-  // the page.
-  await page.goto('/shop');
+  /*
+   * A page with no catalogue data of its own still gets the same header, and
+   * before T1 that header was the last Supabase query on the page.
+   *
+   * This used to load `/shop`, which was exactly such a page. The slice is gone
+   * (T3), so `/contact` stands in: static content, no category tree, same
+   * header.
+   */
+  await page.goto('/contact');
 
   const menu = page.locator('header').getByRole('button', { name: 'Browse Categories' });
   await expect(menu).toBeVisible();

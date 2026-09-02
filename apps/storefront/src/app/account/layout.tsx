@@ -152,10 +152,27 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
           </div>
         </aside>
 
-        {/* Main Content Area */}
-        <main className="flex-1 min-w-0 bg-white border border-[var(--color-border)] rounded-sm p-6 sm:p-10 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500">
+        {/*
+          * A `section`, NOT a second `main` — F-12.
+          *
+          * The root layout already renders the page's one `<main>`, and this
+          * layout renders inside it. Two nested `main` landmarks is invalid
+          * HTML and it degrades the thing the landmark exists for: a screen
+          * reader offering "skip to main content" cannot say which one is
+          * meant, and "next landmark" walks into a nested copy of where the
+          * user already is.
+          *
+          * The `/shop` slice had the same defect and it went with the slice.
+          * This was the other half of it, on every `/account/*` page, and it
+          * would have outlived the deletion unnoticed — `not-found.spec.ts`
+          * counts landmarks now so it cannot come back.
+          */}
+        <section
+          aria-label="Account"
+          className="flex-1 min-w-0 bg-white border border-[var(--color-border)] rounded-sm p-6 sm:p-10 shadow-sm animate-in fade-in slide-in-from-right-4 duration-500"
+        >
           {children}
-        </main>
+        </section>
       </div>
     </div>
   );

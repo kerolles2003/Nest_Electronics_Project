@@ -21,24 +21,20 @@ import { emptyActionState, type ActionState } from '@/lib/api/action-state';
 /**
  * Every surface that renders the cart.
  *
- * There are two of them until T3 removes the `/shop` slice, and a mutation has
- * to invalidate both or the one the customer is NOT looking at serves a stale
- * page the moment they navigate to it. Listed once here rather than repeated at
- * six call sites, so deleting `/shop` is one edit.
+ * A mutation has to invalidate all of them, or the one the customer is NOT
+ * looking at serves a stale page the moment they navigate to it. Listed once
+ * here rather than repeated at six call sites — which is what made removing the
+ * `/shop` duplicates a single edit.
  */
 function revalidateCart(): void {
   revalidatePath('/cart');
   revalidatePath('/checkout');
-  revalidatePath('/shop/cart');
-  revalidatePath('/shop/checkout');
 }
 
 /** Likewise for the address book, which checkout also reads. */
 function revalidateAddresses(): void {
   revalidatePath('/account/addresses');
   revalidatePath('/checkout');
-  revalidatePath('/shop/addresses');
-  revalidatePath('/shop/checkout');
 }
 
 function failure(error: {
@@ -225,7 +221,6 @@ export async function placeOrderAction(
 
   revalidateCart();
   revalidatePath('/account/orders');
-  revalidatePath('/shop/orders');
 
   // Redirect must happen OUTSIDE the try/catch above: Next implements it by
   // throwing, and catching it would swallow the navigation.

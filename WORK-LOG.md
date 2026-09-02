@@ -2757,3 +2757,106 @@ jest **825 passed, 15 skipped** (840) — 11 new, all on `POST /cart/preview`.
 Playwright **70 → 83**, all green.
 Build, type-check, lint (0 errors; storefront warnings 59 → 24 as legacy code
 left) and the drift gate green; the OpenAPI artifact regenerated and additive.
+
+## Part 3 — the T3 collapse
+
+`/shop` is gone. Its URLs still resolve, permanently, to the canonical ones.
+
+### The redirect table, and the one thing that could quietly ruin it
+
+```
+/shop                      -> /products
+/shop/login                -> /login
+/shop/register             -> /register
+/shop/verify-email         -> /verify-email
+/shop/cart                 -> /cart
+/shop/checkout             -> /checkout
+/shop/addresses            -> /account/addresses
+/shop/orders               -> /account/orders
+/shop/orders/:id           -> /account/orders/:id
+/shop/:slug                -> /products/:slug
+```
+
+`/shop/:slug` matches `login`, `cart`, `orders` and every other single segment,
+so it is listed **last** and the specific paths first. Next takes the first
+match. Every row is asserted — status and `Location` — because a redirect table
+is exactly the kind of thing that looks right in a config file while sending
+`/shop/orders/abc` to a product page that does not exist.
+
+**301, not 308.** The frozen plan says 301, these are all GET pages, and the
+distinction that separates the two — 308 preserves the method — buys nothing
+here. Crawlers treat them identically.
+
+These URLs were live: they are in verification emails and order emails sitting
+in inboxes, some carrying tokens that are still valid. That is why the tombstones
+exist rather than a clean deletion.
+
+### `/shop/cart` needed somewhere real to go
+
+There was no canonical cart page — the cart was a drawer. `/cart` is a page now,
+reading the same `useCart()` the drawer and the header badge read, so the three
+cannot disagree.
+
+It works **signed out**, unlike the `/shop` page it replaces, which redirected an
+anonymous visitor to sign in because the only cart it knew about was the API's.
+Making somebody sign in to look at their own basket is a good way to lose the
+basket.
+
+### F-12 was two defects, and only one of them was the one recorded
+
+The finding says "two nested `<main>` landmarks on every `/shop` page". Deleting
+the slice removed that pair — and revealed that **`/account/*` had the same
+defect independently**, from a different layout, on every page in the account
+area. It would have outlived the deletion with the finding marked closed.
+
+Two nested `main` landmarks is invalid HTML, and it degrades exactly the thing
+the landmark is for: "skip to main content" cannot say which one is meant, and
+"next landmark" walks into a nested copy of where the user already is. The inner
+element is a labelled `<section>` now, so the region is still announced.
+
+`t3-collapse.spec.ts` counts the landmark on a page per layout — including a
+signed-in account page, which is the only render that draws the layout that hid
+the second one.
+
+**No route-group split was needed.** The plan named it as the mechanism; deleting
+the slice achieved the outcome the mechanism existed for, and the account layout
+needed a one-element change rather than a restructure.
+
+### The sitemap needed no change
+
+It was already built from the API and already listed only canonical URLs — F-03
+recorded `/shop`'s absence from it as a symptom. There is now a test asserting
+that silence, so the absence is a property rather than an omission.
+
+### A flake class, found and fixed
+
+`t1-catalogue` went red on a count assertion that had passed for months.
+
+React streams a Suspense boundary by writing its content into a `<div hidden>`
+appended to `<body>` and then moving it into place. Between those two steps the
+same text is in the document **twice** — once hidden, once not — and an unscoped
+`getByText` resolves to both. That is a strict-mode violation, which Playwright
+raises rather than retries, so it lands as a hard failure that reproduces
+perhaps one run in three.
+
+The hidden copy is outside `main`. Every count assertion is scoped to `main`
+now, which also makes it mean what it says: the text is in the page's content,
+not in a staging buffer.
+
+### Findings closed
+
+| | |
+|---|---|
+| F-03 | `/shop` unreachable — deleted, with 301s and a sitemap assertion |
+| F-04 | register stranding the customer — replaced, not patched |
+| F-06 | orphaned `/auth/callback` — deleted; a spec asserts it 404s |
+| F-12 | nested `<main>` — **both** instances, with a landmark count |
+| F-13 | "Not yet calculated" — D-8 fees live, asserted as a number |
+| F-18 | dormant Zustand cart authority — deleted with `syncCartToDatabase` |
+
+### Counts
+
+jest **825 passed, 15 skipped** (840).
+Playwright **83 → 94**, all green.
+Build, type-check, lint and the drift gate green. The built route list contains
+no `/shop`.

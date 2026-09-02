@@ -148,7 +148,7 @@ export async function applyGuestCartMerge(
   }
 
   revalidatePath('/cart');
-  revalidatePath('/shop/cart');
+  revalidatePath('/checkout');
 
   return {
     ok: true,

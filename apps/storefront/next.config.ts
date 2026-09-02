@@ -24,6 +24,57 @@ const nextConfig: NextConfig = {
    */
   allowedDevOrigins: [process.env['DEV_ORIGIN_HOST'] ?? '127.0.0.1'],
 
+  /**
+   * `/shop/*` is gone. These are the tombstones.
+   *
+   * The slice existed so the API-backed implementation could be built and
+   * proven while the customer-facing pages were still on Supabase. T2 moved
+   * those implementations onto the real URLs and T3 deleted the slice, but the
+   * URLs were live: they were linked from verification emails, order emails and
+   * anything anybody bookmarked while it existed.
+   *
+   * ## 301 rather than 308
+   *
+   * The frozen plan says 301 and these are all GET pages, so the distinction
+   * that separates the two — 308 preserves the method — buys nothing here.
+   * Every crawler treats them identically for ranking; 301 is the one every
+   * tool and every operator expects to see, and matching the plan exactly costs
+   * nothing.
+   *
+   * ## `/shop/cart` has a real destination
+   *
+   * `/cart` was built for it. Sending that URL to `/products` would have thrown
+   * away what the customer was actually asking for, and sending it to
+   * `/checkout` would have demanded a session and an address to look at a
+   * basket.
+   *
+   * ## They are ordered, and the order matters
+   *
+   * `/shop/:slug` matches `login`, `cart` and every other single segment, so
+   * the specific paths come first. Next takes the first match.
+   */
+  async redirects() {
+    const gone = (source: string, destination: string) => ({
+      source,
+      destination,
+      statusCode: 301 as const,
+    });
+
+    return [
+      gone('/shop/login', '/login'),
+      gone('/shop/register', '/register'),
+      gone('/shop/verify-email', '/verify-email'),
+      gone('/shop/cart', '/cart'),
+      gone('/shop/checkout', '/checkout'),
+      gone('/shop/addresses', '/account/addresses'),
+      gone('/shop/orders', '/account/orders'),
+      gone('/shop/orders/:id', '/account/orders/:id'),
+      // The catch-all LAST: a product page under the old slice.
+      gone('/shop/:slug', '/products/:slug'),
+      gone('/shop', '/products'),
+    ];
+  },
+
   transpilePackages: ['@nest/types', '@nest/config', '@nest/repositories', '@nest/providers', '@nest/services', '@nest/ui'],
   images: {
     /*
