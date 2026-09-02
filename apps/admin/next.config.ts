@@ -1,6 +1,27 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Hosts allowed to request `/admin/_next/*` dev resources.
+   *
+   * Development only — Next 16 blocks cross-origin requests for dev assets, and
+   * treats `127.0.0.1` and `localhost` as different origins. In the storefront
+   * the e2e suite drove `http://127.0.0.1:3100` while the dev server called
+   * itself `localhost:3100`, so **every client chunk was refused and React
+   * never booted**: pages server-rendered correctly, forms still worked through
+   * progressive enhancement, and 44 tests passed for five phases without ever
+   * running a line of client code.
+   *
+   * The admin is a second Next application and would have made the same mistake
+   * independently. The value is NOT written out here: `e2e/origin.ts` owns one
+   * HOST constant and `playwright.config.ts` passes it in, so the origin the
+   * tests drive and the origin the dev server trusts cannot become two
+   * different strings. The literal below is only for a developer running
+   * `pnpm dev` by hand and browsing 127.0.0.1; nothing the suite does depends
+   * on it.
+   */
+  allowedDevOrigins: [process.env['DEV_ORIGIN_HOST'] ?? '127.0.0.1'],
+
   transpilePackages: ['@nest/types', '@nest/config', '@nest/repositories', '@nest/providers', '@nest/services', '@nest/ui'],
   basePath: '/admin',
   images: {
