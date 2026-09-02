@@ -185,7 +185,7 @@ describe('email verification', () => {
 
     const [message] = sender.sent;
     expect(message?.to).toEqual([{ email: 'mina@example.test', name: 'Mina Kerolles' }]);
-    expect(message?.text).toContain('https://shop.example.test/shop/verify-email?token=tok-abc-123');
+    expect(message?.text).toContain('https://shop.example.test/verify-email?token=tok-abc-123');
     expect(message?.tags).toEqual({ type: 'email_verification' });
   });
 
@@ -310,7 +310,7 @@ describe('order confirmation content', () => {
     await service.sendOrderConfirmation(orderFixture());
 
     expect(sender.sent[0]?.text).toContain(
-      'https://shop.example.test/shop/orders/68b000000000000000000001',
+      'https://shop.example.test/account/orders/68b000000000000000000001',
     );
   });
 

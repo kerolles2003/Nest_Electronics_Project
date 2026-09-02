@@ -1,165 +1,220 @@
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { notFound, redirect } from 'next/navigation';
+import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { StatusBadge } from '@nest/ui';
-import { ArrowLeft, Package, PackageSearch } from 'lucide-react';
-import { OrderStatus } from '@nest/types';
 import { ROUTES } from '@nest/config/constants';
-import TrackOrderToggle from '@/components/order-tracking/TrackOrderToggle';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { customerMessage } from '@/lib/api/errors';
+import { readSession } from '@/lib/api/session';
+import { CancelOrderForm } from '@/components/account/CancelOrderForm';
+import type { Order } from '@/lib/api/types';
 
+/**
+ * One order — and, right after placement, the confirmation screen.
+ *
+ * ## The address shown here is a SNAPSHOT
+ *
+ * `order.shippingAddress` was copied onto the order when it was placed. It is
+ * NOT a reference into the customer's address book, and this page deliberately
+ * never reads the address book to render it: editing or deleting the saved
+ * address afterwards must not change one character of where these goods were
+ * sent.
+ *
+ * ## Delivery reads `shippingPriced`, not the fee
+ *
+ * An order whose delivery was never priced carries `shippingFee: 0`, and
+ * printing that unconditionally tells the customer their delivery was free. The
+ * order carries its own answer in the persisted snapshot, so this reports what
+ * was true when it was placed rather than what the configuration says today.
+ *
+ * ## `?placed=1`
+ *
+ * Marks the arrival from checkout so the confirmation is shown once. It is a
+ * display hint only — the ORDER is what proves placement succeeded, and the
+ * page renders identically without it.
+ */
 export const dynamic = 'force-dynamic';
 
-const statusLabels: Record<string, string> = {
-  [OrderStatus.PENDING_PAYMENT]: 'Pending Payment',
-  [OrderStatus.PAID]: 'Paid',
-  [OrderStatus.PROCESSING]: 'Processing',
-  [OrderStatus.SHIPPED]: 'Shipped',
-  [OrderStatus.DELIVERED]: 'Delivered',
-  [OrderStatus.CANCELLED]: 'Cancelled',
-  [OrderStatus.FAILED]: 'Failed',
-};
+/**
+ * The statuses the API will still cancel.
+ *
+ * Restated from the endpoint's own documentation, and **not trusted**: the page
+ * decides whether to draw the button, the API decides whether to honour it, and
+ * a status that went stale between the two produces a `409` the form shows.
+ */
+const CANCELLABLE = new Set(['PLACED', 'CONFIRMED']);
 
 export default async function OrderDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ placed?: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createClient() as any;
-  const { data: { user } } = await supabase.auth.getUser();
+  const [{ id }, { placed }] = await Promise.all([params, searchParams]);
 
-  if (!user) {
-    notFound();
+  if ((await readSession()) === null) {
+    redirect(`${ROUTES.login}?redirect=${encodeURIComponent(ROUTES.account.order(id))}`);
   }
 
-  const { data: order } = await supabase
-    .from('orders')
-    .select('*, items:order_items(*), status_history:order_status_history(*)')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single();
+  const result = await tryApi(() => api.getOrder(id));
 
-  if (!order) {
-    notFound();
+  if (!result.ok) {
+    if (result.error.kind === 'unauthenticated') {
+      redirect(`${ROUTES.login}?redirect=${encodeURIComponent(ROUTES.account.order(id))}`);
+    }
+    // A foreign order and one that does not exist answer identically, by
+    // design — so both are simply "not found" here.
+    if (result.error.kind === 'not_found') notFound();
+
+    return (
+      <div className="min-h-[300px] space-y-4">
+        <h2 className="text-2xl font-black uppercase tracking-tight">
+          Could not load this order
+        </h2>
+        <p role="alert" className="font-medium text-danger">
+          {customerMessage(result.error)}
+        </p>
+        <Link href={ROUTES.account.orders} className="inline-block font-bold text-primary hover:underline">
+          Back to your orders
+        </Link>
+      </div>
+    );
   }
+
+  const order = result.data.data;
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto px-4 py-8">
-      <div className="flex items-center justify-between">
-        <Link
-          href={ROUTES.account.orders}
-          className="inline-flex items-center gap-2 text-sm font-bold text-foreground-muted hover:text-primary transition-all group"
-        >
-          <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
-          BACK TO MY ORDERS
-        </Link>
-        <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-primary/40">
-          <Package className="w-4 h-4" />
-          Nest Secured Tracking
-        </div>
-      </div>
+    <article className="space-y-8 animate-in fade-in duration-500">
+      {placed === '1' && <PlacedBanner order={order} />}
 
-      {/* Main Order Status Header */}
-      <div className="bg-white border border-[var(--color-border)] rounded-sm p-6 sm:p-10 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
-          <PackageSearch className="w-40 h-40" />
-        </div>
+      <Link
+        href={ROUTES.account.orders}
+        className="inline-flex items-center gap-2 text-[12px] font-black uppercase tracking-widest text-foreground-muted hover:text-primary"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        All orders
+      </Link>
 
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-xs font-black uppercase tracking-widest text-primary bg-primary/10 px-2 py-0.5 rounded-full">Order Details</span>
-              <span className="text-xs font-bold text-foreground-muted">#{order.order_number}</span>
-            </div>
-            <h2 className="text-3xl font-black text-foreground leading-tight">Order #{order.order_number}</h2>
-            <p className="text-[13px] text-foreground-muted mt-2 font-medium">
-              Placed on <span className="text-foreground">{new Date(order.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
-            </p>
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--color-border)] pb-6">
+        <div>
+          <h2 className="text-3xl font-black uppercase tracking-tight" data-testid="order-number">
+            {order.orderNumber}
+          </h2>
+          <p className="mt-2 text-[13px] font-medium text-foreground-muted">
+            Placed {new Date(order.placedAt).toLocaleString()}
+          </p>
+        </div>
+        <StatusBadge
+          status={order.status}
+          className="text-[11px] px-3 py-1 font-black uppercase tracking-widest"
+        />
+      </header>
+
+      <section>
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground-muted">
+          Items
+        </h3>
+        <ul className="mt-3 divide-y divide-[var(--color-border)] text-sm">
+          {order.items.map((item) => (
+            <li key={item.sku} className="flex justify-between gap-4 py-3">
+              <span>
+                <span className="font-bold text-foreground">{item.name}</span>
+                <span className="text-foreground-muted"> × {item.quantity}</span>
+                <span className="block text-xs text-foreground-muted">{item.sku}</span>
+              </span>
+              <span className="font-bold">{item.lineTotal.formatted}</span>
+            </li>
+          ))}
+        </ul>
+
+        <dl className="mt-5 space-y-2 text-sm">
+          <div className="flex justify-between text-foreground-muted">
+            <dt>Subtotal</dt>
+            <dd>{order.pricing.itemsSubtotal.formatted}</dd>
           </div>
-          <StatusBadge
-            status={statusLabels[order.order_status] ?? order.order_status}
-            className="self-start sm:self-center text-sm px-6 py-2.5 font-black uppercase tracking-widest shadow-sm"
-          />
-        </div>
-      </div>
-
-      {/* Track Order Section */}
-      <TrackOrderToggle order={order} />
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Items List */}
-        <div className="lg:col-span-8 bg-white border border-[var(--color-border)] rounded-sm p-6 sm:p-8 shadow-sm">
-          <h3 className="font-black text-foreground mb-8 uppercase tracking-[0.2em] text-[11px] border-b border-primary/20 pb-4 inline-block">Order Summary</h3>
-          <div className="divide-y divide-[var(--color-border)]">
-            {(order.items as any[])?.map((item: any) => (
-              <div key={item.id} className="flex items-center justify-between py-5 first:pt-0 last:pb-0 group">
-                <div className="flex-1 min-w-0">
-                  <p className="text-[15px] font-bold text-foreground group-hover:text-primary transition-colors">{item.name}</p>
-                  <p className="text-[12px] text-foreground-muted mt-1 font-medium">
-                    SKU: <span className="text-foreground/70">{item.sku}</span> 
-                    <span className="mx-3 text-[var(--color-border-strong)]">|</span> 
-                    Qty: <span className="text-foreground/70">{item.quantity}</span>
-                  </p>
-                </div>
-                <div className="text-right ml-6">
-                  <p className="text-[16px] font-black text-foreground">EGP {item.total.toLocaleString()}</p>
-                  <p className="text-[11px] text-foreground-muted font-bold uppercase tracking-wider">EGP {item.price.toLocaleString()} / unit</p>
-                </div>
-              </div>
-            ))}
+          <div className="flex justify-between text-foreground-muted">
+            <dt>Delivery</dt>
+            <dd data-testid="order-delivery">
+              {order.pricing.shippingPriced
+                ? order.pricing.shippingFee.amount === 0
+                  ? 'Free'
+                  : order.pricing.shippingFee.formatted
+                : 'Not yet calculated'}
+            </dd>
           </div>
+          <div className="flex justify-between border-t border-[var(--color-border)] pt-3 text-base font-black">
+            <dt>Total</dt>
+            <dd data-testid="order-total">{order.pricing.grandTotal.formatted}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="grid gap-8 sm:grid-cols-2">
+        <div>
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground-muted">
+            Delivered to
+          </h3>
+          <address className="mt-3 text-sm not-italic text-foreground-muted">
+            {order.shippingAddress.fullName}
+            <br />
+            {order.shippingAddress.phone}
+            <br />
+            {order.shippingAddress.street}
+            <br />
+            {order.shippingAddress.city}, {order.shippingAddress.governorate}
+            {order.shippingAddress.postalCode === null
+              ? ''
+              : ` ${order.shippingAddress.postalCode}`}
+          </address>
+          <p className="mt-2 text-xs text-foreground-muted">
+            This is the address as it was when the order was placed.
+          </p>
         </div>
 
-        {/* Totals Breakdown */}
-        <div className="lg:col-span-4 space-y-6">
-          <div className="bg-white border border-[var(--color-border)] rounded-sm p-6 sm:p-8 shadow-sm">
-            <h3 className="font-black text-foreground mb-6 uppercase tracking-[0.2em] text-[11px]">Payment Summary</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between text-[14px] font-medium">
-                <span className="text-foreground-muted">Subtotal</span>
-                <span className="text-foreground font-bold">EGP {order.subtotal.toLocaleString()}</span>
-              </div>
-              {order.discount > 0 && (
-                <div className="flex justify-between text-[14px] font-medium">
-                  <span className="text-foreground-muted">Discount</span>
-                  <span className="text-green-600 font-bold">-EGP {order.discount.toLocaleString()}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-[14px] font-medium">
-                <span className="text-foreground-muted">Shipping</span>
-                <span className="text-foreground font-bold">EGP {order.shipping_fee.toLocaleString()}</span>
-              </div>
-              {order.tax > 0 && (
-                <div className="flex justify-between text-[14px] font-medium">
-                  <span className="text-foreground-muted">Tax</span>
-                  <span className="text-foreground font-bold">EGP {order.tax.toLocaleString()}</span>
-                </div>
-              )}
-              <div className="pt-4 border-t-2 border-[var(--color-border)] flex justify-between items-end">
-                <div>
-                  <p className="text-[10px] font-black text-foreground-muted uppercase tracking-widest mb-1">Total to Pay</p>
-                  <span className="font-black text-foreground text-sm uppercase tracking-tighter">FINAL AMOUNT</span>
-                </div>
-                <div className="text-right">
-                  <span className="text-2xl font-black text-primary leading-none">
-                    EGP {order.total.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6 bg-primary/5 border border-primary/10 rounded-sm">
-            <h4 className="text-[11px] font-black text-primary uppercase tracking-widest mb-2">Need Help?</h4>
-            <p className="text-[12px] text-foreground-muted font-medium mb-4">If you have any questions regarding your order, please contact our support team.</p>
-            <Link href={ROUTES.contact} className="text-[12px] font-black text-primary hover:underline uppercase tracking-widest">
-              Contact Support →
-            </Link>
-          </div>
+        <div>
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground-muted">
+            Payment
+          </h3>
+          <p className="mt-3 text-sm text-foreground-muted">
+            {order.payment.method} · {order.payment.status}
+          </p>
         </div>
+      </section>
+
+      {order.cancellation !== null ? (
+        <section className="rounded-sm border border-[var(--color-border)] bg-surface/40 p-5">
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground-muted">
+            Cancelled
+          </h3>
+          <p className="mt-2 text-sm text-foreground-muted">
+            {new Date(order.cancellation.cancelledAt).toLocaleString()}
+            {order.cancellation.reason === null ? '' : ` — ${order.cancellation.reason}`}
+          </p>
+        </section>
+      ) : CANCELLABLE.has(order.status) ? (
+        <section className="border-t border-[var(--color-border)] pt-6">
+          <CancelOrderForm orderId={order.id} />
+        </section>
+      ) : null}
+    </article>
+  );
+}
+
+function PlacedBanner({ order }: { order: Order }) {
+  return (
+    <div className="flex gap-4 rounded-sm border border-primary/20 bg-primary/5 p-5">
+      <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-primary" />
+      <div>
+        <h1 className="text-lg font-black uppercase tracking-tight text-foreground">
+          Order placed
+        </h1>
+        <p className="mt-1 text-sm font-medium text-foreground-muted">
+          Your order number is <strong className="text-foreground">{order.orderNumber}</strong>.
+          Pay {order.pricing.grandTotal.formatted} in cash when it arrives.
+        </p>
       </div>
     </div>
   );
 }
-
-

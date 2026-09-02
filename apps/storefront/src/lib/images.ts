@@ -90,6 +90,26 @@ export function imageUrl(
 }
 
 /**
+ * The URL for a CART line's image, which arrives WITHOUT a version.
+ *
+ * `GET /cart` returns `imagePublicId` and no version — the cart is a draft
+ * intent, and it keeps the smallest identifier that still resolves. So this
+ * builds a version-less URL, which Cloudinary serves happily.
+ *
+ * The cost is real and worth stating: without a version in the path, replacing
+ * the photograph behind a `publicId` does not bust the CDN cache, so a
+ * customer may see the old picture on a cart line for as long as the edge
+ * holds it. That is acceptable HERE and nowhere else — a cart line is a
+ * thumbnail beside a name and a price the customer already recognises, and the
+ * catalogue pages that sell the product all use the versioned `imageUrl`.
+ */
+export function cartLineImageUrl(publicId: string | null): string | null {
+  if (publicId === null || publicId === '' || CLOUD_NAME === '') return null;
+
+  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${PRESETS.thumbnail}/${publicId}`;
+}
+
+/**
  * The dimensions to reserve for an image before it loads.
  *
  * Legacy stored neither width nor height, so `next/image` could never reserve

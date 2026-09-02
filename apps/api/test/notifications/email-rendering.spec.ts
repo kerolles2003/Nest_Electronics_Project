@@ -117,7 +117,7 @@ function without<T extends object, K extends keyof T>(value: T, key: K): Omit<T,
 
 const VERIFY: VerifyEmailData = {
   customerName: 'Mina Kerolles',
-  verifyUrl: 'https://shop.example.test/shop/verify-email?token=abc123',
+  verifyUrl: 'https://shop.example.test/verify-email?token=abc123',
   expiresIn: '24 hours',
 };
 
@@ -153,7 +153,7 @@ const ORDER: OrderPlacedData = {
     governorate: 'Cairo',
     postalCode: null,
   },
-  orderUrl: 'https://shop.example.test/shop/orders/68b000000000000000000001',
+  orderUrl: 'https://shop.example.test/account/orders/68b000000000000000000001',
 };
 
 beforeAll(() => {
@@ -277,7 +277,7 @@ describe('auth/verify-email', () => {
     // Escaped in the markup...
     expect(rendered.html).toContain('token&#x3D;abc123');
     // ...and present in the href, which is what the mail client follows.
-    expect(rendered.html).toMatch(/href="https:\/\/shop\.example\.test\/shop\/verify-email\?token/);
+    expect(rendered.html).toMatch(/href="https:\/\/shop\.example\.test\/verify-email\?token/);
   });
 
   it('takes its subject from the template front-matter, not from a service', async () => {

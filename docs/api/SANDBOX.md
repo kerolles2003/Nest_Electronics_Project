@@ -170,7 +170,7 @@ Now look at **the API's terminal output**. The console sender prints the plain-t
 which contains a clickable verification URL:
 
 ```
-http://localhost:3000/shop/verify-email?token=<TOKEN>
+http://localhost:3000/verify-email?token=<TOKEN>
 ```
 
 Take the `token` query parameter and post it:

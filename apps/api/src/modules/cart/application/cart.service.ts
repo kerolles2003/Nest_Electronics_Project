@@ -117,7 +117,101 @@ export class CartService {
       session,
     );
 
-    return CartService.project(cart, products);
+    return CartService.project(cart.items, products, cart.updatedAt, cart.expiresAt);
+  }
+
+  /**
+   * Prices an ANONYMOUS basket without persisting anything.
+   *
+   * ## Why this exists
+   *
+   * A guest's basket lives in their browser and holds `{productId, quantity}`
+   * and nothing else — no price, no name, no stock — because a price that
+   * round-trips through `localStorage` is a price the customer can edit. So
+   * something has to turn those ids into a cart the browser can render, and it
+   * has to be the server.
+   *
+   * ## It is the same resolution as a real cart, deliberately
+   *
+   * Same batched product read, same clamping, same status ladder, same
+   * subtotal rule. A guest who signs in must not watch their basket change
+   * shape, and a second pricing path would guarantee it eventually did.
+   *
+   * ## The one difference: nothing can be PRICE_CHANGED
+   *
+   * `PRICE_CHANGED` compares the live price against the price the customer was
+   * shown when they added the line — a stored cart's snapshot. A guest basket
+   * has no snapshot to compare with, so each line is seeded with the live price
+   * and the status is decided on availability and stock alone. That is honest:
+   * the answer to "has this changed since you added it?" is genuinely unknown
+   * here, and inventing a comparison would produce a warning about a change
+   * nobody can show.
+   *
+   * Nothing is written and no session is required. Two callers a second get
+   * two independent answers and neither leaves a trace.
+   */
+  async previewGuestCart(
+    items: readonly { readonly productId: Types.ObjectId; readonly quantity: number }[],
+  ): Promise<CartView> {
+    if (items.length === 0) {
+      return CartService.emptyCart(null);
+    }
+
+    /*
+     * De-duplicated by product, summing the quantities, because a real cart
+     * can hold only one line per product and a browser is free to send two.
+     * Summing rather than taking the last matches what `POST /cart/items`
+     * would do with the same two requests.
+     */
+    const merged = new Map<string, { productId: Types.ObjectId; quantity: number }>();
+
+    for (const item of items) {
+      const key = item.productId.toHexString();
+      const existing = merged.get(key);
+
+      merged.set(key, {
+        productId: item.productId,
+        quantity: (existing?.quantity ?? 0) + item.quantity,
+      });
+    }
+
+    const lines = [...merged.values()];
+    const products = await this.products.findPurchasableByIds(lines.map((l) => l.productId));
+    const now = new Date();
+
+    const asCartItems: CartItem[] = lines.map((line) => {
+      const product = products.get(line.productId.toHexString());
+
+      return {
+        productId: line.productId,
+        quantity: line.quantity,
+        addedAt: now,
+        snapshot: CartService.previewSnapshot(product),
+      };
+    });
+
+    return CartService.project(asCartItems, products, null, null);
+  }
+
+  /**
+   * The stand-in snapshot for a guest line.
+   *
+   * `unitPrice` is the LIVE price on purpose — see `previewGuestCart` — so the
+   * comparison that produces `PRICE_CHANGED` can never fire. The remaining
+   * fields are only ever read when the product has vanished entirely, and a
+   * guest basket has nothing better to offer for that case than empty strings;
+   * such a line renders as UNAVAILABLE and carries no name either way.
+   */
+  private static previewSnapshot(product: PurchasableProduct | undefined): CartItemSnapshot {
+    return {
+      // `ar` is optional on the catalogue value and required on the stored
+      // snapshot, so it is normalised rather than spread through.
+      name: { en: product?.name.en ?? '', ar: product?.name.ar ?? null },
+      sku: product?.sku ?? '',
+      slug: product?.slug ?? '',
+      unitPrice: product?.effectivePrice ?? 0,
+      imagePublicId: product?.primaryImagePublicId ?? null,
+    };
   }
 
   /**
@@ -267,11 +361,21 @@ export class CartService {
     };
   }
 
+  /**
+   * Turns stored lines plus live products into the view every consumer reads.
+   *
+   * Takes the ITEMS rather than the cart document so the guest preview above
+   * can use it unchanged. That is the point: there is one projection, and the
+   * anonymous basket and the persisted cart cannot drift into showing
+   * different totals for the same products.
+   */
   private static project(
-    cart: CartLean,
+    items: readonly CartItem[],
     products: ReadonlyMap<string, PurchasableProduct>,
+    updatedAt: Date | null,
+    expiresAt: Date | null,
   ): CartView {
-    const resolved = cart.items.map((item: CartItem) => {
+    const resolved = items.map((item: CartItem) => {
       const product = products.get(item.productId.toHexString());
       const line = resolveLine(item.quantity, item.snapshot.unitPrice, product);
 
@@ -318,8 +422,8 @@ export class CartService {
       // (MONEY-MODEL.md §7.5), so the cart total is always in it.
       currency: DEFAULT_CURRENCY,
       hasBlockingIssues: resolved.some((line) => !countsTowardsSubtotal(line.status)),
-      updatedAt: cart.updatedAt,
-      expiresAt: cart.expiresAt,
+      updatedAt,
+      expiresAt,
     };
   }
 }

@@ -945,6 +945,156 @@ describe('response contract', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('POST /cart/preview — the anonymous basket', () => {
+  const preview = (items: unknown): request.Test =>
+    http().post('/api/v1/cart/preview').send({ items });
+
+  it('needs NO session at all, which is the whole point', async () => {
+    const response = await preview([
+      { productId: productId.plentiful.toHexString(), quantity: 2 },
+    ]).expect(200);
+
+    expect(response.body.data.items).toHaveLength(1);
+  });
+
+  it('prices from the DATABASE and returns the same shape as GET /cart', async () => {
+    await reset(alice);
+    const id = productId.onSale.toHexString();
+
+    await http()
+      .post('/api/v1/cart/items')
+      .set(...bearer(alice))
+      .send({ productId: id, quantity: 3 })
+      .expect(200);
+
+    const stored = await http().get('/api/v1/cart').set(...bearer(alice)).expect(200);
+    const guest = await preview([{ productId: id, quantity: 3 }]).expect(200);
+
+    const [storedLine] = stored.body.data.items;
+    const [guestLine] = guest.body.data.items;
+
+    /*
+     * Field by field rather than a whole-object compare: `addedAt` is genuinely
+     * different (the guest basket has no history) and asserting on the fields
+     * that carry MONEY and AVAILABILITY is what actually matters — a customer
+     * must not watch their basket change value when they sign in.
+     */
+    expect(guestLine.unitPrice).toEqual(storedLine.unitPrice);
+    expect(guestLine.lineTotal).toEqual(storedLine.lineTotal);
+    expect(guestLine.quantity).toBe(storedLine.quantity);
+    expect(guestLine.effectiveQuantity).toBe(storedLine.effectiveQuantity);
+    expect(guestLine.status).toBe(storedLine.status);
+    expect(guestLine.name).toBe(storedLine.name);
+    expect(guestLine.sku).toBe(storedLine.sku);
+    expect(guest.body.data.itemsSubtotal).toEqual(stored.body.data.itemsSubtotal);
+  });
+
+  it('WRITES NOTHING — no cart document appears for anyone', async () => {
+    const before = await carts.countDocuments().exec();
+
+    await preview([{ productId: productId.plentiful.toHexString(), quantity: 1 }]).expect(200);
+    await preview([{ productId: productId.plentiful.toHexString(), quantity: 1 }]).expect(200);
+
+    expect(await carts.countDocuments().exec()).toBe(before);
+  });
+
+  it('clamps to live stock and flags the line, exactly as a stored cart does', async () => {
+    const response = await preview([
+      { productId: productId.scarce.toHexString(), quantity: 99 },
+    ]).expect(200);
+
+    const [line] = response.body.data.items;
+
+    expect(line.status).toBe('REDUCED_STOCK');
+    expect(line.quantity).toBe(99);
+    expect(line.effectiveQuantity).toBeLessThan(99);
+    expect(line.effectiveQuantity).toBe(line.availableQuantity);
+  });
+
+  it('flags a sold-out and a delisted product rather than dropping them', async () => {
+    const response = await preview([
+      { productId: productId.empty.toHexString(), quantity: 1 },
+      { productId: productId.inactive.toHexString(), quantity: 1 },
+      { productId: productId.plentiful.toHexString(), quantity: 1 },
+    ]).expect(200);
+
+    const statuses = new Map<string, string>(
+      response.body.data.items.map((line: { productId: string; status: string }) => [
+        line.productId,
+        line.status,
+      ]),
+    );
+
+    expect(statuses.get(productId.empty.toHexString())).toBe('OUT_OF_STOCK');
+    expect(statuses.get(productId.inactive.toHexString())).toBe('UNAVAILABLE');
+    expect(statuses.get(productId.plentiful.toHexString())).toBe('OK');
+    expect(response.body.data.hasBlockingIssues).toBe(true);
+  });
+
+  it('NEVER reports PRICE_CHANGED — there is no snapshot to compare with', async () => {
+    /*
+     * The status exists to answer "has this changed since you added it?", and a
+     * browser basket stores no price to answer it with. Inventing a comparison
+     * would warn the customer about a change nobody could show them.
+     */
+    const response = await preview([
+      { productId: productId.onSale.toHexString(), quantity: 1 },
+      { productId: productId.plentiful.toHexString(), quantity: 1 },
+      { productId: productId.scarce.toHexString(), quantity: 1 },
+    ]).expect(200);
+
+    for (const line of response.body.data.items) {
+      expect(line.status).not.toBe('PRICE_CHANGED');
+    }
+  });
+
+  it('SUMS a product listed twice, matching two POSTs to a real cart', async () => {
+    const response = await preview([
+      { productId: productId.plentiful.toHexString(), quantity: 2 },
+      { productId: productId.plentiful.toHexString(), quantity: 3 },
+    ]).expect(200);
+
+    expect(response.body.data.items).toHaveLength(1);
+    expect(response.body.data.items[0].quantity).toBe(5);
+  });
+
+  it('returns an empty cart for an empty basket, not an error', async () => {
+    const response = await preview([]).expect(200);
+
+    expect(response.body.data.items).toEqual([]);
+    expect(response.body.data.itemsSubtotal.amount).toBe(0);
+    expect(response.body.data.hasBlockingIssues).toBe(false);
+  });
+
+  it('REFUSES a client-supplied price, like every other cart write', async () => {
+    for (const injected of [
+      { productId: productId.plentiful.toHexString(), quantity: 1, unitPrice: 1 },
+      { productId: productId.plentiful.toHexString(), quantity: 1, price: 1 },
+    ]) {
+      const response = await preview([injected]).expect(400);
+      expect(response.body.error.code).toBe('UNKNOWN_FIELD');
+    }
+  });
+
+  it('rejects a malformed id, an out-of-range quantity and an oversized basket', async () => {
+    await preview([{ productId: 'not-an-id', quantity: 1 }]).expect(400);
+    await preview([{ productId: productId.plentiful.toHexString(), quantity: 0 }]).expect(400);
+    await preview([{ productId: productId.plentiful.toHexString(), quantity: 100 }]).expect(400);
+
+    const tooMany = Array.from({ length: 51 }, () => ({
+      productId: productId.plentiful.toHexString(),
+      quantity: 1,
+    }));
+    await preview(tooMany).expect(400);
+  });
+
+  it('is not cacheable', async () => {
+    const response = await preview([]).expect(200);
+
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
+});
+
 describe('the rest of the API is unaffected', () => {
   it.each([
     '/api/v1/health',

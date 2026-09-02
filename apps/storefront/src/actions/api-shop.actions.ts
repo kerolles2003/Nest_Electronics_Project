@@ -18,6 +18,29 @@ import { emptyActionState, type ActionState } from '@/lib/api/action-state';
  * and navigation.
  */
 
+/**
+ * Every surface that renders the cart.
+ *
+ * There are two of them until T3 removes the `/shop` slice, and a mutation has
+ * to invalidate both or the one the customer is NOT looking at serves a stale
+ * page the moment they navigate to it. Listed once here rather than repeated at
+ * six call sites, so deleting `/shop` is one edit.
+ */
+function revalidateCart(): void {
+  revalidatePath('/cart');
+  revalidatePath('/checkout');
+  revalidatePath('/shop/cart');
+  revalidatePath('/shop/checkout');
+}
+
+/** Likewise for the address book, which checkout also reads. */
+function revalidateAddresses(): void {
+  revalidatePath('/account/addresses');
+  revalidatePath('/checkout');
+  revalidatePath('/shop/addresses');
+  revalidatePath('/shop/checkout');
+}
+
 function failure(error: {
   details: readonly { field: string; message: string }[];
   message: string;
@@ -49,7 +72,7 @@ export async function addToCartAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/cart');
+  revalidateCart();
   return emptyActionState;
 }
 
@@ -66,7 +89,7 @@ export async function updateCartQuantityAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/cart');
+  revalidateCart();
   return emptyActionState;
 }
 
@@ -78,7 +101,7 @@ export async function removeCartItemAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/cart');
+  revalidateCart();
   return emptyActionState;
 }
 
@@ -107,8 +130,7 @@ export async function createAddressAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/addresses');
-  revalidatePath('/shop/checkout');
+  revalidateAddresses();
   return emptyActionState;
 }
 
@@ -132,8 +154,7 @@ export async function updateAddressAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/addresses');
-  revalidatePath('/shop/checkout');
+  revalidateAddresses();
   return emptyActionState;
 }
 
@@ -150,8 +171,7 @@ export async function deleteAddressAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/addresses');
-  revalidatePath('/shop/checkout');
+  revalidateAddresses();
   return emptyActionState;
 }
 
@@ -163,8 +183,7 @@ export async function setDefaultAddressAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/addresses');
-  revalidatePath('/shop/checkout');
+  revalidateAddresses();
   return emptyActionState;
 }
 
@@ -204,10 +223,11 @@ export async function placeOrderAction(
 
   if (!result.ok) return failure(result.error);
 
-  revalidatePath('/shop/cart');
+  revalidateCart();
+  revalidatePath('/account/orders');
   revalidatePath('/shop/orders');
 
   // Redirect must happen OUTSIDE the try/catch above: Next implements it by
   // throwing, and catching it would swallow the navigation.
-  redirect(`/shop/orders/${result.data.data.id}?placed=1`);
+  redirect(`/account/orders/${result.data.data.id}?placed=1`);
 }

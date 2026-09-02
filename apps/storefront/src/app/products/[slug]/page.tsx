@@ -1,7 +1,7 @@
 import * as api from "@/lib/api/endpoints"
 import { ApiError } from "@/lib/api/errors"
 import { imageUrl } from "@/lib/images"
-import { toCartProduct, toProductCard } from "@/lib/api/view-model"
+import { toProductCard } from "@/lib/api/view-model"
 import { notFound } from "next/navigation"
 import { Metadata } from "next"
 import { Star, Check, X, Heart } from "lucide-react"
@@ -12,7 +12,6 @@ import { AddToCartButton } from "@/components/AddToCartButton"
 import { WishlistButton } from "@/components/WishlistButton"
 import { generateProductJsonLd, generateBreadcrumbJsonLd } from "@/lib/json-ld"
 import { SITE_URL } from "@nest/config/constants"
-import type { Product as CartProduct } from "@/stores/cart-store"
 import type { ProductDetail } from "@/lib/api/types"
 
 export const dynamic = "force-dynamic"
@@ -23,10 +22,10 @@ export const dynamic = "force-dynamic"
  * ## Reads moved; markup untouched
  *
  * The gallery, the badges, the price block, the tabs and the specification
- * table are all as they were. `AddToCartButton` and the cart store are NOT
- * touched — Phase 5 owns the session cluster — so `toCartProduct` builds the
- * object the store already accepts, exactly as `ProductCard` does inline. The
- * boundary stays where it was; only what is behind it moved.
+ * table are all as they were. What HAS changed is the cart: `AddToCartButton`
+ * now takes an id and a stock number instead of a fabricated product object
+ * carrying prices, because the cart is the API's and the client no longer holds
+ * a price for anything.
  *
  * ## Specifications come from `specs`, not from Supabase `attributes`
  *
@@ -322,7 +321,19 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
 
           {/* Action Row */}
           <div className="flex items-center gap-4 mb-8">
-            <AddToCartButton product={toCartProduct(detail) as CartProduct} className="flex-1 max-w-[300px] h-14 rounded-2xl font-bold text-base tracking-wide" size="lg" />
+            {/*
+              * `stockOnHand` is the real count — the detail endpoint returns it
+              * for exactly this reason — but it only decides whether the button
+              * is disabled. The API re-clamps on every write, because a number
+              * read at render time is already out of date by the time somebody
+              * clicks it.
+              */}
+            <AddToCartButton
+              productId={detail.id}
+              availableStock={detail.stockOnHand}
+              className="flex-1 max-w-[300px] h-14 rounded-2xl font-bold text-base tracking-wide"
+              size="lg"
+            />
             <div className="flex items-center justify-center w-14 h-14 rounded-2xl border border-border hover:border-primary transition-colors cursor-pointer text-foreground-muted hover:text-primary">
               <WishlistButton />
             </div>

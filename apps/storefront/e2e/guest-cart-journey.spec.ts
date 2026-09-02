@@ -201,12 +201,21 @@ async function openShop(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 }
 
+/**
+ * Signs in through the real form, on the CANONICAL page.
+ *
+ * It used to drive `/shop/login` and wait for `/shop`. The T2 flip moved the
+ * implementation to `/login`, and a successful sign-in with no `?redirect=`
+ * lands on the account area — which is also a signed-in page, so the merge
+ * mounts there just as it did on `/shop`.
+ */
 async function signIn(page: Page, email: string): Promise<void> {
-  await page.goto('/shop/login');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(PASSWORD);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL('**/shop');
+  await page.goto('/login');
+  await page.getByLabel('Email Address').fill(email);
+  // `exact`: the reveal toggle beside the input is labelled "Show password".
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await page.waitForURL('**/account/orders');
 }
 
 /** The merge runs on mount and is asynchronous; wait for the basket to empty. */
@@ -392,7 +401,21 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
   // the point of the test, not a symptom.
   health.allowConsoleError(/Failed to (load resource|fetch)|net::ERR_FAILED/);
 
-  let serverActions = 0;
+  /**
+   * Kills the WRITE, identified by what it carries rather than by its position.
+   *
+   * This used to abort "the second server action", which was true when the page
+   * fired exactly two. It is not true any more: the header prices the basket
+   * through a server action of its own on every signed-in render, so an ordinal
+   * now kills whichever action happens to be second — sometimes the read.
+   *
+   * The frozen TARGET is the discriminator, and it is a meaningful one. The
+   * basket holds 2 and the account cart holds 3, so the plan and the cart read
+   * both carry 2 while the apply carries the summed target of 5. Aborting on
+   * the target quantity is therefore precisely "kill the write", stated in the
+   * terms the test is about.
+   */
+  const TARGET = 5;
 
   await page.route('**/*', async (route) => {
     const request_ = route.request();
@@ -404,11 +427,11 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
       return;
     }
 
-    serverActions += 1;
+    const body = request_.postData() ?? '';
+    const carriesTarget =
+      body.includes(product.id) && body.includes(`"quantity":${String(TARGET)}`);
 
-    // 1 = plan (read-only, let it through and be frozen).
-    // 2 = apply (the write) — killed mid-flight.
-    if (serverActions === 2) {
+    if (carriesTarget) {
       await route.abort('failed');
       return;
     }
@@ -419,18 +442,28 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
   await signInWithCookies(context, account);
   await openShop(page);
 
-  // The plan was frozen and the write was interrupted, so the basket is still
-  // there — nothing is cleared until the API confirms.
+  /*
+   * The plan was frozen and the write was interrupted, so the basket is still
+   * there — nothing is cleared until the API confirms.
+   *
+   * Polled rather than read once: the freeze happens between the two actions,
+   * and asserting on a single read would be a race with the page rather than a
+   * statement about it.
+   */
+  const readFrozen = async (): Promise<unknown> =>
+    page.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      return raw === null
+        ? null
+        : (JSON.parse(raw) as { state: { pendingMerge: unknown[] | null } }).state.pendingMerge;
+    }, STORE_KEY);
+
   await expect
-    .poll(async () => serverActions, { timeout: 20_000 })
-    .toBeGreaterThanOrEqual(2);
-
-  const frozen = await page.evaluate((key) => {
-    const raw = window.localStorage.getItem(key);
-    return raw === null ? null : (JSON.parse(raw) as { state: { pendingMerge: unknown[] | null } }).state.pendingMerge;
-  }, STORE_KEY);
-
-  expect(frozen).toEqual([{ productId: product.id, quantity: 5 }]);
+    .poll(readFrozen, {
+      timeout: 20_000,
+      message: 'the plan was never frozen before the write',
+    })
+    .toEqual([{ productId: product.id, quantity: TARGET }]);
 
   // --- the retry -----------------------------------------------------------
   await page.unroute('**/*');

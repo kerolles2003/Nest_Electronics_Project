@@ -5,16 +5,16 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, Grid3X3, Search, ShoppingCart, User } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
-import { useCartStore } from '@/stores/cart-store';
-import { useAuth } from '@/hooks/useAuth';
+import { useCart } from '@/components/cart/CartProvider';
+import { useViewer } from '@/components/providers/SiteProviders';
 import { ROUTES } from '@nest/config/constants';
 
 export function MobileBottomNav() {
   const pathname = usePathname();
   const { openCart } = useUIStore();
-  const cartItems = useCartStore((s) => s.items);
-  const totalItems = cartItems.reduce((total, item) => total + item.quantity, 0);
-  const { user } = useAuth();
+  // The server's count, for the same cart the drawer and the header show.
+  const { totalQuantity: totalItems } = useCart();
+  const viewer = useViewer();
 
   const isActive = (path: string) => pathname === path;
 
@@ -87,7 +87,7 @@ export function MobileBottomNav() {
         </button>
 
         <Link
-          href={user ? ROUTES.account.profile : ROUTES.login}
+          href={viewer !== null ? ROUTES.account.profile : ROUTES.login}
           className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${
             isAccountActive ? 'text-primary' : 'text-foreground-muted'
           }`}
@@ -98,15 +98,15 @@ export function MobileBottomNav() {
             }`}
           />
           <div className="relative">
-            {user ? (
+            {viewer !== null ? (
               <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[8px] font-bold">
-                {user.initials}
+                {viewer.initials}
               </div>
             ) : (
               <User className="w-5 h-5" />
             )}
           </div>
-          <span className="text-[10px] font-medium">{user ? 'Profile' : 'Account'}</span>
+          <span className="text-[10px] font-medium">{viewer !== null ? 'Profile' : 'Account'}</span>
         </Link>
       </div>
     </nav>

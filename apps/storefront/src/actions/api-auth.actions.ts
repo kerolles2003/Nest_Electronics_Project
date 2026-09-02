@@ -17,6 +17,31 @@ import type { ActionState, AuthFormState } from '@/lib/api/action-state';
  * client-side notion of "logged in" beyond the presence of that cookie.
  */
 
+/**
+ * Where to send someone after they sign in, when the page carried a
+ * destination.
+ *
+ * **Only a path on this site.** `?redirect=` is attacker-controlled — it
+ * arrives in a link anybody can send — so an unchecked value here is an open
+ * redirect: a phishing page reachable from a real, correctly-spelled link to
+ * this site, arrived at through a genuine sign-in.
+ *
+ * A leading `//` is rejected along with everything else that is not a plain
+ * path, because `//evil.example` is protocol-relative and a browser reads it as
+ * another origin. Anything unrecognised falls back to the account area rather
+ * than failing: the customer signed in successfully, and the destination is the
+ * least important part of that.
+ */
+function safeRedirect(raw: string): string {
+  if (!raw.startsWith('/')) return '/account/orders';
+  if (raw.startsWith('//')) return '/account/orders';
+  // A backslash is normalised to a forward slash by some browsers, so `/\evil`
+  // would leave the site too.
+  if (raw.startsWith('/\\')) return '/account/orders';
+
+  return raw;
+}
+
 function fieldErrorsOf(error: {
   details: readonly { field: string; message: string }[];
 }): Record<string, string> {
@@ -55,7 +80,7 @@ export async function registerAction(
    * store. Sending the customer to a guarded route here would bounce them
    * straight back to the sign-in page.
    */
-  redirect('/shop/login?registered=1');
+  redirect('/login?registered=1');
 }
 
 export async function loginAction(
@@ -78,7 +103,8 @@ export async function loginAction(
     accessToken: result.data.data.accessToken,
     refreshToken: result.data.data.refreshToken,
   });
-  redirect('/shop');
+
+  redirect(safeRedirect(String(formData.get('redirectTo') ?? '')));
 }
 
 /**
@@ -100,7 +126,7 @@ export async function logoutAction(): Promise<void> {
   }
 
   await clearSession();
-  redirect('/shop/login');
+  redirect('/');
 }
 
 /**
@@ -128,4 +154,76 @@ export async function resendVerificationAction(
   }
 
   return { error: null, fieldErrors: {}, message: result.data.data.message };
+}
+
+/**
+ * Starts a password reset.
+ *
+ * Returns the SAME message on every outcome, because the API does. An address
+ * with no account, an address that has one, and an address that already has a
+ * live reset token are indistinguishable here — anything else hands an
+ * enumerator a password-free oracle, and it would be this page that gave it to
+ * them.
+ *
+ * So there is deliberately no "we couldn't find that account" branch to write,
+ * and no way to write one: the success path never learns which case it was.
+ */
+export async function forgotPasswordAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const email = String(formData.get('email') ?? '').trim();
+
+  if (email.length === 0) {
+    return { error: 'Enter the email address for your account.', fieldErrors: {} };
+  }
+
+  const result = await tryApi(() => api.forgotPassword(email));
+
+  if (!result.ok) {
+    return { error: customerMessage(result.error), fieldErrors: fieldErrorsOf(result.error) };
+  }
+
+  return { error: null, fieldErrors: {}, message: result.data.data.message };
+}
+
+/**
+ * Completes a reset with the token from the email.
+ *
+ * The confirm-password field is checked HERE and only here: it does not exist
+ * on the wire, because the server has no second copy to compare against. The
+ * password policy itself is NOT re-implemented — the API owns it and reports
+ * it per field, so a local copy would drift and start rejecting passwords the
+ * server would accept.
+ *
+ * On success the API has revoked every session for that account, including any
+ * this browser held, so the customer is sent to sign in rather than anywhere
+ * that assumes one.
+ */
+export async function resetPasswordAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const token = String(formData.get('token') ?? '').trim();
+  const password = String(formData.get('password') ?? '');
+  const confirm = String(formData.get('confirmPassword') ?? '');
+
+  if (token.length === 0) {
+    return {
+      error: 'This reset link is incomplete. Request a new one below.',
+      fieldErrors: {},
+    };
+  }
+
+  if (password !== confirm) {
+    return { error: null, fieldErrors: { confirmPassword: 'The two passwords do not match.' } };
+  }
+
+  const result = await tryApi(() => api.resetPassword({ token, password }));
+
+  if (!result.ok) {
+    return { error: customerMessage(result.error), fieldErrors: fieldErrorsOf(result.error) };
+  }
+
+  redirect('/login?reset=1');
 }

@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Package, User, MapPin, LogOut, ChevronRight, ShieldCheck } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { logoutAction } from '@/actions/api-auth.actions';
+import { useViewer } from '@/components/providers/SiteProviders';
 import { ROUTES } from '@nest/config/constants';
 
 const navItems = [
@@ -13,16 +13,23 @@ const navItems = [
   { href: ROUTES.account.addresses, label: 'Addresses', icon: MapPin },
 ];
 
+/**
+ * The account area's chrome.
+ *
+ * ## It does not guard anything, and that is deliberate
+ *
+ * `proxy.ts` refuses `/account/*` without a session, and each page below asks
+ * the API, which answers on the identity in the token. This layout draws a
+ * sidebar. A third authorization check here would be a third place for the rule
+ * to be written slightly differently.
+ *
+ * The customer's name and initials come from the viewer context — resolved once
+ * on the server per request — rather than from a browser-side Supabase session
+ * plus a profile query, which is what used to make this whole area flicker.
+ */
 export default function AccountLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const { user, signOut } = useAuth();
-
-  const handleSignOut = async () => {
-    await signOut();
-    router.push(ROUTES.home);
-    router.refresh();
-  };
+  const user = useViewer();
 
   const isActive = (href: string) => {
     if (href === ROUTES.account.orders) {
@@ -31,9 +38,14 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
     return pathname.startsWith(href);
   };
 
+  /*
+   * The fallbacks are for the instant between a session ending and the proxy
+   * noticing — not a state anyone should sit in. There is no "loading" here:
+   * the server resolved the viewer before this HTML was sent.
+   */
   const initials = user?.initials ?? 'U';
-  const displayName = user?.fullName ?? 'User';
-  const displayEmail = user?.email ?? 'Customer';
+  const displayName = user?.fullName ?? 'Your account';
+  const displayEmail = user?.email ?? '';
 
   return (
     <div className="container-marketplace py-10">
@@ -112,13 +124,23 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
 
             {/* Logout Section */}
             <div className="p-3 border-t border-[var(--color-border)] bg-surface/10">
-              <button
-                onClick={handleSignOut}
-                className="flex items-center gap-4 w-full px-5 py-3.5 rounded-sm text-[12px] font-black uppercase tracking-[0.15em] text-foreground-muted hover:bg-red-50 hover:text-red-500 transition-all group"
-              >
-                <LogOut className="w-4 h-4 transition-transform group-hover:-translate-x-1" strokeWidth={2} />
-                Sign Out
-              </button>
+              {/*
+                * A form posting to a server action, not a click handler.
+                *
+                * Signing out REVOKES the refresh token at the API before it
+                * clears the cookies, so a stray copy of the cookie is already
+                * dead. Clearing the browser's cookies alone would leave a
+                * working 30-day credential in the wild.
+                */}
+              <form action={logoutAction}>
+                <button
+                  type="submit"
+                  className="flex items-center gap-4 w-full px-5 py-3.5 rounded-sm text-[12px] font-black uppercase tracking-[0.15em] text-foreground-muted hover:bg-red-50 hover:text-red-500 transition-all group"
+                >
+                  <LogOut className="w-4 h-4 transition-transform group-hover:-translate-x-1" strokeWidth={2} />
+                  Sign Out
+                </button>
+              </form>
             </div>
           </div>
 

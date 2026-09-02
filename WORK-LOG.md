@@ -2631,3 +2631,129 @@ costs everyone the download and changes the lockfile.
 jest **814 passed, 15 skipped** (829) — one new, the production-limits pin.
 Playwright **68 → 70**, all green, twice in a row inside the same hour.
 Build, type-check, lint and the drift gate green.
+
+## Part 2 — the T2 flip
+
+`/login`, `/register`, `/forgot-password`, `/account/*`, `/checkout` and the
+cart UI are the API's. Supabase is gone from the identity and money cluster.
+
+### What moved, and what it cost
+
+| Surface | Before | Now |
+|---|---|---|
+| `/login`, `/register` | browser Supabase client, local zod schema, Google button | `loginAction` / `registerAction`, server-reported field errors, no OAuth (D-3) |
+| `/forgot-password` | `resetPasswordForEmail` → `/auth/callback` (PKCE-only, orphaned) | `forgotPasswordAction`; the link lands on `/forgot-password/reset`, which now exists |
+| `/verify-email` | only at `/shop/verify-email` | canonical, and the API mails the canonical address |
+| `/account/orders`, `/[id]` | Supabase `orders` table, float totals, local status map | API orders, integer minor units, server statuses, **self-cancel** |
+| `/account/profile` | read/wrote a Supabase `profiles` row from the browser | `PATCH /users/me`, two fields, email read-only |
+| `/account/addresses` | 442 lines: browser queries, client-side default toggle, client-side count cap | `AddressBook` over the API; all three invariants server-side |
+| `/checkout` | three-step wizard summing a browser cart, own shipping rule | quote + `placeOrderAction`, **D-8 fee live** |
+| Navbar cart, drawer | client store holding prices | one `CartProvider`; the API prices both carts |
+| `proxy.ts` | `createServerClient` + `auth.getSession()` on every matched request | a cookie-presence check |
+
+**Deleted:** `auth/callback/route.ts`, `hooks/useAuth.ts`, `stores/cart-store.ts`,
+`actions/cart.actions.ts` (`syncCartToDatabase`), `actions/checkout.actions.ts`,
+`components/CheckoutStepper.tsx`, `components/CartSync.tsx`, and
+`toCartProduct` — the adapter that existed to feed the store prices.
+
+### One cart, two owners
+
+The header basket has to work for a customer whose cart is the API's and a
+visitor whose basket is their browser's. Rendering those from two code paths is
+how a basket shows one total before sign-in and another after, so both go
+through `CartProvider` and both come back as the API's `Cart`: same fields, same
+money, same status ladder, same clamping.
+
+That needed something the API did not have. **`POST /cart/preview`** — public,
+stores nothing, prices a `{productId, quantity}` list and returns the `GET /cart`
+shape. It reuses the cart's own projection rather than a second pricing path, so
+a basket cannot change shape when its owner signs in.
+
+The one thing it cannot report is `PRICE_CHANGED`. That status compares the live
+price against the price the customer was shown when they added the line, which a
+stored cart keeps as a snapshot; a browser basket has none, so the comparison
+genuinely cannot be made and is not faked.
+
+**This is an API addition made during a storefront flip, and it is worth
+flagging.** Part 1's approved design says the guest basket holds
+`{productId, quantity}` and is "priced by the API at render". There was no way
+to do that: the catalogue has no by-id lookup, `findByIdsForCart` deliberately
+returns invisible products and is documented as never reaching a public
+response, and the alternatives were putting slugs back in the browser store or
+showing a basket with no prices. Additive; the drift gate reports it as such.
+
+### Optimism is deliberately absent
+
+The cart shows a quantity only after the server has agreed to it. The API clamps
+to live stock, so "add 40" can legitimately become 12 — a brief spinner beats a
+number that changes under the customer's eyes a moment after they read it.
+
+### The proxy does much less
+
+It looks for `nest_rt` and never inspects it. **It is not the authorization
+boundary** — every guarded page asks the API, which decides on the identity in
+the token — so deleting the file would cost polish and no security.
+
+`nest_rt` rather than `nest_at`: the access token is a fifteen-minute session
+cookie, gone after a browser restart while the customer is still signed in.
+Guarding on it would bounce people who have a perfectly good session.
+
+Matching is on **segment boundaries**. `startsWith('/account')` also matches
+`/accountancy`, and `startsWith('/register')` would bounce a signed-in customer
+off `/registered-dealers`. There is a test for the first.
+
+One exception is written into the guard: a signed-in customer is still allowed
+onto `/forgot-password/reset`. A reset link is a credential with an expiry sent
+to an inbox, and somebody signed in here may be recovering the account from
+another device. Bouncing them consumes nothing and leaves them holding a token
+they cannot use.
+
+The `Next-Action` pass-through survives unchanged and is now asserted at the
+protocol level: a POST carrying the header gets no 3xx and no `Location`.
+
+### The empty 404 needs no proxy fix
+
+The brief listed "fix the empty 404 body" as part of this rewrite. Part 1 found
+that diagnosis was wrong — the body was empty because React was never booting in
+the harness, not because of anything the proxy did. The designed 404 renders,
+`not-found.spec.ts` asserts its content, and the proxy does not touch 404s.
+There is a test that an unguarded path near a guarded prefix still answers 404
+as itself.
+
+### What the journey caught
+
+`POST /orders/:id/cancel` requires a `reason` — 3 to 500 characters, free text,
+stored verbatim on the permanent record (API-CONTRACT.md §5.4). The first cancel
+UI sent an empty body and the API refused it. The form collects a reason now,
+and it is **not** defaulted on the customer's behalf: "Cancelled by customer"
+written into a record shown back to them reads like something they said.
+
+Two test defects surfaced with it:
+
+- The interrupted-merge probe aborted "the second server action". True when the
+  page fired two; the header now prices the basket through an action of its own
+  on every signed-in render, so an ordinal killed whichever action happened to
+  be second. It aborts on the **frozen target quantity** now — the basket holds
+  2 and the cart holds 3, so only the write carries 5. That is "kill the write"
+  stated in the terms the test is about.
+- The cancel step asserted a confirmation message. The action revalidates the
+  route, so the page re-renders into the cancelled state and the message's
+  component unmounts. It asserts the order's **state** now: a message can be
+  shown by a component that did nothing.
+
+### The purchase journey walks the real URLs
+
+It drove `/shop/*` because that was where the API-backed implementation lived.
+It walks `/register`, `/login`, `/products`, `/account/addresses`, `/checkout`
+and `/account/orders/[id]` now, and it asserts the **D-8 delivery fee as a
+number** — `50.00 EGP` for Cairo, on the quote and again on the placed order.
+Two independent computations, one from the cart and one inside the placement
+transaction, and they must agree. Every order placed before this read
+"Not yet calculated".
+
+### Counts
+
+jest **825 passed, 15 skipped** (840) — 11 new, all on `POST /cart/preview`.
+Playwright **70 → 83**, all green.
+Build, type-check, lint (0 errors; storefront warnings 59 → 24 as legacy code
+left) and the drift gate green; the OpenAPI artifact regenerated and additive.

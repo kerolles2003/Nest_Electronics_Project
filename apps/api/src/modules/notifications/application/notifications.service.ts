@@ -149,7 +149,15 @@ export class NotificationsService {
   async sendEmailVerification(input: EmailVerificationNotification): Promise<EmailDispatchResult> {
     const data: VerifyEmailData = {
       customerName: input.recipientName,
-      verifyUrl: `${this.app.siteUrl}/shop/verify-email?token=${encodeURIComponent(input.rawToken)}`,
+      /*
+       * The CANONICAL path, not the `/shop` one it used to carry.
+       *
+       * These links live in a customer's inbox for as long as the token is
+       * valid, and `/shop/*` is being removed. A 301 would carry them for a
+       * while, but a link that has to be redirected to work is a link that
+       * breaks the day someone tidies the redirect away.
+       */
+      verifyUrl: `${this.app.siteUrl}/verify-email?token=${encodeURIComponent(input.rawToken)}`,
       expiresIn: VERIFICATION_EXPIRY_COPY,
     };
 
@@ -178,7 +186,7 @@ export class NotificationsService {
    * de-duplicating it would break the only recovery path a customer has when
    * the first mail does not arrive.
    *
-   * The URL points at `/forgot-password/reset`, a page that does not exist yet
+   * The URL points at `/forgot-password/reset`, which the storefront serves
    * — the storefront half of this is Phase 5b. The API is complete and testable
    * without it, and a link to a 404 is better than a link that silently points
    * at the wrong route once the page lands.
@@ -427,7 +435,8 @@ export class NotificationsService {
         postalCode: order.shippingAddress.postalCode,
       },
 
-      orderUrl: `${siteUrl}/shop/orders/${order._id.toHexString()}`,
+      // Canonical, for the same reason as `verifyUrl` above.
+      orderUrl: `${siteUrl}/account/orders/${order._id.toHexString()}`,
     };
   }
 

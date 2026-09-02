@@ -6,7 +6,7 @@ import * as api from '@/lib/api/endpoints';
 import { customerMessage } from '@/lib/api/errors';
 import { readSession } from '@/lib/api/session';
 import { ApiErrorNotice } from '@/components/shop/ApiErrorNotice';
-import { CheckoutForm } from '@/components/shop/CheckoutForm';
+import { CheckoutForm } from '@/components/checkout/CheckoutForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,6 +85,7 @@ export default async function CheckoutPage({
       quote={quoteResult.data.data}
       /* One key per rendered attempt. The API is the duplicate-submit guard. */
       idempotencyKey={randomUUID()}
+      basePath="/shop/checkout"
     />
   );
 }

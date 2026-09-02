@@ -252,7 +252,8 @@ export interface Cart {
   itemsSubtotal: Money;
   currency: string;
   hasBlockingIssues: boolean;
-  updatedAt: string;
+  /** Null until the first item is added, and always null for a guest preview. */
+  updatedAt: string | null;
   expiresAt: string | null;
 }
 

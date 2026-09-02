@@ -1,66 +1,73 @@
 'use client';
 
-import React, { useState } from 'react';
-import { ProductCard as UIProductCard, ProductCardProps as UIProductCardProps, useToast } from '@nest/ui';
-import { useCartStore } from '@/stores/cart-store';
+import { useEffect, useState } from 'react';
+import {
+  ProductCard as UIProductCard,
+  type ProductCardProps as UIProductCardProps,
+  useToast,
+} from '@nest/ui';
+import { useCart } from '@/components/cart/CartProvider';
 import { useWishlistStore } from '@/stores/wishlist-store';
 import { useUIStore } from '@/stores/ui-store';
 
+/**
+ * A catalogue card, wired to the real cart.
+ *
+ * It used to build a fake product object out of the card's props — name,
+ * prices, stock, images — and push it into a client store, so the cart's idea
+ * of a price came from whatever the grid happened to be rendering. Now it sends
+ * an id and a quantity, and the server answers with what that costs.
+ *
+ * The wishlist is still a browser store. Server-side wishlists arrive in Phase
+ * 8; until then it is a private list of ids with nothing to get wrong.
+ */
 export function ProductCard(props: UIProductCardProps) {
-  const [mounted, setMounted] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
-  const addItem = useCartStore((state) => state.addItem);
+
+  /*
+   * The wishlist is persisted in the browser, so the server renders "not
+   * wishlisted" and the client may know better. Rendering the client's answer
+   * on the first pass is a hydration mismatch; this defers it to after mount,
+   * which is the one legitimate use of a mounted flag.
+   */
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const { add } = useCart();
   const openCart = useUIStore((state) => state.openCart);
   const toggleWishlist = useWishlistStore((state) => state.toggleItem);
   const hasWishlist = useWishlistStore((state) => state.hasItem(props.product.id));
 
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
   const { addToast } = useToast();
 
-  const handleAddToCart = async () => {
+  const handleAddToCart = async (): Promise<void> => {
     setIsAdding(true);
     try {
-      // Map DTO back to what the store expects (Partial is fine if store is robust)
-      const storeProduct: any = {
-        id: props.product.id,
-        name_en: props.product.name,
-        slug: props.product.slug,
-        sku: props.product.sku,
-        base_price: props.product.basePrice,
-        sale_price: props.product.salePrice,
-        available_stock: props.product.availableStock,
-        is_active: true,
-        images: props.product.imageUrl ? [{ url: props.product.imageUrl }] : [],
-      };
-
-      const result = addItem(storeProduct, 1);
-      if (result.success) {
-        addToast(`${props.product.name} added to cart`, "success");
-        openCart();
-      } else {
-        addToast(result.error || 'Failed to add to cart', "error");
-      }
+      await add(props.product.id, 1);
+      addToast(`${props.product.name} added to cart`, 'success');
+      openCart();
     } finally {
       setIsAdding(false);
     }
   };
 
-  const handleWishlist = () => {
+  const handleWishlist = (): void => {
     toggleWishlist(props.product.id);
-    if (!hasWishlist) {
-      addToast(`${props.product.name} added to wishlist`, "success");
-    } else {
-      addToast(`${props.product.name} removed from wishlist`, "info");
-    }
+    addToast(
+      hasWishlist
+        ? `${props.product.name} removed from wishlist`
+        : `${props.product.name} added to wishlist`,
+      hasWishlist ? 'info' : 'success',
+    );
   };
 
   return (
     <UIProductCard
       {...props}
-      onAddToCart={handleAddToCart}
+      onAddToCart={() => void handleAddToCart()}
       onWishlist={handleWishlist}
       isWishlisted={mounted && hasWishlist}
       isAddingToCart={isAdding}

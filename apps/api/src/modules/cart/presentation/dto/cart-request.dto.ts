@@ -1,6 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsString, Matches, Max, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { OBJECT_ID_PATTERN } from '../../../../common/dto/object-id';
 import { MAX_QUANTITY_PER_LINE, MIN_QUANTITY } from '../../application/cart-line';
 
@@ -66,4 +76,59 @@ export class UpdateCartItemDto {
     message: `quantity must not exceed ${String(MAX_QUANTITY_PER_LINE)}`,
   })
   quantity!: number;
+}
+
+/**
+ * The maximum number of distinct products in one anonymous basket.
+ *
+ * The same cap the browser store applies, restated here because the browser is
+ * not the authority on anything: this endpoint is public and unauthenticated,
+ * so the bound on how much work one request can ask for has to live on the
+ * server. Generous for a real basket and small enough that pricing one is a
+ * single indexed query either way.
+ */
+export const MAX_GUEST_CART_LINES = 50;
+
+/** One line of an anonymous basket. Product and quantity, exactly like a real one. */
+export class GuestCartLineDto extends CartItemParamDto {
+  @ApiProperty({
+    minimum: MIN_QUANTITY,
+    maximum: MAX_QUANTITY_PER_LINE,
+    example: 2,
+    description:
+      'How many the visitor has in their basket. Clamped to live stock in the response, ' +
+      'exactly as a stored cart line is.',
+  })
+  @Type(() => Number)
+  @IsInt({ message: 'quantity must be an integer' })
+  @Min(MIN_QUANTITY, { message: `quantity must be at least ${String(MIN_QUANTITY)}` })
+  @Max(MAX_QUANTITY_PER_LINE, {
+    message: `quantity must not exceed ${String(MAX_QUANTITY_PER_LINE)}`,
+  })
+  quantity!: number;
+}
+
+/**
+ * Price an anonymous basket.
+ *
+ * There is no price, currency, name or userId field here either — the same rule
+ * as `AddCartItemDto`, and it matters more rather than less because this route
+ * is public. Everything the response contains is read from the catalogue.
+ */
+export class PreviewGuestCartDto {
+  @ApiProperty({
+    type: [GuestCartLineDto],
+    maxItems: MAX_GUEST_CART_LINES,
+    description:
+      'The visitor\'s basket. Duplicate products are summed, which is what adding the same ' +
+      'product twice to a real cart does. An empty array is accepted and returns an empty cart.',
+  })
+  @IsArray()
+  @ArrayMinSize(0)
+  @ArrayMaxSize(MAX_GUEST_CART_LINES, {
+    message: `items must not exceed ${String(MAX_GUEST_CART_LINES)} products`,
+  })
+  @ValidateNested({ each: true })
+  @Type(() => GuestCartLineDto)
+  items!: GuestCartLineDto[];
 }

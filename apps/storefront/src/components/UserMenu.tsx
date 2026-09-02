@@ -3,28 +3,25 @@
 import React from 'react';
 import Link from 'next/link';
 import { User, LogOut, Package, Settings, ChevronDown } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
+import { logoutAction } from '@/actions/api-auth.actions';
+import { useViewer } from '@/components/providers/SiteProviders';
 import { ROUTES } from '@nest/config/constants';
 
+/**
+ * The account menu.
+ *
+ * ## There is no loading state any more, and that is the improvement
+ *
+ * This used to open a Supabase client in the browser, read a session out of
+ * `localStorage` and then fetch a profile row — so every page drew a skeleton,
+ * then flickered from "Login" to a name. The session is an httpOnly cookie now:
+ * the server resolves who is signed in before the HTML is sent, and this
+ * component renders the answer on the first paint.
+ */
 export function UserMenu() {
-  const { user, loading, signOut } = useAuth();
+  const user = useViewer();
 
-  // To avoid a jarring skeleton for most users (who are guests), 
-  // we show the guest state by default if loading is taking time, 
-  // or use a more subtle loading indicator.
-  if (loading && !user) {
-    return (
-      <div className="p-2.5 flex items-center gap-2 opacity-50 cursor-wait">
-        <User className="w-6 h-6" strokeWidth={1.5} />
-        <div className="hidden sm:block text-left">
-          <div className="h-2 w-12 bg-[var(--color-border)] rounded animate-pulse mb-1" />
-          <div className="h-3 w-16 bg-[var(--color-border)] rounded animate-pulse" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
+  if (user === null) {
     return (
       <Link
         href={ROUTES.login}
@@ -47,7 +44,7 @@ export function UserMenu() {
         </div>
         <div className="hidden sm:block text-left mr-1">
           <p className="text-[10px] font-bold opacity-70 uppercase tracking-wider leading-none mb-1">Account</p>
-          <p className="text-[13px] font-bold leading-none max-w-[80px] truncate">{user.fullName?.split(' ')[0]}</p>
+          <p className="text-[13px] font-bold leading-none max-w-[80px] truncate">{user.fullName.split(' ')[0]}</p>
         </div>
         <ChevronDown className="w-3.5 h-3.5 opacity-50 group-hover:rotate-180 transition-transform duration-300" />
       </button>
@@ -75,7 +72,7 @@ export function UserMenu() {
           <span>My Orders</span>
         </Link>
 
-        {user.role === 'admin' || user.role === 'super_admin' ? (
+        {user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' ? (
           <Link 
             href="/admin"
             className="flex items-center gap-3 px-4 py-3 text-[13px] font-normal text-foreground-muted hover:bg-[#F9F9F9] hover:text-primary transition-colors"
@@ -87,13 +84,24 @@ export function UserMenu() {
 
         <div className="h-px bg-[var(--color-border)] my-1" />
         
-        <button 
-          onClick={() => signOut()}
-          className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-normal text-danger hover:bg-[#F9F9F9] transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Logout</span>
-        </button>
+        {/*
+          * A form, not an onClick.
+          *
+          * Signing out REVOKES the refresh token server-side before it clears
+          * the cookies, so a copy of the cookie that survives somewhere is
+          * already dead. That is a server action, and a form posts to one
+          * without needing this component to hold a handler that could fail
+          * silently.
+          */}
+        <form action={logoutAction}>
+          <button
+            type="submit"
+            className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-normal text-danger hover:bg-[#F9F9F9] transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Logout</span>
+          </button>
+        </form>
       </div>
     </div>
   );

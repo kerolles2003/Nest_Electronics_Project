@@ -1940,6 +1940,49 @@
         ]
       }
     },
+    "/api/v1/cart/preview": {
+      "post": {
+        "description": "Prices a visitor’s browser-held basket and returns it in **the same shape as**\n`GET /cart`, so a client renders one component for signed-in and anonymous visitors.\n\nNothing is stored. No cart document is created, no stock is reserved, and calling it\ntwice leaves no trace of either call.\n\n### Same resolution as a real cart\n\nPrices, names, images and availability are read from the catalogue on every request, and\nquantities are clamped to live stock with the same status ladder — so a basket does not\nchange shape when its owner signs in.\n\n### Except that no line can be `PRICE_CHANGED`\n\nThat status compares the live price against the price the customer was shown when they\nadded the line, which a stored cart keeps as a snapshot. A browser basket has no such\nsnapshot, so the comparison genuinely cannot be made and is not faked. Lines are\n`OK`, `REDUCED_STOCK`, `OUT_OF_STOCK` or `UNAVAILABLE`.\n\nDuplicate products in `items` are summed, matching what posting the same product twice\nto a real cart does. An empty array returns an empty cart rather than an error.",
+        "operationId": "GuestCartController_preview_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewGuestCartDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CartResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR (a malformed id, a quantity out of range, too many lines).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Price an anonymous basket",
+        "tags": [
+          "cart"
+        ]
+      }
+    },
     "/api/v1/checkout/quote": {
       "post": {
         "description": "Returns the **authoritative** money breakdown for the signed-in customer’s cart, with\nper-line status flags. Every figure is recomputed from live catalogue data on this\nrequest; nothing stored is returned, and the client never adds anything up itself.\n\n### What this is NOT\n\n- **Not a reservation.** No stock is held. Another customer may buy the last unit one\n  millisecond later.\n- **Not a lock, and not a payment authorisation.**\n- **Not a promise that `POST /orders` will succeed.** Placement independently revalidates\n  everything inside a transaction and may still return `409 OUT_OF_STOCK`.\n- **Not persisted.** There is no quote id and nothing to send back. Placement ignores any\n  totals a client might have kept.\n\n### Reading the result\n\n- `canPlaceOrder` — whether placement would be accepted right now. Use it for the button.\n- `pricing.grandTotal` — the cash amount due on delivery. **Never compute this locally.**\n- `pricing.shippingFee` is computed by the server. Pass `addressId` and it is quoted\n  against that address governorate — the same calculation `POST /orders` applies, so the\n  two agree. Omit it before the customer has chosen an address. `discountTotal` is always\n  `0` in this release: no coupon domain exists yet.\n- A `PRICE_CHANGED` line is included at the NEW price — compare `unitPrice` with\n  `previousUnitPrice` to tell the customer before they commit.\n\nPOST rather than GET because the frozen contract shapes this as a body-carrying request.\nIt has **no side effects** and writes nothing.\n\nThe body accepts `addressId` and nothing else. Sending `couponCode` returns\n`400 UNKNOWN_FIELD` rather than being silently ignored, so a client is never left believing\nit applied a discount that was never validated; a raw `governorate` is refused for a second\nreason — the saved address is the authority for it, and accepting free text would let a\nclient shop for a cheaper delivery fee.",
@@ -5641,6 +5684,44 @@
         },
         "required": [
           "quantity"
+        ]
+      },
+      "GuestCartLineDto": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d",
+            "pattern": "^[0-9a-f]{24}$",
+            "description": "The product id, as returned by the catalogue."
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 99,
+            "example": 2,
+            "description": "How many the visitor has in their basket. Clamped to live stock in the response, exactly as a stored cart line is."
+          }
+        },
+        "required": [
+          "productId",
+          "quantity"
+        ]
+      },
+      "PreviewGuestCartDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "maxItems": 50,
+            "description": "The visitor's basket. Duplicate products are summed, which is what adding the same product twice to a real cart does. An empty array is accepted and returns an empty cart.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuestCartLineDto"
+            }
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "CheckoutQuoteDto": {

@@ -93,6 +93,56 @@ export function resendVerification(email: string): Promise<Envelope<{ message: s
   return apiFetch('/auth/resend-verification', { method: 'POST', body: { email }, auth: false });
 }
 
+/**
+ * Starts a password reset.
+ *
+ * **Answers identically whether or not the address has an account**, because
+ * the API does. Do not branch on the response to tell the customer which it
+ * was: that is a password-free account-existence oracle, and it is the reason
+ * the endpoint is shaped this way.
+ */
+export function forgotPassword(email: string): Promise<Envelope<{ message: string }>> {
+  return apiFetch('/auth/forgot-password', { method: 'POST', body: { email }, auth: false });
+}
+
+/**
+ * Completes a password reset with the single-use token from the email.
+ *
+ * An unknown, expired or already-used token is one answer, not three — again
+ * the API's decision, and again not something to unpick client-side. Success
+ * revokes every existing session for that account, so the customer must sign in
+ * again afterwards, including on the device they reset from.
+ *
+ * Public, like the two above: someone who has forgotten their password by
+ * definition has no session.
+ */
+export function resetPassword(input: {
+  token: string;
+  password: string;
+}): Promise<Envelope<{ message: string }>> {
+  return apiFetch('/auth/reset-password', { method: 'POST', body: input, auth: false });
+}
+
+// --- profile ----------------------------------------------------------------
+
+/**
+ * Updates the signed-in customer's own profile.
+ *
+ * Only two fields exist on the wire. Email is NOT among them — changing it is a
+ * re-verification flow, not a field edit — and neither is `role`; sending
+ * either is a `400 UNKNOWN_FIELD`.
+ *
+ * `phone: null` CLEARS the number and omitting the key leaves it alone. Those
+ * are different instructions and this signature keeps them distinguishable,
+ * which is why the caller passes an object rather than two loose strings.
+ */
+export function updateProfile(input: {
+  fullName?: string;
+  phone?: string | null;
+}): Promise<Envelope<AuthUser>> {
+  return apiFetch('/users/me', { method: 'PATCH', body: input });
+}
+
 // --- catalogue (public) -----------------------------------------------------
 
 /**
@@ -230,6 +280,30 @@ export function getCart(): Promise<Envelope<Cart>> {
   return apiFetch('/cart');
 }
 
+/**
+ * Prices an anonymous basket. Public, and it stores nothing.
+ *
+ * Returns the SAME `Cart` shape as `getCart`, which is what lets one component
+ * render the basket for a visitor and the cart for a customer. Duplicate
+ * products are summed server-side and quantities are clamped to live stock, so
+ * a basket does not change value the moment its owner signs in.
+ *
+ * The one status it can never produce is `PRICE_CHANGED`: that compares against
+ * the price the customer was shown when they added the line, and a browser
+ * basket stores no price to compare with.
+ */
+export function previewGuestCart(
+  items: readonly { productId: string; quantity: number }[],
+): Promise<Envelope<Cart>> {
+  return apiFetch('/cart/preview', {
+    method: 'POST',
+    // Public: sending a bearer token here would be meaningless, and the whole
+    // point is that this works with no session.
+    auth: false,
+    body: { items: items.map((item) => ({ productId: item.productId, quantity: item.quantity })) },
+  });
+}
+
 export function addCartItem(productId: string, quantity: number): Promise<Envelope<Cart>> {
   return apiFetch('/cart/items', { method: 'POST', body: { productId, quantity } });
 }
@@ -343,4 +417,32 @@ export function listOrders(params: { page?: number; limit?: number } = {}): Prom
 
 export function getOrder(id: string): Promise<Envelope<Order>> {
   return apiFetch(`/orders/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Cancels the customer's own order and returns the stock to the catalogue.
+ *
+ * Possible while the order is `PLACED` or `CONFIRMED`; once it is `SHIPPED` the
+ * goods are with the courier and the answer is `409 ORDER_NOT_CANCELLABLE`.
+ * **Treat that 409 as the authority rather than the status the page is
+ * holding** — it may be minutes old, and the shop may have dispatched since.
+ *
+ * There is no `Idempotency-Key` and none is needed: a second request answers
+ * 409 with the current status rather than cancelling twice, and stock is
+ * restored exactly once however many arrive together.
+ *
+ * `reason` is REQUIRED — 3 to 500 characters of free text. It is the frozen
+ * contract (API-CONTRACT.md §5.4, ORDER-LIFECYCLE.md §5), it goes on the
+ * permanent record, and it is shown back on the order. There is no default to
+ * supply on the customer's behalf: a cancellation reason nobody typed is worse
+ * than none, because it looks like something they said.
+ *
+ * Returns the whole order with `status: 'CANCELLED'`, so a caller re-renders
+ * from the response instead of re-fetching.
+ */
+export function cancelOrder(id: string, reason: string): Promise<Envelope<Order>> {
+  return apiFetch(`/orders/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST',
+    body: { reason },
+  });
 }
