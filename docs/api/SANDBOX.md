@@ -270,6 +270,65 @@ pnpm --filter api seed && pnpm --filter api indexes:sync
 
 ---
 
+## Image processing: sharp has two backends
+
+The API resizes and re-encodes every uploaded image with `sharp`, which ships a
+**native** addon per platform and a **WebAssembly** fallback. Its loader tries
+them in that order and reaches for WebAssembly only when the native `require`
+throws, so native wins wherever it works — including CI and production. Nothing
+configures this; it is the order inside `sharp/dist/sharp.cjs`.
+
+`@img/sharp-wasm32` is an **optional dependency of `apps/api`** so that the
+fallback is actually present when it is needed. It costs about 9 MB on install
+and is otherwise inert.
+
+### When you will end up on it
+
+A machine whose OS refuses to load unsigned native code. The known case is
+**Windows Smart App Control** in enforcing mode, which fails the native addon
+with:
+
+```
+ERR_DLOPEN_FAILED: An Application Control policy has blocked this file
+```
+
+Without a fallback that is not a slow API, it is **no API at all** — the process
+cannot start, and every test that touches an image fails with it.
+
+### What it means for you
+
+| | Native | WebAssembly |
+|---|---|---|
+| Output | identical — same libvips, byte-for-byte | identical |
+| Uploads | fast | several times slower |
+| Correctness | — | unchanged: dimensions, format, orientation and EXIF stripping all match |
+
+The equivalence is asserted, not assumed: `test/media/sharp-backend.spec.ts`
+runs the upload pipeline in a second process with the native addon made
+unloadable and compares SHA-256 hashes of the output.
+
+### Knowing which one you are on
+
+The API says so on boot:
+
+```
+[MediaService] image processing: sharp native backend
+```
+
+On the fallback it warns instead, and **in production it logs an ERROR** naming
+the platform package to install. It does not refuse to boot: the images are
+correct, only slow, and turning a performance problem into an outage would be
+the wrong trade. What must never happen is the fallback becoming the production
+path silently — and it cannot.
+
+> If you are on the WebAssembly path and do not want to be, the fix is to make
+> the native addon loadable, not to remove the fallback. On Windows that means
+> Smart App Control, which **cannot be re-enabled without reinstalling
+> Windows** — so decide deliberately rather than as a workaround for one
+> library.
+
+---
+
 ## Media, and the shared Cloudinary account
 
 `MEDIA_PROVIDER=memory` is the development default and needs no account: uploads

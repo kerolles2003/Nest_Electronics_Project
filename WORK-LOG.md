@@ -2986,3 +2986,82 @@ contract did not change; **what the endpoint is willing to resolve did.** The
 description now states the indistinguishability property and tells a client to
 treat an `UNAVAILABLE` line with an empty `name` as "no longer for sale" rather
 than rendering a blank row. Drift gate: OK.
+
+---
+
+## sharp: the WebAssembly fallback becomes a real dependency (Part B)
+
+`@img/sharp-wasm32` is now an **optional dependency of `apps/api`**, pinned to
+sharp's own range. The lockfile carries it; a fresh clone works with no manual
+step. The previous fix was two directories hand-extracted into
+`node_modules/.pnpm/node_modules/`, which the next `pnpm install` would have
+erased — and did, when this change was made.
+
+Cost: about 9 MB on install, on every platform, whether or not it is used.
+
+### Why an optional dependency installs everywhere
+
+`optional` in npm and pnpm means "do not fail the install if this fails"; it is
+`os` and `cpu` that make a package platform-specific. `@img/sharp-wasm32@0.35.4`
+declares **neither**, so it installs everywhere — which is what a fallback has
+to do to be one. It is already in the lockfile as a transitive optional of
+`@img/sharp-freebsd-wasm32` and `@img/sharp-webcontainers-wasm32`, both of which
+*are* `os`-restricted and so were never installed here.
+
+### How production and CI are known to stay on native
+
+Not by configuration — **by the order inside sharp's own loader**
+(`sharp/dist/sharp.cjs`, lines 19–105). It tries, in order:
+
+1. a locally-compiled native addon (we never build one)
+2. a locally-compiled wasm addon (likewise)
+3. `@img/sharp-<platform>` — **native**, installed for every target
+4. `@img/sharp-wasm32` — WebAssembly
+
+Step 4 is reached only when step 3 **throws**. Adding the package cannot move
+anything off native; it can only supply an answer where there previously was
+none.
+
+Verified three ways rather than asserted:
+
+- **Observed here.** Tracing every `.node` require while loading sharp shows
+  `@img/sharp-win32-x64` loading and the WASM package never being reached.
+- **Reported at boot.** `MediaService.onModuleInit` names the backend. In
+  production a WASM backend logs at **ERROR** with the platform package to
+  install. It does **not** refuse to boot — the images are correct, only slow,
+  and turning a performance problem into an outage is the wrong trade. The rule
+  is that the fallback can never become the production path *silently*.
+- **Tested.** `test/media/sharp-backend.spec.ts` asserts the detector reaches a
+  verdict, and that the report is quiet for native, a warning for WASM and an
+  error for WASM in production.
+
+### The equivalence, measured
+
+Catalogue images are the product, so "same libvips, therefore same output" was
+checked rather than believed. A second process is started with the native addon
+made unloadable — a `require` patch standing in for the OS policy, so
+`node_modules` is never touched — and its output is compared with this
+process's.
+
+| Fixture | Native | WASM |
+|---|---|---|
+| 900×600 ordinary photograph | | **identical SHA-256** |
+| 3000×1800, downscaled to 2000×1200 | | **identical SHA-256** |
+| 800×1200 with EXIF orientation 6, baked to 1200×800 | | **identical SHA-256** |
+
+Byte-for-byte, not merely visually alike: same dimensions, same format, EXIF
+absent in both, same libvips 8.18.6. The orientation case is the one that
+matters most — it proves `.rotate()` bakes the tag before it is stripped on both
+backends, which is the classic EXIF bug and the reason that fixture exists.
+
+The test asserts the child really ran on the other backend before comparing
+anything, so it cannot pass by comparing native with native.
+
+### One thing that changed under us
+
+**The native binary loads on this machine again.** Smart App Control blocked it
+yesterday and does not today — its enforcement is reputation-based, so a file
+can gain reputation. That is worth knowing for two reasons: the block is real
+but intermittent, and this machine is no longer a reproduction of it. Everything
+above about the WASM path was therefore proven by forcing the fallback, not by
+happening to be on it.

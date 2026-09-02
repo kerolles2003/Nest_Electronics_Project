@@ -154,6 +154,10 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+    optionalDependencies:
+      '@img/sharp-wasm32':
+        specifier: ^0.35.4
+        version: 0.35.4
     devDependencies:
       '@eslint/js':
         specifier: ^9.39.5
@@ -5991,7 +5995,7 @@ snapshots:
 
   '@img/sharp-wasm32@0.34.5':
     dependencies:
-      '@emnapi/runtime': 1.10.0
+      '@emnapi/runtime': 1.11.3
     optional: true
 
   '@img/sharp-wasm32@0.35.4':
@@ -6395,7 +6399,7 @@ snapshots:
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
       '@emnapi/core': 1.10.0
-      '@emnapi/runtime': 1.10.0
+      '@emnapi/runtime': 1.11.3
       '@tybys/wasm-util': 0.10.1
     optional: true
 

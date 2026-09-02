@@ -1,12 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
+import { appConfig, type AppConfig } from '../../../config/app.config';
 import { mediaConfig, type MediaConfig } from '../../../config/media.config';
 import { MediaAssetRepository } from '../infrastructure/repositories/media-asset.repository';
 import { sniffImageFormat, mimeTypeForFormat } from './image-format';
 import { ImageProcessingError, processUploadedImage } from './image-processing';
 import { MediaStoragePort, type StoredMediaAsset } from './ports/media-storage.port';
+import { describeSharpBackend, detectSharpBackend } from './sharp-backend';
 
 /**
  * The upload pipeline, in the order ADR-MEDIA-001 specifies it.
@@ -44,14 +46,34 @@ import { MediaStoragePort, type StoredMediaAsset } from './ports/media-storage.p
  * exercising them at all (Phase 4 risk note).
  */
 @Injectable()
-export class MediaService {
+export class MediaService implements OnModuleInit {
   private readonly logger = new Logger(MediaService.name);
 
   constructor(
     private readonly storage: MediaStoragePort,
     private readonly ledger: MediaAssetRepository,
     @Inject(mediaConfig.KEY) private readonly config: MediaConfig,
+    @Inject(appConfig.KEY) private readonly app: AppConfig,
   ) {}
+
+  /**
+   * Says which sharp backend the process ended up on.
+   *
+   * sharp picks between a native addon and a WebAssembly one at require time
+   * and reports neither. The WASM build is a genuine fallback for a machine
+   * whose OS refuses to load unsigned native code, and it produces identical
+   * images — but it is several times slower, so it must never become the
+   * production path without somebody being told. See `sharp-backend.ts`.
+   *
+   * It runs here rather than in `main.ts` because this module is the only thing
+   * in the codebase that imports sharp, and a diagnostic belongs with the
+   * dependency it diagnoses.
+   */
+  onModuleInit(): void {
+    const report = describeSharpBackend(detectSharpBackend(), this.app.nodeEnv === 'production');
+
+    this.logger[report.level](report.message);
+  }
 
   /**
    * Validates, normalises, stores and records one image.
