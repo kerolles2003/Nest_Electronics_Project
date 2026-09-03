@@ -122,6 +122,18 @@ export enum ErrorCode {
   /** The product is inactive or soft-deleted and cannot be purchased. */
   PRODUCT_UNAVAILABLE = 'PRODUCT_UNAVAILABLE',
 
+  /**
+   * 409. A staff write was attempted against a SOFT-DELETED product.
+   *
+   * Distinct from `PRODUCT_UNAVAILABLE`, which answers a CUSTOMER trying to buy
+   * something hidden. This one answers an operator, and it is actionable in a
+   * way that code is not: restore it, then edit it. Editing or publishing a
+   * deleted product is refused rather than allowed, because a change nobody can
+   * see is the same class of problem as the deleted rows the admin listing
+   * keeps out of the default view.
+   */
+  PRODUCT_DELETED = 'PRODUCT_DELETED',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

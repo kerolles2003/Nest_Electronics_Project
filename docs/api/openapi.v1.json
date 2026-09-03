@@ -1343,7 +1343,7 @@
     },
     "/api/v1/products/{slug}": {
       "get": {
-        "description": "Full detail by public slug, including every image and every spec. Inactive and soft-deleted products return 404 — identical to a slug that never existed, so an id can never become an existence oracle.",
+        "description": "Full detail by public slug, including every image and every spec. Inactive and\nsoft-deleted products return 404 — identical to a slug that never existed, so an id can\nnever become an existence oracle.\n\n**A slug that has been renamed answers `301` with a `Location` header** pointing at the\ncurrent one (CATALOG-MODEL.md §2 rule 4, ADR-CATALOG-005). The redirect is a FALLBACK:\na live slug is resolved first and never consults the redirect table, so a slug that has\nbeen re-used by a different product resolves to that product rather than to wherever the\nprevious holder went.\n\nLegacy wrote these redirect rows on every rename and **nothing ever read one**, so every\nrename produced a permanent 404 with a database row recording exactly where the page had\ngone. That is defect K4, and this lookup is the half that was missing.",
         "operationId": "ProductsController_detail_v1",
         "parameters": [
           {
@@ -1368,6 +1368,9 @@
                 }
               }
             }
+          },
+          "301": {
+            "description": "The slug was renamed. `Location` carries the current URL; the body repeats the target slug so a client that does not follow redirects can still act on it."
           },
           "404": {
             "description": "PRODUCT_NOT_FOUND",
@@ -1996,6 +1999,261 @@
           }
         ],
         "summary": "One product, in any state",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "patch": {
+        "description": "A PARTIAL update. An absent key means \"leave it\"; an explicit `null`, where the field is\nnullable, means \"clear it\" — which is how a sale is ended (`salePrice: null`) and how a\nbrand is removed.\n\n**`sku` is not accepted.** CATALOG-MODEL.md §2 makes it immutable after creation: it is\nthe warehouse identifier, printed on labels and quoted in supplier correspondence, and a\nsystem that lets it change is one where two people are holding different names for one\npart.\n\n**`isActive` is not accepted either.** Publishing has its own endpoints because it has\nits own audit codes — a visibility flip buried inside a general edit would be recorded as\n`PRODUCT_UPDATED`, and \"when did this go live\" would stop being answerable from the\naction index.\n\n**Renaming the slug writes a redirect.** The old slug is recorded in `slugRedirects` and\n`GET /products/{oldSlug}` answers `301` thereafter (§2 rules 3–5). Chains are collapsed\nat write time: rename A→B then B→C and A points straight at C, so resolution is always\none hop with no cycle to guard.\n\n`salePrice` is validated against the RESULTING pair, not against what was sent — lowering\n`basePrice` below an untouched `salePrice` is refused, because both fields are\nindividually valid and the product would end up \"on sale\" above list.\n\nEditing a soft-deleted product is refused with `409 PRODUCT_DELETED`: restore it first.\nAn edit nobody can see is the same problem as the deleted rows the listing keeps out of\nits default view.",
+        "operationId": "AdminProductsController_update_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProductDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a malformed field, or a resulting `salePrice` at or above `basePrice`. UNKNOWN_FIELD — `sku`, `isActive`, `stock`, `images` or any other field this endpoint does not accept.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND / CATEGORY_NOT_FOUND / BRAND_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SLUG — another entity holds it. PRODUCT_DELETED — restore it first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edit a product",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/products/{id}/publish": {
+      "post": {
+        "description": "Sets `isActive: true` and audits it as `PRODUCT_PUBLISHED`.\n\nIts own endpoint rather than a field, because AUDIT-MODEL.md §3 audits publication state\nseparately from an ordinary edit. That is what makes \"when did this go live, and who put\nit there\" one indexed query rather than a scan of every product update ever made.\n\nIdempotent, and SILENT when it is a no-op: publishing an already-published product\nsucceeds and writes no audit row, because a row recording that nothing changed is noise\nin a log kept for two years.\n\nA soft-deleted product is refused — restore is the operation that means \"put this back\",\nand it is audited as one.",
+        "operationId": "AdminProductsController_publish_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PRODUCT_DELETED — restore it first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Make a product publicly visible",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/products/{id}/unpublish": {
+      "post": {
+        "description": "Sets `isActive: false` and audits it as `PRODUCT_UNPUBLISHED`. The product keeps its\nslug, its SKU and its stock; it simply stops being publicly readable, along with its\nimages and specs — CATALOG-MODEL.md §9, \"child resources inherit the parent’s\nvisibility\", which is legacy defect Z6 where seven child tables leaked unreleased\nproducts.\n\nThis is NOT deletion, and the difference matters to an operator: an unpublished product\nis still in the working list, still editable, and still counted. A deleted one is not.",
+        "operationId": "AdminProductsController_unpublish_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PRODUCT_DELETED.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Hide a product from customers",
         "tags": [
           "admin · catalogue"
         ]
@@ -4313,6 +4571,7 @@
               "DUPLICATE_SLUG",
               "OUT_OF_STOCK",
               "PRODUCT_UNAVAILABLE",
+              "PRODUCT_DELETED",
               "CONCURRENT_MODIFICATION",
               "ORDER_NOT_CANCELLABLE",
               "INVALID_STATE_TRANSITION",
@@ -6620,6 +6879,94 @@
           "categoryId",
           "basePrice"
         ]
+      },
+      "UpdateProductDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Renaming the slug WRITES A REDIRECT: the old slug is recorded in `slugRedirects` and the public product route answers 301 for it thereafter (CATALOG-MODEL.md §2 rules 3–5)."
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "shortDescription": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "categoryId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "brandId": {
+            "type": "object",
+            "example": null,
+            "nullable": true,
+            "description": "null CLEARS the brand."
+          },
+          "basePrice": {
+            "type": "number",
+            "example": 15000
+          },
+          "salePrice": {
+            "type": "object",
+            "example": 12900,
+            "nullable": true,
+            "description": "null ENDS the sale."
+          },
+          "costPrice": {
+            "type": "object",
+            "example": 9800,
+            "nullable": true
+          },
+          "specs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductSpecInputDto"
+            }
+          },
+          "seo": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProductSeoInputDto"
+              }
+            ]
+          },
+          "weight": {
+            "type": "object",
+            "example": 12,
+            "nullable": true
+          },
+          "dimensions": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProductDimensionsInputDto"
+              }
+            ]
+          },
+          "isFeatured": {
+            "type": "boolean",
+            "example": false
+          }
+        }
       },
       "CartLineDto": {
         "type": "object",

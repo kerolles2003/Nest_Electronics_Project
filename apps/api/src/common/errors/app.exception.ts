@@ -408,6 +408,21 @@ export class AppException extends HttpException {
     );
   }
 
+  /**
+   * Refusing a staff write against a soft-deleted product.
+   *
+   * The message names the remedy, because "restore it first" is the entire
+   * content of the refusal and an operator who is not told it will assume the
+   * product is broken.
+   */
+  static productDeleted(): AppException {
+    return new AppException(
+      ErrorCode.PRODUCT_DELETED,
+      HttpStatus.CONFLICT,
+      'That product is deleted. Restore it before editing or publishing it.',
+    );
+  }
+
   static brandNotFound(): AppException {
     return new AppException(
       ErrorCode.BRAND_NOT_FOUND,

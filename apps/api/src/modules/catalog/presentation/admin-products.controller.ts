@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -21,7 +32,11 @@ import type { AuthenticatedUser } from '../../auth/domain/authenticated-user';
 import { Role } from '../../users/infrastructure/schemas/user.schema';
 import { ProductAdminService } from '../application/product-admin.service';
 import { EntityIdParamDto } from './dto/admin-catalog-shared.dto';
-import { AdminProductQueryDto, CreateProductDto } from './dto/admin-product-request.dto';
+import {
+  AdminProductQueryDto,
+  CreateProductDto,
+  UpdateProductDto,
+} from './dto/admin-product-request.dto';
 import {
   AdminProductDto,
   AdminProductListResponseDto,
@@ -174,5 +189,139 @@ export class AdminProductsController {
     });
 
     return { data: AdminProductDto.from(created) };
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Edit a product',
+    description: [
+      'A PARTIAL update. An absent key means "leave it"; an explicit `null`, where the field is',
+      'nullable, means "clear it" — which is how a sale is ended (`salePrice: null`) and how a',
+      'brand is removed.',
+      '',
+      '**`sku` is not accepted.** CATALOG-MODEL.md §2 makes it immutable after creation: it is',
+      'the warehouse identifier, printed on labels and quoted in supplier correspondence, and a',
+      'system that lets it change is one where two people are holding different names for one',
+      'part.',
+      '',
+      '**`isActive` is not accepted either.** Publishing has its own endpoints because it has',
+      'its own audit codes — a visibility flip buried inside a general edit would be recorded as',
+      '`PRODUCT_UPDATED`, and "when did this go live" would stop being answerable from the',
+      'action index.',
+      '',
+      '**Renaming the slug writes a redirect.** The old slug is recorded in `slugRedirects` and',
+      '`GET /products/{oldSlug}` answers `301` thereafter (§2 rules 3–5). Chains are collapsed',
+      'at write time: rename A→B then B→C and A points straight at C, so resolution is always',
+      'one hop with no cycle to guard.',
+      '',
+      '`salePrice` is validated against the RESULTING pair, not against what was sent — lowering',
+      '`basePrice` below an untouched `salePrice` is refused, because both fields are',
+      'individually valid and the product would end up "on sale" above list.',
+      '',
+      'Editing a soft-deleted product is refused with `409 PRODUCT_DELETED`: restore it first.',
+      'An edit nobody can see is the same problem as the deleted rows the listing keeps out of',
+      'its default view.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description:
+      'VALIDATION_ERROR — a malformed field, or a resulting `salePrice` at or above ' +
+      '`basePrice`. UNKNOWN_FIELD — `sku`, `isActive`, `stock`, `images` or any other field ' +
+      'this endpoint does not accept.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'PRODUCT_NOT_FOUND / CATEGORY_NOT_FOUND / BRAND_NOT_FOUND.',
+  })
+  @ApiConflictResponse({
+    type: ErrorResponseDto,
+    description: 'DUPLICATE_SLUG — another entity holds it. PRODUCT_DELETED — restore it first.',
+  })
+  async update(
+    @Param() params: EntityIdParamDto,
+    @Body() body: UpdateProductDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.catalogue.update(new Types.ObjectId(params.id), body, {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(updated) };
+  }
+
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Make a product publicly visible',
+    description: [
+      'Sets `isActive: true` and audits it as `PRODUCT_PUBLISHED`.',
+      '',
+      'Its own endpoint rather than a field, because AUDIT-MODEL.md §3 audits publication state',
+      'separately from an ordinary edit. That is what makes "when did this go live, and who put',
+      'it there" one indexed query rather than a scan of every product update ever made.',
+      '',
+      'Idempotent, and SILENT when it is a no-op: publishing an already-published product',
+      'succeeds and writes no audit row, because a row recording that nothing changed is noise',
+      'in a log kept for two years.',
+      '',
+      'A soft-deleted product is refused — restore is the operation that means "put this back",',
+      'and it is audited as one.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'PRODUCT_NOT_FOUND.' })
+  @ApiConflictResponse({ type: ErrorResponseDto, description: 'PRODUCT_DELETED — restore it first.' })
+  async publish(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.catalogue.setPublished(new Types.ObjectId(params.id), true, {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(updated) };
+  }
+
+  @Post(':id/unpublish')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Hide a product from customers',
+    description: [
+      'Sets `isActive: false` and audits it as `PRODUCT_UNPUBLISHED`. The product keeps its',
+      'slug, its SKU and its stock; it simply stops being publicly readable, along with its',
+      'images and specs — CATALOG-MODEL.md §9, "child resources inherit the parent’s',
+      'visibility", which is legacy defect Z6 where seven child tables leaked unreleased',
+      'products.',
+      '',
+      'This is NOT deletion, and the difference matters to an operator: an unpublished product',
+      'is still in the working list, still editable, and still counted. A deleted one is not.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'PRODUCT_NOT_FOUND.' })
+  @ApiConflictResponse({ type: ErrorResponseDto, description: 'PRODUCT_DELETED.' })
+  async unpublish(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.catalogue.setPublished(new Types.ObjectId(params.id), false, {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(updated) };
   }
 }

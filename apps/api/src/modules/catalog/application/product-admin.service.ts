@@ -10,6 +10,8 @@ import { UsersService, type UserProfile } from '../../users/application/users.se
 import { Brand, type BrandLean } from '../infrastructure/schemas/brand.schema';
 import { Category, type CategoryLean } from '../infrastructure/schemas/category.schema';
 import { Product, type ProductLean } from '../infrastructure/schemas/product.schema';
+import { SlugRedirectEntityType } from '../infrastructure/schemas/slug-redirect.schema';
+import { SlugRedirectService } from './slug-redirect.service';
 import { AdminProductSort, AdminProductState } from '../presentation/dto/admin-product-request.dto';
 
 /** MongoDB's duplicate-key error. The unique index is the authority; this is how it speaks. */
@@ -46,6 +48,30 @@ export interface CreateProductInput {
   readonly weight?: number | null;
   readonly dimensions?: { length: number; width: number; height: number } | null;
   readonly isActive?: boolean;
+  readonly isFeatured?: boolean;
+}
+
+/**
+ * A partial edit. `undefined` means "leave it"; `null`, where the field is
+ * nullable, means "clear it".
+ *
+ * `sku` is absent because CATALOG-MODEL.md §2 makes it immutable after
+ * creation, and `isActive` because publication is its own audited action.
+ */
+export interface UpdateProductInput {
+  readonly slug?: string;
+  readonly name?: LocalizedInput;
+  readonly shortDescription?: LocalizedInput | null;
+  readonly description?: LocalizedInput | null;
+  readonly categoryId?: string;
+  readonly brandId?: string | null;
+  readonly basePrice?: number;
+  readonly salePrice?: number | null;
+  readonly costPrice?: number | null;
+  readonly specs?: readonly SpecInput[];
+  readonly seo?: { title?: string | null; description?: string | null } | null;
+  readonly weight?: number | null;
+  readonly dimensions?: { length: number; width: number; height: number } | null;
   readonly isFeatured?: boolean;
 }
 
@@ -123,6 +149,7 @@ export class ProductAdminService {
     @InjectModel(Category.name) private readonly categories: Model<Category>,
     @InjectModel(Brand.name) private readonly brands: Model<Brand>,
     private readonly users: UsersService,
+    private readonly redirects: SlugRedirectService,
     private readonly audit: AuditService,
   ) {}
 
@@ -268,6 +295,203 @@ export class ProductAdminService {
     });
 
     return created;
+  }
+
+
+  /**
+   * Applies a partial edit, writes a redirect when the slug moves, and audits
+   * whichever of the two things happened.
+   *
+   * ## The `$set` is built from named fields, never from the body
+   *
+   * `{ $set: body }` would be shorter and would be a write-anything bug: with a
+   * DTO this wide, one field added to the class later becomes a field written
+   * to the document with no thought given to whether it should be. The global
+   * `forbidNonWhitelisted` pipe rejects an unknown key at the boundary, but that
+   * is a second line of defence, not this one.
+   *
+   * ## An ABSENT key means "leave it"; `null` means "clear it"
+   *
+   * The distinction is why `salePrice: null` can end a sale and omitting
+   * `salePrice` cannot. A partial update that could not express "clear this"
+   * would leave an operator unable to take a product off sale without a second
+   * endpoint for it.
+   */
+  async update(
+    id: Types.ObjectId,
+    input: UpdateProductInput,
+    context: AdminWriteContext,
+  ): Promise<ProductLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt !== null) {
+      throw AppException.productDeleted();
+    }
+
+    /*
+     * Validated against the RESULTING pair, not against what was sent. Lowering
+     * `basePrice` below an untouched `salePrice` is the trap this catches: both
+     * fields are individually valid, the request mentions only one of them, and
+     * the product ends up "on sale" above list.
+     */
+    const nextBase = input.basePrice ?? current.pricing.basePrice;
+    const nextSale = input.salePrice === undefined ? current.pricing.salePrice : input.salePrice;
+
+    assertSalePriceBelowBase(nextBase, nextSale);
+
+    const set: Record<string, unknown> = {};
+
+    if (input.slug !== undefined) set.slug = input.slug;
+    if (input.name !== undefined) set.name = toLocalized(input.name);
+    if (input.shortDescription !== undefined) {
+      set.shortDescription =
+        input.shortDescription === null ? null : toLocalized(input.shortDescription);
+    }
+    if (input.description !== undefined) {
+      set.description = input.description === null ? null : toLocalized(input.description);
+    }
+    if (input.specs !== undefined) set.specs = input.specs.map(toSpec);
+    if (input.seo !== undefined) {
+      set.seo =
+        input.seo === null
+          ? null
+          : { title: input.seo.title ?? null, description: input.seo.description ?? null };
+    }
+    if (input.weight !== undefined) set.weight = input.weight;
+    if (input.dimensions !== undefined) set.dimensions = input.dimensions;
+    if (input.isFeatured !== undefined) set.isFeatured = input.isFeatured;
+
+    // Pricing is set as a WHOLE so `effectivePrice` can never be left behind by
+    // a partial write. It is derived, and a derived field that some paths
+    // recompute and others do not is worse than one that is always recomputed.
+    if (
+      input.basePrice !== undefined ||
+      input.salePrice !== undefined ||
+      input.costPrice !== undefined
+    ) {
+      set.pricing = {
+        basePrice: nextBase,
+        salePrice: nextSale,
+        effectivePrice: nextSale ?? nextBase,
+        costPrice: input.costPrice === undefined ? current.pricing.costPrice : input.costPrice,
+      };
+    }
+
+    if (input.categoryId !== undefined || input.brandId !== undefined) {
+      const { category, brand } = await this.resolveParents(
+        input.categoryId ?? current.category.id.toHexString(),
+        input.brandId === undefined ? (current.brand?.id.toHexString() ?? null) : input.brandId,
+      );
+
+      if (input.categoryId !== undefined) set.category = snapshotCategory(category);
+      if (input.brandId !== undefined) set.brand = brand === null ? null : snapshotBrand(brand);
+    }
+
+    let updated: ProductLean;
+
+    try {
+      updated =
+        (await this.products
+          .findOneAndUpdate({ _id: id }, { $set: set }, { new: true })
+          .lean<ProductLean>()
+          .exec()) ?? current;
+    } catch (error) {
+      throw this.translateDuplicate(error, current.sku, input.slug ?? current.slug);
+    }
+
+    /*
+     * The redirect is written AFTER the product has actually been renamed, and
+     * only then. Writing it first would leave a redirect pointing at a slug
+     * nothing holds if the update were refused by the unique index — which is
+     * the single most likely way a rename fails.
+     *
+     * This is CATALOG-MODEL.md §2 rules 3–5, and it is the second half of
+     * legacy defect K4: the old system wrote this row faithfully and never read
+     * one, so every rename left a permanent 404 at the old URL with a database
+     * row recording exactly where the page had gone.
+     */
+    if (input.slug !== undefined && input.slug !== current.slug) {
+      await this.redirects.record({
+        entityType: SlugRedirectEntityType.PRODUCT,
+        entityId: id,
+        oldSlug: current.slug,
+        newSlug: input.slug,
+      });
+    }
+
+    /*
+     * ONE audit row, whose `action` names the most consequential thing that
+     * changed. A price change is recorded as `PRODUCT_PRICE_CHANGED` even when
+     * the same request also renamed the product: `changes` carries every
+     * changed field either way, and the `{action, createdAt}` index exists so
+     * "every price change" is one query. Two rows for one operator action would
+     * double-count that query.
+     *
+     * `recordChange` writes NOTHING when the diff is empty, so saving a form
+     * without altering anything leaves no row.
+     */
+    await this.audit.recordChange({
+      actor: toAuditActor(actor),
+      action: 'pricing' in set ? AuditAction.PRODUCT_PRICE_CHANGED : AuditAction.PRODUCT_UPDATED,
+      entity: { type: AuditEntityType.PRODUCT, id, label: updated.sku },
+      before: auditableProduct(current),
+      after: auditableProduct(updated),
+      context: context.forensics,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Publishes or unpublishes, as its own action.
+   *
+   * ## Why this is not a field on the update DTO
+   *
+   * AUDIT-MODEL.md §3 audits publication state separately from an ordinary
+   * catalogue edit, with its own two action codes. A boolean inside a general
+   * update would be recorded as `PRODUCT_UPDATED` with `isActive` among the
+   * changed fields, and "when did this go live" would stop being answerable
+   * from the action index — it would become a scan of every product update ever
+   * made, reading diffs.
+   *
+   * ## Idempotent, and silent when it is a no-op
+   *
+   * Publishing an already-published product succeeds and writes NO audit row,
+   * because the diff is empty. A row saying somebody published something that
+   * was already published is noise in a log kept for two years.
+   */
+  async setPublished(
+    id: Types.ObjectId,
+    isActive: boolean,
+    context: AdminWriteContext,
+  ): Promise<ProductLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt !== null) {
+      // Publishing a deleted product would put it back in front of customers
+      // through a route whose name says nothing about deletion. Restore is the
+      // operation that means that, and it is audited as one.
+      throw AppException.productDeleted();
+    }
+
+    const updated =
+      (await this.products
+        .findOneAndUpdate({ _id: id }, { $set: { isActive } }, { new: true })
+        .lean<ProductLean>()
+        .exec()) ?? current;
+
+    await this.audit.recordChange({
+      actor: toAuditActor(actor),
+      action: isActive ? AuditAction.PRODUCT_PUBLISHED : AuditAction.PRODUCT_UNPUBLISHED,
+      entity: { type: AuditEntityType.PRODUCT, id, label: updated.sku },
+      before: { isActive: current.isActive },
+      after: { isActive: updated.isActive },
+      context: context.forensics,
+    });
+
+    return updated;
   }
 
   /**
@@ -486,4 +710,44 @@ function sortSpecFor(sort: AdminProductSort): Record<string, 1 | -1> {
     case AdminProductSort.UPDATED:
       return { updatedAt: -1, _id: -1 };
   }
+}
+
+/**
+ * The fields of a product an audit diff is computed over.
+ *
+ * A projection, not the whole document, and the omissions are the point.
+ * `stock`, `rating` and `salesCount` are written by OTHER modules, and a
+ * concurrent sale landing between this read and the write would otherwise show
+ * up as a spurious "change" inside a catalogue edit's audit row — an
+ * investigator would read it as the operator having moved stock. `_id`,
+ * `createdAt` and `updatedAt` carry nothing anybody looks for.
+ *
+ * `costPrice` IS included. §4's phrase is "`costPrice` in a customer-visible
+ * context", and §8 restricts `auditLogs` to ADMIN — redacting it would hide the
+ * before and after of a margin change from the only people entitled to see it,
+ * which is the opposite of what auditing a money change is for.
+ */
+function auditableProduct(product: ProductLean): Record<string, unknown> {
+  return {
+    slug: product.slug,
+    name: { en: product.name.en, ar: product.name.ar },
+    shortDescription: product.shortDescription,
+    description: product.description,
+    category: { id: product.category.id.toHexString(), slug: product.category.slug },
+    brand:
+      product.brand === null
+        ? null
+        : { id: product.brand.id.toHexString(), slug: product.brand.slug },
+    pricing: {
+      basePrice: product.pricing.basePrice,
+      salePrice: product.pricing.salePrice,
+      effectivePrice: product.pricing.effectivePrice,
+      costPrice: product.pricing.costPrice,
+    },
+    specs: product.specs.map((spec) => ({ key: spec.key, value: spec.value, unit: spec.unit })),
+    seo: product.seo,
+    weight: product.weight,
+    dimensions: product.dimensions,
+    isFeatured: product.isFeatured,
+  };
 }

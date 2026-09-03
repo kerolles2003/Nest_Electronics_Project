@@ -5063,3 +5063,157 @@ writes products to Supabase; re-pointing it is a later unit in this part.
 - **`specDefinitions`.** Still absent, still owner data. `label` and `unit`
   therefore arrive from the form, which is stated in the DTO rather than
   hidden — and is why the admin's `attributes` route is still on Supabase.
+
+---
+
+# Phase 7 Part 3d — the rename that stops producing a 404
+
+**Strays reaped before every run in this unit.** Checked by command line for
+`jest` *and* `nest-electronics`; none found. The four resident `node.exe`
+processes remain `D:\ahmed-adel-project`'s and were not touched.
+
+## K4, and which half was actually missing
+
+Legacy wrote a `slugRedirects` row on every product rename. **Nothing ever read
+one.** So each rename produced a permanent 404 at the old URL — every bookmark,
+every indexed search result, every link somebody had sent a customer — while a
+database row sat there recording exactly where the page had gone. The fix was
+already stored and unused.
+
+That is why `BEHAVIOR-DECISIONS.md` K4, `BUSINESS-RULES.md` RULE-CAT-002,
+`CATALOG-MODEL.md` §2 rule 4 and ADR-CATALOG-005 all say **must be read** in
+bold. Writing the row is the easy half and is the half legacy had.
+
+`GET /products/:slug` now falls through to the redirect table on a miss and
+answers **301** with a `Location` header. The tests that matter in this unit are
+the ones that request an old slug and expect a 301.
+
+### Four details, each a defect if got wrong
+
+**A live slug always wins.** The redirect is consulted only when nothing
+resolves. Rename a product away, create a different product on the freed slug,
+and that slug must serve the new product — not redirect to where the previous
+holder went. Asserted directly, because the natural implementation (look up the
+redirect first) would make the new product permanently unreachable at its own
+URL.
+
+**Chains are collapsed at write time.** Rename A→B then B→C and the stored row
+for A points straight at C. §2 rule 5 asks for this, and the reason is a loop:
+following chains at read time needs a cycle guard, because renaming a product
+back and forth builds one — on a public endpoint. Collapsing costs one
+`updateMany` on a rename, which happens rarely and is done by a person who is
+waiting.
+
+**The redirect is written after the product is renamed, never before.** A
+rename refused by the unique index would otherwise leave a redirect pointing at
+a slug nothing holds, and a collision is the single most likely way a rename
+fails. Asserted: a 409'd rename leaves zero redirect rows and the product keeps
+its own slug.
+
+**The live slug is cleared from the redirect table.** If a product takes a slug
+that used to redirect elsewhere, that row is deleted. Resolution would never
+reach it, but an unreachable row contradicting reality is what somebody debugs
+for an hour, and it holds the unique key against a later legitimate rename.
+
+The 301 body carries `{ movedTo }`. Not for browsers, which follow `Location`,
+but for a Dart client with `followRedirects: false` and for a server-side fetch
+that wants to issue its *own* 301 to the customer rather than proxy the target.
+
+## The update endpoint
+
+`PATCH /admin/catalog/products/:id`. Absent key means "leave it"; explicit
+`null` means "clear it" — which is how a sale ends and how a brand is removed.
+A partial update that could not express "clear this" would need a second
+endpoint for it.
+
+**The `$set` is built from named fields, never from the body.** `{ $set: body }`
+is shorter and is a write-anything bug: with a DTO this wide, a field added to
+the class later becomes a field written to the document with nobody having
+decided it should be. `forbidNonWhitelisted` is the second line of defence, not
+this one.
+
+**`sku` is not accepted** — §2 makes it immutable after creation. It is printed
+on labels and quoted to suppliers; a system that lets it change is one where two
+people hold different names for one part.
+
+**`isActive` is not accepted either**, and this is the one worth stating.
+Publishing has its own endpoints because AUDIT-MODEL.md §3 audits publication
+state separately, with its own two action codes. A visibility flip buried in a
+general edit would be recorded as `PRODUCT_UPDATED`, and *"when did this go live
+and who put it there"* would stop being one indexed query on
+`{action, createdAt}` and become a scan of every product update ever made,
+reading diffs.
+
+**Prices are validated against the resulting pair, not against what was sent.**
+The trap: `salePrice` sits untouched at 32 000 and the request lowers
+`basePrice` to 30 000. Both fields are individually valid, the request mentions
+only one of them, and the product ends up "on sale" above list — which the
+storefront renders as a struck-through "was" price beside a higher number. It is
+a 400 naming `salePrice`.
+
+`pricing` is written as a whole rather than field by field, so `effectivePrice`
+cannot be left behind by a partial write. A derived field that some paths
+recompute and others do not is worse than one that is always recomputed.
+
+**Editing a soft-deleted product is refused**, 409 `PRODUCT_DELETED` — a new
+code, distinct from `PRODUCT_UNAVAILABLE`, which answers a *customer* trying to
+buy something hidden. This one answers an operator and names the remedy:
+restore it first. An edit nobody can see is the same class of problem as the
+deleted rows the listing keeps out of its default view.
+
+## Publish / unpublish
+
+Two endpoints, idempotent, and **silent when they are no-ops** — publishing an
+already-published product succeeds and writes no audit row, because
+`recordChange` writes nothing when the diff is empty. A row recording that
+nothing changed is noise in a log kept for two years.
+
+Publishing a soft-deleted product is refused. Restore is the operation that
+means "put this back", and it is audited as one.
+
+## One audit row per operator action
+
+The `action` names the most consequential change; `changes` carries every
+changed field regardless. A request that alters both a price and a name writes
+ONE `PRODUCT_PRICE_CHANGED` row whose diff contains both — asserted, because
+two rows for one action would double-count the `{action, createdAt}` index that
+exists so "every price change" is a single query.
+
+`costPrice` appears **unredacted** in the diff. §4's phrase is "`costPrice` in a
+customer-visible context" and §8 restricts `auditLogs` to ADMIN; redacting it
+would hide the before and after of a margin change from the only people
+entitled to see it.
+
+The diff is computed over a **projection**, not the whole document. `stock`,
+`rating` and `salesCount` are written by other modules, and a concurrent sale
+landing between the read and the write would otherwise appear as a change inside
+a catalogue edit's audit row — an investigator would read it as the operator
+having moved stock.
+
+## Verification
+
+30 new tests; 86 in `test/catalog`, all passing. Regression: `test/journey`,
+`test/cart`, `test/checkout` — 123 passing, and `test/infrastructure` — 51
+passing, which is the one that would notice the two new indexes. Zero residue in
+every run. `type-check` and `lint` clean, OpenAPI regenerated, drift gate green.
+
+**Browser-unverified:** all of it. The admin console still writes products to
+Supabase. The 301 has been exercised by supertest against the real route, not by
+a browser following it, so *that a browser follows this particular redirect* is
+assumed rather than seen — the header and status are asserted, the following is
+not.
+
+## NOT in this unit
+
+- **Delete and restore.** Next. `PRODUCT_DELETED` is already emitted by the two
+  endpoints that refuse a deleted product, and the test fixture makes deleted
+  products directly, so the refusals are proven before the endpoint that causes
+  them exists.
+- **Category and brand renames.** `SlugRedirectEntityType` declares all three
+  and only `product` is written. The enum is whole so adding the other two
+  changes no contract.
+- **`forgetEntity`** is written and unused: it belongs to a HARD delete, which
+  is the one operation after which the destination genuinely stops existing. A
+  soft delete deliberately must not call it — the product is recoverable, its
+  slug is still held, and dropping the redirects would make a restore silently
+  lose every old URL that worked the day before.

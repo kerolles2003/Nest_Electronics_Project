@@ -6,11 +6,16 @@ import { BrandsService } from './application/brands.service';
 import { CategoriesService } from './application/categories.service';
 import { ProductAdminService } from './application/product-admin.service';
 import { ProductsService } from './application/products.service';
+import { SlugRedirectService } from './application/slug-redirect.service';
 import { SlugService } from './application/slug.service';
 import { ProductRepository } from './infrastructure/repositories/product.repository';
 import { Brand, BrandSchema } from './infrastructure/schemas/brand.schema';
 import { Category, CategorySchema } from './infrastructure/schemas/category.schema';
 import { Product, ProductSchema } from './infrastructure/schemas/product.schema';
+import {
+  SlugRedirect,
+  SlugRedirectSchema,
+} from './infrastructure/schemas/slug-redirect.schema';
 import { BrandsController } from './presentation/brands.controller';
 import { CategoriesController } from './presentation/categories.controller';
 import { AdminCatalogController } from './presentation/admin-catalog.controller';
@@ -39,8 +44,6 @@ import { ProductsController } from './presentation/products.controller';
  * demotion still carries the old role. `UsersModule` imports only Mongoose.
  *
  * Deliberately absent, and why:
- *   slugRedirects       — written only by a rename; it lands with the update
- *                         path, in the same unit as the first rename
  *   specDefinitions     — the canonical key dictionary is owner data nobody has
  *                         supplied; deriving one from seeded products would be
  *                         inventing a taxonomy and calling it frozen
@@ -53,6 +56,7 @@ import { ProductsController } from './presentation/products.controller';
       { name: Product.name, schema: ProductSchema },
       { name: Category.name, schema: CategorySchema },
       { name: Brand.name, schema: BrandSchema },
+      { name: SlugRedirect.name, schema: SlugRedirectSchema },
     ]),
     AuditModule,
     UsersModule,
@@ -70,6 +74,7 @@ import { ProductsController } from './presentation/products.controller';
     BrandsService,
     ProductAdminService,
     ProductRepository,
+    SlugRedirectService,
     SlugService,
   ],
   exports: [ProductsService, CategoriesService, BrandsService, MongooseModule],

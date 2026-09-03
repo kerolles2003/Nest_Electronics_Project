@@ -450,3 +450,26 @@ export class RelatedProductListResponseDto {
   @ApiProperty({ type: [ProductListItemDto] })
   data!: ProductListItemDto[];
 }
+
+/**
+ * The body of a `301` from `GET /products/:slug`.
+ *
+ * A redirect's meaning is in its `Location` header, and every browser and HTTP
+ * client follows it. This body exists for the ones that do not — a Dart client
+ * configured with `followRedirects: false`, or a server-side fetch that wants
+ * to issue its OWN 301 to the customer rather than proxying the target. Without
+ * it those callers would have to parse a header to learn a slug the API
+ * already knows.
+ */
+export class ProductMovedDto {
+  @ApiProperty({
+    example: 'esp32-devkit-v1',
+    description: 'The slug this product now lives at.',
+  })
+  movedTo!: string;
+}
+
+export class ProductMovedResponseDto {
+  @ApiProperty({ type: ProductMovedDto })
+  data!: ProductMovedDto;
+}
