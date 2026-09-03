@@ -3970,6 +3970,42 @@ but the driver reports "nest_electronics_dev".
 Every import that reaches `AppModule` is now deferred to the point of use. The
 fence stays, because it is what will catch the next version of that mistake.
 
+### What the fence actually prevented, which is the argument for having it
+
+Worth separating from the anecdote above, because the two are different claims.
+
+The fence's **first real action was preventing the destruction of
+`nest_electronics_dev`.** Not a near miss discovered afterwards, not a
+hypothetical the control might one day earn: the first time the harness ran, the
+next statement after the check was `dropDatabase()` on a connection pointed at
+the development database, and the check is the only reason it did not execute.
+
+The cause is worth stating precisely, because it is not a mistake anybody
+notices by reading. `ConfigModule.forRoot()` executes **inside the `@Module`
+decorator argument**, so the environment is read, validated and frozen at the
+moment `AppModule` is first imported — which is before any function in the
+harness can set `MONGODB_DB_NAME`. The override was correct, the import order
+made it arrive too late, and every log line said the run was fine.
+
+That is the justification for the control rather than a story about its outcome.
+A guard on `dropDatabase` is not defence in depth against a careless operator;
+it is the thing standing between a correct-looking change and the loss of a
+developer's database, in a codebase where the failure mode is invisible at the
+call site.
+
+### Isolation was proven under abnormal termination, not a clean exit
+
+The property claimed for per-suite databases is that a run which *dies* cannot
+damage anything shared. Verifying that under a clean exit would prove nothing —
+a clean exit runs the teardown, which was already the mechanism that failed.
+
+Three runs were killed mid-flight during this session, by memory pressure rather
+than by design. Afterwards `nest_electronics_dev` held 34 products with exactly
+3 at zero stock — its seeded state, untouched — and the next run reported
+`rebuilt nest_electronics_scratch_storefront` and carried on. The damage was
+confined to the database the dead run owned, and recovering it required no
+reasoning about what that run had left behind.
+
 ## The override is resolved into the URI, and that was not the first design
 
 `MONGODB_DB_NAME` started as a second option passed to Mongoose alongside the
@@ -4242,3 +4278,73 @@ unreachable-API one, which these specs do not use, could not.
 under Playwright's own runner. They are written, they type-check, and the
 behaviour they describe has been driven end-to-end — but nothing has executed
 them as specs.
+
+---
+
+# Phase 7 Part 2 groundwork — a spec should depend on what it uses
+
+## The flaw
+
+`playwright.config.ts` listed three web servers. One of them exists for four
+specs: the same admin application pointed at a port nothing listens on, so
+`readAdminIdentity()`'s third outcome — *the API could not be asked* — can be
+reached at all. It cannot be reached any other way, because `GET /auth/me` is
+issued SERVER-side by the Next process, so `page.route()` cannot intercept it,
+and stopping the real API would break every other spec in the run.
+
+Playwright has no per-project web server: `webServer` belongs to the CONFIG, so
+every server listed is started for every spec in it. A server four specs needed
+was therefore a hard dependency of all thirty-seven.
+
+**That is a design flaw, not a machine limit**, and the machine only revealed
+it. The third server failed to start with `STATUS_DLL_INIT_FAILED` and the whole
+admin suite became unrunnable — including the thirty-three specs that never
+touch it. The first two servers had started fine and `/login` was answering 200.
+
+## The split
+
+| Configuration | Specs | Servers |
+|---|---|---|
+| `playwright.config.ts` | 33 in 5 files | API + admin |
+| `playwright.unreachable-api.config.ts` | 4 in 1 file | API + admin + unreachable-API |
+
+33 + 4 = 37, which is what the single config selected before. Verified with
+`playwright test --list` on both, which loads configs and resolves specs without
+starting a single server — the one form of verification this machine could still
+give.
+
+The four specs moved into `e2e/admin-identity-unreachable.spec.ts` **verbatim**;
+not one assertion changed. They needed their own file because selection is by
+file, and `admin-identity.spec.ts` held both kinds: one describe that only needs
+a healthy console, and one that needs all three servers.
+
+Note that the unreachable-API run still starts all three, and correctly — those
+specs sign in against the healthy server, because a session cannot be obtained
+from a broken one, and then navigate to the dead one carrying the same cookies.
+They use three servers, so they get three. The point was never to have fewer
+servers; it was that thirty-three specs should not pay for a dependency they do
+not have.
+
+## What is shared, and why that mattered more than it looks
+
+Two configurations mean two places for the origin, the scratch database, the
+rate-limit relaxation, the build directories and the teardown to drift apart.
+`playwright.shared.ts` defines all of it once and both configs spread it.
+
+The two files differ in exactly three properties — `webServer`, and the
+`testIgnore`/`testMatch` pair — and the pair is written against **one exported
+constant**, so a spec cannot fall into both runs or out of both. A spec silently
+in neither run is the failure this shape is most likely to produce, and it would
+look exactly like a passing suite.
+
+One TypeScript detail worth recording because the obvious version does not
+compile: the three servers are annotated individually rather than as one array.
+An array literal makes TypeScript unify their `env` objects, which adds every
+other server's keys as `?: undefined` — and `undefined` is not assignable to the
+`{ [key: string]: string }` index signature Playwright declares.
+
+## The storefront was checked for the same shape and does not have it
+
+Two web servers, the API and the storefront's own `next dev`, and every spec
+uses both. There is no server there that only some specs need, so there is
+nothing to split. Reported rather than assumed.
