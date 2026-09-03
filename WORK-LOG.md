@@ -4606,3 +4606,117 @@ Two consequences worth keeping:
 The per-suite database confines all of this to one database. It does not make
 two runs of the SAME suite safe against each other, and nothing here claims it
 does.
+
+---
+
+# CHECKPOINT — Phase 7 Parts 1 and 2
+
+Written mid-phase, before Part 3 builds on the audit decision below. If the
+owner disagrees with that decision the correction is at the call sites, not in
+the mechanism.
+
+## 1. The audit model, and a conflict that needs the owner
+
+`AUDIT-MODEL.md` §1 opens with the decision it calls the most important one in
+the document: **business history and security audit are not the same thing and
+must not share a mechanism.**
+
+| | Business history | Security audit |
+|---|---|---|
+| Answers | *what happened to this order* | *who did this, and were they allowed to* |
+| Audience | customers and staff | staff and investigators |
+| Storage | **embedded** in the entity | separate `auditLogs` collection |
+| Retention | lifetime of the entity | two years, then TTL |
+| Failure handling | part of the business transaction | post-commit, loudly alerted |
+
+### The `statusHistory` decision, stated plainly
+
+`statusHistory` on the order is **business history**. §6.1 says so explicitly,
+preserves the legacy design, and lists the three fixes it required — the actor
+comes from the JWT rather than the caller, status is mutable only through the
+service so the history append is in the same transaction, and one status axis
+replaces the three legacy columns. All three of those hold in the API today,
+and Phase 6 exposed the trail through `AdminOrderDto` so a screen can read it.
+
+**That is the business half, and only the business half.**
+
+### The conflict
+
+`AUDIT-MODEL.md` §3 lists **"Order interventions — admin status transition"**
+under ✅ Audited. So an admin confirming, shipping or delivering an order owes
+*two* records: a `statusHistory` entry (business, customer-visible) **and** an
+`auditLogs` row (security, staff-only).
+
+The `auditLogs` collection **does not exist on the API**. Phase 6 correctly
+stopped writing to Supabase `admin_audit_logs` — its `admin_id` had a foreign
+key to Supabase `profiles.id`, so every insert would have violated it once
+identity moved — and recorded that lifecycle actions were "unaffected and
+strictly better off" because the actor is on the order.
+
+Measured against the frozen document, **that reasoning was half right and the
+conclusion was wrong.** The actor on the order satisfies §6.1. It does not
+satisfy §3. Since Phase 6, every admin status transition has been unaudited in
+the security sense — which is precisely the legacy failure §2 was written
+against, where `admin_audit_logs` held **zero rows** despite eight live status
+transitions and the empty screen read as "no admin activity yet" rather than
+"this subsystem is broken".
+
+**This is reported, not decided.** The frozen document wins, so the API needs an
+`auditLogs` mechanism; what needs the owner is whether the gap since Phase 6
+gets backfilled from `statusHistory` (the actor, action and time are all there
+for lifecycle transitions) or is simply recorded as a known blind period.
+
+### What Part 3 will build on
+
+Part 3's brief says every write emits an audit row, which is impossible without
+the mechanism. So the first unit of Part 3 is the audit foundation itself, built
+to §4 and §5:
+
+- `auditLogs`, `strict: 'throw'` so an unknown field raises rather than being
+  dropped — the exact legacy defect, where a non-existent `user_agent` column
+  was silently discarded by PostgREST and the surrounding `try/catch` never
+  fired.
+- Written **by the system, post-commit, never by the acting principal**. There
+  is no API that accepts an audit record.
+- Failure logged at `error` and never swallowed.
+- Append-only; no update or delete path; TTL is the only remover.
+
+## 2. What the queue can now do
+
+`GET /admin/orders` — `q`, `placedFrom`, `placedTo`, `sort`, alongside the
+existing `status`, `page` and `limit`. `GET /admin/orders/stats` — every status
+and its count in one aggregation.
+
+Search covers the order number and the customer snapshot on the order: name,
+email, and **both** phone numbers, because the one an operator is holding is on
+the delivery note rather than in the account profile. The term is escaped before
+it reaches the database and the repository is typed to take only the parsed
+form, so there is no path by which a client string becomes part of a query
+expression.
+
+Two new indexes, both asserted to be in the readiness probe's expected list.
+Every ordering ends in `_id`, so paging cannot skip or repeat a row.
+
+The console has the controls back — search, date range, sort — with every value
+in the URL and nothing in local state. **None of it has been seen in a browser**;
+that list is below and in the browser-unverified section.
+
+## 3. Part 1, for completeness
+
+Part 1 was the admin session-renewal fix, chosen by the owner ahead of the
+catalogue work because every screen Phase 7 adds would otherwise inherit it:
+the console 500'd when an access token expired mid-render, and then silently
+signed the operator out because the rotation it had already performed was never
+persisted. Renewal now happens in a Route Handler reached by one redirect.
+Verified end to end in a real browser — twelve assertions, zero failures — after
+that verification found two further bugs in the redirect itself.
+
+## 4. Needs owner
+
+1. **The audit gap above.** Backfill from `statusHistory`, or record a known
+   blind period?
+2. **A denormalised search field.** Two of the four search branches cannot use
+   an index — "name contains" and "phone contains" are unanchored patterns. At
+   this scale a bounded scan is right; the alternative is a `searchText` field
+   maintained on the order-writing path, which is a migration and a change to
+   the money path. Not taken here.
