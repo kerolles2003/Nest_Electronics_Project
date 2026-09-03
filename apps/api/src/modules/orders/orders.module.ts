@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DatabaseModule } from '../../database/database.module';
+import { AuditModule } from '../audit/audit.module';
 import { CartModule } from '../cart/cart.module';
 import { FulfilmentModule } from '../fulfilment/fulfilment.module';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -74,6 +75,13 @@ import { OrdersController } from './presentation/orders.controller';
       { name: IdempotencyKeyRecord.name, schema: IdempotencyKeySchema },
     ]),
     DatabaseModule,
+    /*
+     * The security audit trail. AUDIT-MODEL.md §3 lists an admin status
+     * transition as audited, and the record is written post-commit by
+     * `OrderLifecycleService` — a SECOND record of the same event, answering a
+     * different question from `statusHistory` for a different audience.
+     */
+    AuditModule,
     CartModule,
     InventoryModule,
     UsersModule,

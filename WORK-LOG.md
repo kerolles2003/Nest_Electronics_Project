@@ -4720,3 +4720,99 @@ that verification found two further bugs in the redirect itself.
    this scale a bounded scan is right; the alternative is a `searchText` field
    maintained on the order-writing path, which is a migration and a change to
    the money path. Not taken here.
+
+---
+
+# Phase 7 Part 3a — the security audit trail exists
+
+Part 3's brief requires every catalogue write to emit an audit row. Nothing
+could, because `auditLogs` did not exist on the API. This is that mechanism,
+built to `AUDIT-MODEL.md` §4 and §5, and it closes the gap the checkpoint
+reported.
+
+## What was actually missing
+
+Not "auditing for the new endpoints". **Every admin status transition since
+Phase 6 was unaudited.** `statusHistory` records the same event as business
+history — §6.1, customer-visible, answering *what happened to this order* — and
+Phase 6 concluded that covered it. §3 lists admin status transitions under
+audited, which asks a different question for a different audience with a
+different retention. The order lifecycle now writes both, and the second is the
+one that was missing.
+
+## The four rules, and where each lives
+
+1. **Written by the system, never by the acting principal.** No DTO, no
+   endpoint and no parameter accepts an audit record; callers say what they did
+   and the service decides what is written. The legacy defect was that rows were
+   written with the caller's own credentials, so an audited principal could in
+   principle suppress their own trail. A test asserts the surface does not exist
+   — a 404, not a guarded 403.
+2. **Post-commit.** `record()` runs after the transaction has committed and
+   cannot throw, so an audit failure cannot roll back a delivered order.
+3. **Failure is loud.** `AUDIT_WRITE_FAILED` at `error`, carrying every field an
+   investigator would need to reconstruct the entry that could not be written.
+   The legacy failure mode was a silent swallow producing an empty table that
+   looked healthy and was read sixty-one times in that state.
+4. **Immutable.** No update path, no delete path, no repository export. The TTL
+   at two years is the only remover.
+
+`strict: 'throw'` answers the legacy root cause directly: a write of a
+`user_agent` column that did not exist, which PostgREST returned rather than
+threw, so the surrounding `try/catch` never fired. An unknown field now raises.
+`userAgent` — that exact field — is declared, captured from the transport, and
+asserted by a test.
+
+## Where this deviates from the document, stated rather than chosen quietly
+
+§5's diagram names an `AuditInterceptor`. This is a service called from the
+application layer instead, for a mechanical reason: an interceptor sees the
+request and the response, while `changes.before/after` is a field-level diff
+between two states of an entity that only the service performing the write ever
+holds. An interceptor could record *that* something happened, never *what
+changed*, and §4 requires the second.
+
+All four rules hold either way. **The deviation is from the illustration, not
+from the rules — recorded for the owner rather than decided silently.**
+
+## The diff, and the two ways it can be wrong
+
+`changes` holds only the fields that actually changed, as dotted paths. Whole
+documents were rejected for two reasons, and the second is the one that bites:
+an audit row carrying the whole entity carries every secret it holds, forever,
+whether or not that secret was part of the action being recorded.
+
+Values that must never be stored are **replaced, not omitted**. "The password
+hash changed" is exactly what an investigator needs; an omitted field says
+"nothing changed", which is a lie. The test asserts both halves — that the
+marker is there, and that the real value is genuinely absent from the serialised
+record, because a marker appended beside the real value would otherwise pass
+every other assertion.
+
+`costPrice` is deliberately NOT redacted. §4's phrase is "`costPrice` in a
+customer-visible context", and `auditLogs` is not one — §8 restricts it to
+`ADMIN`. Redacting it would hide the before and after of a margin change from
+the only people entitled to see it, which is the opposite of what auditing a
+money-affecting change is for. Stated because the phrase reads like a blanket
+ban.
+
+Redaction matches the last path segment rather than a substring: a substring
+rule would swallow `tokenCount` and `resetTokenSentAt`, which are facts an
+investigator wants, while protecting nothing extra.
+
+## Indexes
+
+Four, all declared on the schema so the readiness probe expects them: the TTL on
+`createdAt`; `{entity.type, entity.id, createdAt}` for "what happened to this
+thing"; `{actor.id, createdAt}` for "what has this person done" — the question
+an investigation actually starts from, and the reason the actor is snapshotted
+rather than joined, because that index still answers it after the account is
+gone; and `{action, createdAt}` for "every role change".
+
+## Not built here
+
+The admin audit-log SCREEN. Reading the trail is an admin surface and belongs
+with the rest of Part 3; writing it correctly had to come first, because every
+administrative action taken before the mechanism exists is unrecoverable.
+
+23 tests, all passing.

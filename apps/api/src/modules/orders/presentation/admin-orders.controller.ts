@@ -12,6 +12,7 @@ import {
 } from '@nestjs/swagger';
 import { Types } from 'mongoose';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { Forensics, type ForensicContext } from '../../../common/decorators/forensics.decorator';
 import { RequestLocale } from '../../../common/decorators/locale.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../../../common/dto/error-response.dto';
@@ -259,9 +260,10 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: ConfirmOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
-    return this.run(params, principal, locale, OrderStatus.CONFIRMED, { note: dto.note ?? null });
+    return this.run(params, principal, forensics, locale, OrderStatus.CONFIRMED, { note: dto.note ?? null });
   }
 
   @Post(':id/ship')
@@ -299,9 +301,10 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: ShipOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
-    return this.run(params, principal, locale, OrderStatus.SHIPPED, {
+    return this.run(params, principal, forensics, locale, OrderStatus.SHIPPED, {
       note: dto.note ?? null,
       shipment: { carrier: dto.carrier, trackingNumber: dto.trackingNumber },
     });
@@ -340,9 +343,10 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: DeliverOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
-    return this.run(params, principal, locale, OrderStatus.DELIVERED, { note: dto.note ?? null });
+    return this.run(params, principal, forensics, locale, OrderStatus.DELIVERED, { note: dto.note ?? null });
   }
 
   @Post(':id/delivery-failed')
@@ -377,11 +381,12 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: DeliveryFailedDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
     // The failure reason IS the note on this edge — there is no separate
     // cancellation-style record for a failed attempt.
-    return this.run(params, principal, locale, OrderStatus.DELIVERY_FAILED, { note: dto.reason });
+    return this.run(params, principal, forensics, locale, OrderStatus.DELIVERY_FAILED, { note: dto.reason });
   }
 
   @Post(':id/retry-shipment')
@@ -412,9 +417,10 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: RetryShipmentDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
-    return this.run(params, principal, locale, OrderStatus.SHIPPED, {
+    return this.run(params, principal, forensics, locale, OrderStatus.SHIPPED, {
       note: dto.note ?? null,
       shipment: { carrier: dto.carrier, trackingNumber: dto.trackingNumber },
     });
@@ -454,9 +460,10 @@ export class AdminOrdersController {
     @Param() params: OrderIdParamDto,
     @Body() dto: ReturnOrderDto,
     @CurrentUser() principal: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
     @RequestLocale() locale: Locale,
   ): Promise<AdminOrderResponseDto> {
-    return this.run(params, principal, locale, OrderStatus.RETURNED, { note: dto.reason });
+    return this.run(params, principal, forensics, locale, OrderStatus.RETURNED, { note: dto.reason });
   }
 
   // --- internals ------------------------------------------------------------
@@ -473,6 +480,7 @@ export class AdminOrdersController {
   private async run(
     params: OrderIdParamDto,
     principal: AuthenticatedUser,
+    forensics: ForensicContext,
     locale: Locale,
     to: OrderStatus,
     input: {
@@ -486,6 +494,9 @@ export class AdminOrdersController {
       actorId: new Types.ObjectId(principal.id),
       orderId: new Types.ObjectId(params.id),
       to,
+      // From the TRANSPORT, never from a body. `userAgent` is the exact field
+      // whose absence silently broke the legacy audit trail.
+      context: forensics,
       ...(input.note !== undefined ? { note: input.note } : {}),
       ...(input.shipment !== undefined ? { shipment: input.shipment } : {}),
     });
