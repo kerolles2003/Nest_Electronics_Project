@@ -40,3 +40,25 @@ export const E2E_EMAIL_PREFIX = 'admin-e2e';
 export const DEV_ADMIN_EMAIL = 'admin@nest-electronics.test';
 export const DEV_ADMIN_PASSWORD = 'copper oscilloscope probe';
 export const DEV_ADMIN_NAME = 'Development Admin';
+
+/**
+ * The strings that used to be the answer, and must never appear again.
+ *
+ * `AdminHeader` and `Sidebar` both rendered "Admin User" / "admin@nest.com" as
+ * literals on every page — not as a loading state, as the identity. On a
+ * console that records cash as collected, that tells somebody they are signed
+ * in as an account which does not exist while every action they take is
+ * attributed to whoever the token really belongs to.
+ *
+ * Shared because two spec files assert their absence: the one that checks a
+ * healthy identity, and the one that checks the identity could not be fetched.
+ * The second is where it mattered most — an unreachable API is exactly when a
+ * fabricated fallback would be tempting.
+ *
+ * The initials "AD" are deliberately NOT here. A page-wide `not.toContain('AD')`
+ * matches inside any word containing those two letters — it failed on unrelated
+ * copy, and would equally have passed while the avatar showed "AD". They are
+ * asserted on the avatar element instead, where the check is about the thing it
+ * claims to be about.
+ */
+export const FABRICATED_IDENTITY_STRINGS = ['Admin User', 'admin@nest.com'];

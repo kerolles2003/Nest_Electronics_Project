@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test && playwright test -c playwright.unreachable-api.config.ts",
+    "test:e2e:main": "playwright test",
+    "test:e2e:unreachable-api": "playwright test -c playwright.unreachable-api.config.ts"
   },
   "dependencies": {
     "next": "16.2.4",
