@@ -54,4 +54,21 @@ export class BrandsService {
       .map((slug) => bySlug.get(slug))
       .filter((id): id is Types.ObjectId => id !== undefined);
   }
+
+  /**
+   * Drops the cached list, so the next read sees the write that just happened.
+   *
+   * The TTL is 15 minutes (SEARCH-MODEL.md §11), which is right for a list that
+   * barely changes and wrong for the moment it does: without this, an operator
+   * who creates a category, moves a product or publishes one watches the
+   * storefront disagree with the admin console for a quarter of an hour and
+   * reasonably concludes the save did not work.
+   *
+   * In-process, so it clears this instance only. Multi-instance deployment is
+   * a Redis trigger (REDIS-DECISION.md) and stays out of scope here — but it is
+   * worth naming, because on a second instance the stale window returns.
+   */
+  invalidateCache(): void {
+    this.cache.invalidate();
+  }
 }

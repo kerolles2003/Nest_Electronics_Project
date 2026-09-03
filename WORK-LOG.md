@@ -5217,3 +5217,141 @@ not.
   soft delete deliberately must not call it — the product is recoverable, its
   slug is still held, and dropping the redirects would make a restore silently
   lose every old URL that worked the day before.
+
+---
+
+# Phase 7 Part 3e — deletion that can be undone, and two numbers nothing was maintaining
+
+**Strays reaped before every run in this unit**, including before each of the
+four regression batches. Command lines matched against `jest` and
+`nest-electronics`; none found on any check. The four `node.exe` processes
+belonging to `D:\ahmed-adel-project` were left alone throughout.
+
+## Soft delete and restore
+
+`DELETE /admin/catalog/products/:id` sets `deletedAt` **and** `isActive: false`.
+Both, because they answer different questions and a restore has to tell them
+apart: after a delete, "was this published?" is unambiguously no, so bringing it
+back in front of customers becomes a separate decision rather than something a
+restore does silently.
+
+`POST /admin/catalog/products/:id/restore` clears `deletedAt` and **leaves the
+product a draft**. That is the design decision worth arguing with, so here is
+the argument: putting a product back in front of customers is a publication
+decision, and AUDIT-MODEL.md §3 audits publication separately with its own
+codes. A restore that also republished would write "restored" while doing the
+thing the `PRODUCT_PUBLISHED` index exists to be the record of. It also means
+the operator looks at the product before customers do — which is usually why it
+was deleted.
+
+Three consequences of §9, each asserted rather than asserted-about:
+
+- **The slug is still held.** Creating a product on a deleted one's slug is a
+  409. Reusing it would repoint every existing link at a different product.
+- **The `slugRedirects` rows are kept.** A restore would otherwise silently lose
+  every old URL that worked the day before. The test renames, deletes, restores,
+  republishes, and checks the original URL still answers 301.
+- **A second delete is a 409, not a 200.** A caller that receives success twice
+  cannot tell whether it deleted once or twice, and the second answer would
+  carry a `deletedAt` belonging to somebody else's action. Same reasoning as a
+  repeated order transition.
+
+One new audit action, `PRODUCT_RESTORED`. Additive, and it earns its place: §3
+audits destructive operations because an investigator asks who did them, and the
+inverse is asked about for the same reason. Without it the trail would record a
+product's removal and be silent about its return.
+
+## The part that was a defect the earlier units introduced
+
+`categories.productCount` and `brands.productCount` are **public**. They are on
+`CategoryResponseDto` and `BrandResponseDto`, and the storefront renders them.
+
+The only thing that had ever computed them was `seed.ts`. So every product
+created, published, moved or deleted through the endpoints added in 3c and 3d
+left both counts reporting the number they held at seed time — and a stale count
+looks exactly like a real one, which is why this needed tests rather than a note
+in the handoff.
+
+**It recomputes; it does not adjust by ±1.** The thing being counted is not
+"products" but "products that are published, not deleted, and in this subtree",
+and a single write can move a product across all three axes at once: a create
+can be published or a draft, an edit can move a product between subtrees of
+different depths, and publish/unpublish/delete/restore each flip its
+countability without touching its category. An increment scheme has to get every
+combination right, and every one it gets wrong is permanent drift that nothing
+detects. Recomputation cannot drift; the cost is one indexed `countDocuments`
+per affected document on an action an operator performs a few times an hour,
+and both counts are served by an existing index prefix.
+
+The category count is a **subtree** count, so the whole inclusive
+`category.path` is recomputed rather than just the leaf — a parent legitimately
+counts its children's products, which is ADR-CATALOG-004's whole point. The test
+uses a two-level fixture so that half is actually exercised.
+
+Both directions are asserted: moving a product between categories corrects the
+one it **left** as well as the one it arrived at.
+
+## The 15-minute stale window, closed
+
+`TtlCache.invalidate()` has carried the comment *"Called by catalogue writes
+once they exist"* since it was written. They exist now.
+
+The public category and brand lists are cached in-process for fifteen minutes
+(SEARCH-MODEL.md §11) and `productCount` is on both. Without invalidation an
+operator publishes a product, refreshes the storefront, sees the old count for a
+quarter of an hour and reasonably concludes the save did not work. `recount` now
+clears both caches.
+
+**Named honestly:** the cache is in-process, so this clears one instance. On a
+second instance the stale window returns. That is a Redis trigger
+(REDIS-DECISION.md), not something to pre-build, but it is a real limit and not
+a hypothetical one.
+
+## What I got wrong, and it is worth recording
+
+The first version of the count suite asserted `productCount` was zero for the
+shared fixture category. It passed nothing — the describes above it had already
+stocked that category with four published products, so the assertion was about
+test ORDER, not about the count. It failed on the first run.
+
+The fix was not to move the test. It was to give it a category of its own, so
+the assertion is order-independent — the failing version would have passed until
+somebody added a test earlier in the file, which is the worse outcome.
+
+## Verification
+
+19 new tests; 105 in `test/catalog`. Full regression in four batches, strays
+reaped before each:
+
+```
+test/orders test/database test/audit test/catalog     17 suites   391 passed
+test/auth test/users test/cart                        10 suites   290 passed
+test/checkout test/journey test/fulfilment ...        10 suites   238 passed
+test/infrastructure test/media test/import ... src    13 suites   209 passed, 15 skipped
+```
+
+**1128 passed, 15 skipped, 1143 total, 49 suites. No failing names** — compared
+by name against the handoff's list, which was also empty. The previous baseline
+was 1046 passed / 1061 total / 46 suites, so this session has added 82 tests and
+3 suites and removed none. Zero residue in all four batches. `type-check` and
+`lint` clean, OpenAPI regenerated, drift gate green.
+
+**Browser-unverified:** everything in Part 3 so far. No admin screen calls any
+of it yet.
+
+## NOT in this unit
+
+**Hard delete.** §9 defines it as a `SUPER_ADMIN` operation on a product never
+referenced by any order, and says *"it destroys the associated Cloudinary
+assets"*. Both halves are blocked on work that has not landed:
+
+- the order-reference check needs CatalogModule to read `orders`, and
+  `OrdersModule → CartModule → CatalogModule` means the naive import is a
+  cycle — it needs `forwardRef` or an exported predicate, decided deliberately;
+- destroying the assets needs the attach/detach path from Part 4. Shipping a
+  hard delete before it would leave orphaned Cloudinary objects with no ledger
+  row pointing at them, which is precisely the state `reconcile()` exists to
+  report and nobody would be reporting yet.
+
+It lands in Part 4, beside `retain()` and `release()`. Recorded here rather than
+discovered as an absence later.

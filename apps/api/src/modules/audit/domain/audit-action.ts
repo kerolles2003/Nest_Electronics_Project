@@ -42,6 +42,20 @@ export enum AuditAction {
 
   // ---- Destructive operations (§3) --------------------------------------
   PRODUCT_DELETED = 'PRODUCT_DELETED',
+
+  /**
+   * A soft delete was undone.
+   *
+   * Additive, and it earns its place: §3 audits destructive operations because
+   * an investigator asks who did them, and the inverse of a destructive
+   * operation is asked about for exactly the same reason — a product that
+   * reappeared in the catalogue is a change somebody made, and without this the
+   * trail would record its removal and be silent about its return.
+   *
+   * A restore deliberately does NOT republish, so this is never a substitute
+   * for `PRODUCT_PUBLISHED`.
+   */
+  PRODUCT_RESTORED = 'PRODUCT_RESTORED',
   CATEGORY_CREATED = 'CATEGORY_CREATED',
   CATEGORY_UPDATED = 'CATEGORY_UPDATED',
   CATEGORY_DELETED = 'CATEGORY_DELETED',

@@ -2099,6 +2099,83 @@
         "tags": [
           "admin · catalogue"
         ]
+      },
+      "delete": {
+        "description": "Sets `deletedAt` **and** `isActive: false`, per CATALOG-MODEL.md §9. Both, because they\nanswer different questions and a restore has to tell them apart: after this, \"was it\npublished\" is unambiguously no, so bringing it back in front of customers becomes a\nseparate, separately audited decision rather than something a restore does silently.\n\nThe deletion is SOFT and the reasons are §9’s: analytics, reviews and reporting still\nresolve the product id; SKUs and slugs must not become silently reusable, because reusing\none repoints every existing link at a different product; and an accidental deletion is\nrecoverable.\n\nThe product keeps its slug, and its `slugRedirects` rows are KEPT. Dropping them would\nmake a restore silently lose every old URL that worked the day before.\n\nDeleting an already-deleted product is `409`, not `200`. A caller that receives success\ntwice cannot tell whether it deleted once or twice, and the second answer would carry a\n`deletedAt` belonging to somebody else’s action.",
+        "operationId": "AdminProductsController_remove_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PRODUCT_DELETED — already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a product (soft)",
+        "tags": [
+          "admin · catalogue"
+        ]
       }
     },
     "/api/v1/admin/catalog/products/{id}/publish": {
@@ -2254,6 +2331,85 @@
           }
         ],
         "summary": "Hide a product from customers",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/products/{id}/restore": {
+      "post": {
+        "description": "Clears `deletedAt`. The product comes back as a **draft** — `isActive` stays false.\n\nRestoring does not republish, and that is deliberate. Putting a product back in front of\ncustomers is a publication decision that AUDIT-MODEL.md §3 audits separately; a restore\nthat also republished would record \"restored\" while doing the thing the\n`PRODUCT_PUBLISHED` index exists to be the record of. It also means the operator gets to\nlook at the product before customers do, which is usually why it was deleted.",
+        "operationId": "AdminProductsController_restore_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — the product is not deleted, so there is nothing to restore.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Undo a soft delete",
         "tags": [
           "admin · catalogue"
         ]

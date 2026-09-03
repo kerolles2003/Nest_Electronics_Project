@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
@@ -323,5 +324,80 @@ export class AdminProductsController {
     });
 
     return { data: AdminProductDto.from(updated) };
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete a product (soft)',
+    description: [
+      'Sets `deletedAt` **and** `isActive: false`, per CATALOG-MODEL.md §9. Both, because they',
+      'answer different questions and a restore has to tell them apart: after this, "was it',
+      'published" is unambiguously no, so bringing it back in front of customers becomes a',
+      'separate, separately audited decision rather than something a restore does silently.',
+      '',
+      'The deletion is SOFT and the reasons are §9’s: analytics, reviews and reporting still',
+      'resolve the product id; SKUs and slugs must not become silently reusable, because reusing',
+      'one repoints every existing link at a different product; and an accidental deletion is',
+      'recoverable.',
+      '',
+      'The product keeps its slug, and its `slugRedirects` rows are KEPT. Dropping them would',
+      'make a restore silently lose every old URL that worked the day before.',
+      '',
+      'Deleting an already-deleted product is `409`, not `200`. A caller that receives success',
+      'twice cannot tell whether it deleted once or twice, and the second answer would carry a',
+      '`deletedAt` belonging to somebody else’s action.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'PRODUCT_NOT_FOUND.' })
+  @ApiConflictResponse({ type: ErrorResponseDto, description: 'PRODUCT_DELETED — already deleted.' })
+  async remove(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const deleted = await this.catalogue.softDelete(new Types.ObjectId(params.id), {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(deleted) };
+  }
+
+  @Post(':id/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Undo a soft delete',
+    description: [
+      'Clears `deletedAt`. The product comes back as a **draft** — `isActive` stays false.',
+      '',
+      'Restoring does not republish, and that is deliberate. Putting a product back in front of',
+      'customers is a publication decision that AUDIT-MODEL.md §3 audits separately; a restore',
+      'that also republished would record "restored" while doing the thing the',
+      '`PRODUCT_PUBLISHED` index exists to be the record of. It also means the operator gets to',
+      'look at the product before customers do, which is usually why it was deleted.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'VALIDATION_ERROR — the product is not deleted, so there is nothing to restore.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'PRODUCT_NOT_FOUND.' })
+  async restore(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const restored = await this.catalogue.restore(new Types.ObjectId(params.id), {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(restored) };
   }
 }

@@ -13,6 +13,8 @@ import { Product, type ProductLean } from '../infrastructure/schemas/product.sch
 import { SlugRedirectEntityType } from '../infrastructure/schemas/slug-redirect.schema';
 import { SlugRedirectService } from './slug-redirect.service';
 import { AdminProductSort, AdminProductState } from '../presentation/dto/admin-product-request.dto';
+import { BrandsService } from './brands.service';
+import { CategoriesService } from './categories.service';
 
 /** MongoDB's duplicate-key error. The unique index is the authority; this is how it speaks. */
 const DUPLICATE_KEY = 11000;
@@ -150,6 +152,8 @@ export class ProductAdminService {
     @InjectModel(Brand.name) private readonly brands: Model<Brand>,
     private readonly users: UsersService,
     private readonly redirects: SlugRedirectService,
+    private readonly categoriesCache: CategoriesService,
+    private readonly brandsCache: BrandsService,
     private readonly audit: AuditService,
   ) {}
 
@@ -294,6 +298,11 @@ export class ProductAdminService {
       context: context.forensics,
     });
 
+    // A product created PUBLISHED changes the counts the storefront renders.
+    // `before` is the created document itself: nothing existed before it, so
+    // there is no earlier category or brand to recount.
+    await this.recount(created, created);
+
     return created;
   }
 
@@ -431,6 +440,10 @@ export class ProductAdminService {
      * `recordChange` writes NOTHING when the diff is empty, so saving a form
      * without altering anything leaves no row.
      */
+    // Moving a product between categories or brands changes two counts, and
+    // `recount` is given both states so the one it LEFT is corrected too.
+    await this.recount(current, updated);
+
     await this.audit.recordChange({
       actor: toAuditActor(actor),
       action: 'pricing' in set ? AuditAction.PRODUCT_PRICE_CHANGED : AuditAction.PRODUCT_UPDATED,
@@ -482,6 +495,9 @@ export class ProductAdminService {
         .lean<ProductLean>()
         .exec()) ?? current;
 
+    // Publication is exactly what the counts count.
+    await this.recount(current, updated);
+
     await this.audit.recordChange({
       actor: toAuditActor(actor),
       action: isActive ? AuditAction.PRODUCT_PUBLISHED : AuditAction.PRODUCT_UNPUBLISHED,
@@ -492,6 +508,187 @@ export class ProductAdminService {
     });
 
     return updated;
+  }
+
+
+  /**
+   * Soft-deletes a product, per CATALOG-MODEL.md §9.
+   *
+   * Sets `deletedAt` **and** `isActive: false`. Both, because they answer
+   * different questions and a restore has to be able to tell them apart: after
+   * this, "was it published?" is unambiguously no, so bringing the product back
+   * is a separate, separately audited decision rather than something a restore
+   * does silently.
+   *
+   * ## Why soft
+   *
+   * §9, three reasons, and none of them is squeamishness. Orders embed product
+   * SNAPSHOTS so history survives either way — but analytics, reviews and
+   * reporting still resolve the product id; SKUs and slugs must not become
+   * silently reusable; and an accidental deletion of a catalogue item is
+   * recoverable.
+   *
+   * The slug stays held. `slugRedirects` rows are NOT removed: the product is
+   * recoverable, and dropping them would make a restore silently lose every old
+   * URL that worked the day before.
+   */
+  async softDelete(id: Types.ObjectId, context: AdminWriteContext): Promise<ProductLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt !== null) {
+      // Already gone. Refused rather than answered 200, for the same reason a
+      // repeated order transition is: a caller that gets 200 twice cannot tell
+      // whether it deleted once or twice, and the second answer would carry a
+      // `deletedAt` from an operator who is not the one asking.
+      throw AppException.productDeleted();
+    }
+
+    const updated =
+      (await this.products
+        .findOneAndUpdate(
+          { _id: id, deletedAt: null },
+          { $set: { deletedAt: new Date(), isActive: false } },
+          { new: true },
+        )
+        .lean<ProductLean>()
+        .exec()) ?? current;
+
+    await this.recount(current, updated);
+
+    await this.audit.record({
+      actor: toAuditActor(actor),
+      action: AuditAction.PRODUCT_DELETED,
+      entity: { type: AuditEntityType.PRODUCT, id, label: updated.sku },
+      changes: {
+        before: { deletedAt: null, isActive: current.isActive },
+        after: { deletedAt: updated.deletedAt, isActive: false },
+      },
+      /*
+       * The slug and name are snapshotted into the record. §4 wants a log that
+       * reads without joins, and this is the one action after which the entity
+       * stops being visible in every listing an investigator would reach for.
+       */
+      metadata: { slug: updated.slug, name: updated.name.en },
+      context: context.forensics,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Undoes a soft delete.
+   *
+   * The product comes back as a **draft** — `isActive` stays false. Restoring
+   * does not republish, because putting a product back in front of customers is
+   * a publication decision and AUDIT-MODEL.md §3 audits that separately. A
+   * restore that also republished would record "restored" while doing something
+   * the `PRODUCT_PUBLISHED` index is supposed to be the record of.
+   *
+   * It also means the operator gets to look at the product before customers do,
+   * which is usually why it was deleted.
+   */
+  async restore(id: Types.ObjectId, context: AdminWriteContext): Promise<ProductLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt === null) {
+      throw AppException.validation([
+        { field: 'id', message: 'That product is not deleted.', code: 'STATE' },
+      ]);
+    }
+
+    const updated =
+      (await this.products
+        .findOneAndUpdate({ _id: id }, { $set: { deletedAt: null } }, { new: true })
+        .lean<ProductLean>()
+        .exec()) ?? current;
+
+    await this.recount(current, updated);
+
+    await this.audit.record({
+      actor: toAuditActor(actor),
+      action: AuditAction.PRODUCT_RESTORED,
+      entity: { type: AuditEntityType.PRODUCT, id, label: updated.sku },
+      changes: { before: { deletedAt: current.deletedAt }, after: { deletedAt: null } },
+      metadata: { slug: updated.slug, isActive: updated.isActive },
+      context: context.forensics,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Brings `categories.productCount` and `brands.productCount` back into
+   * agreement with the products, for the categories and brands this write
+   * touched.
+   *
+   * ## Why it RECOMPUTES rather than adjusting by ±1
+   *
+   * Because the thing being counted is not "products", it is "products that are
+   * published, not deleted, and in this subtree" — and a single write can move
+   * a product across all three axes at once. A create can be published or a
+   * draft; an edit can move a product between category subtrees of different
+   * depths; publish, unpublish, delete and restore each flip its
+   * countability without touching its category at all. An increment/decrement
+   * scheme has to get every one of those combinations right, and every one it
+   * gets wrong is a permanent drift that nothing detects, because a stale count
+   * looks exactly like a real one.
+   *
+   * Recomputation cannot drift. The cost is one indexed `countDocuments` per
+   * affected document, on an operator action that happens a few times an hour —
+   * and both counts are served by an existing index prefix
+   * (`product_category_price` leads with `{isActive, deletedAt, category.path}`,
+   * `product_brand` with `{isActive, deletedAt, brand.id}`).
+   *
+   * ## Why the counts were stale before this
+   *
+   * `seed.ts` recomputed them and nothing else ever did — so until now a
+   * product created through the API left every category and brand count
+   * reporting the number it had at seed time. Both counts are PUBLIC: they are
+   * on `CategoryResponseDto` and `BrandResponseDto`, and the storefront renders
+   * them.
+   *
+   * The category count is a SUBTREE count, which is why the whole
+   * `category.path` is recounted and not just the leaf: a product's path is the
+   * inclusive chain, so a parent legitimately counts its children's products.
+   */
+  private async recount(before: ProductLean, after: ProductLean): Promise<void> {
+    const categoryIds = new Map<string, Types.ObjectId>();
+    const brandIds = new Map<string, Types.ObjectId>();
+
+    for (const product of [before, after]) {
+      for (const id of product.category.path) categoryIds.set(id.toHexString(), id);
+      if (product.brand !== null) brandIds.set(product.brand.id.toHexString(), product.brand.id);
+    }
+
+    await Promise.all([
+      ...[...categoryIds.values()].map(async (id) => {
+        const count = await this.products
+          .countDocuments({ isActive: true, deletedAt: null, 'category.path': id })
+          .exec();
+
+        await this.categories.updateOne({ _id: id }, { $set: { productCount: count } }).exec();
+      }),
+      ...[...brandIds.values()].map(async (id) => {
+        const count = await this.products
+          .countDocuments({ isActive: true, deletedAt: null, 'brand.id': id })
+          .exec();
+
+        await this.brands.updateOne({ _id: id }, { $set: { productCount: count } }).exec();
+      }),
+    ]);
+
+    /*
+     * The public category and brand lists are cached in-process for FIFTEEN
+     * MINUTES (SEARCH-MODEL.md §11), and `productCount` is on both of them. The
+     * cache's own `invalidate()` has carried the comment "called by catalogue
+     * writes once they exist" since it was written; they exist now, and without
+     * this call an operator watches the storefront disagree with the console
+     * for a quarter of an hour after every publish.
+     */
+    this.categoriesCache.invalidateCache();
+    this.brandsCache.invalidateCache();
   }
 
   /**
