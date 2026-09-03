@@ -2415,6 +2415,770 @@
         ]
       }
     },
+    "/api/v1/admin/catalog/categories": {
+      "get": {
+        "description": "Flat rather than nested, because this is the editor’s list: each row carries its own\n`parentId`, `path` and `depth`, so a console can assemble whatever shape it wants without\na second request. The nested version customers see is `GET /categories/tree`.\n\nInactive categories are always included — an operator has to be able to find the one they\nhid. Soft-deleted ones need `?includeDeleted=true`.",
+        "operationId": "AdminTaxonomyController_listCategories_v1",
+        "parameters": [
+          {
+            "name": "includeDeleted",
+            "required": false,
+            "in": "query",
+            "description": "Include soft-deleted rows. Excluded by default: a recoverable deletion has to be findable, but the working list is what an operator is editing.",
+            "schema": {
+              "default": false,
+              "example": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryListResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Every category, flat, shallowest first",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "post": {
+        "description": "`path` and `depth` are computed from `parentId` and are NOT accepted. `path` is the\nmaterialised ancestor chain that makes \"every product in this subtree\" one indexed match\n(ADR-CATALOG-004); a caller-supplied one is a chain that can disagree with `parentId`,\nand every subtree query would then be answering from the disagreement.\n\nThe depth limit is `3` — MONGODB-DESIGN.md §5. CATALOG-MODEL.md §6 phrases the same limit\nas \"max 3 levels\"; the two reconcile because §6’s own table records the live tree at\n**depth** 2, so \"levels\" there is loose phrasing for the depth §5 names. The reading is\nrecorded rather than assumed.",
+        "operationId": "AdminTaxonomyController_createCategory_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCategoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a malformed field, or a parent that would exceed the depth limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND — the parent, including a soft-deleted one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SLUG.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a category",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/categories/{id}": {
+      "get": {
+        "operationId": "AdminTaxonomyController_categoryDetail_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One category, in any state",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "patch": {
+        "description": "**Three things move when one category does, and this endpoint moves all three.**\n\n1. The category’s own `path` and `depth`, and every descendant’s. `path[]` is materialised\n   because MongoDB has no recursive CTE; the price is that a reparent rewrites the subtree\n   by hand.\n2. Every product’s `category` snapshot — name, slug and the subtree `path`. §6 names the\n   mechanism (`updateMany({\"category.id\": X}, …)`) and calls the staleness window one\n   operation on a display label. A rename that skipped this would leave every product card\n   showing the old name until something else rewrote it, and nothing else does.\n3. The cached category list, which is otherwise fifteen minutes stale.\n\n**Cycle detection is mandatory** (§6). A category cannot become its own parent, and cannot\nbe moved underneath one of its own subcategories. A cycle makes `path[]` unwritable —\nthere is no finite ancestor chain — and every tree read afterwards either loops or\nsilently drops the branch.\n\nThe depth limit is checked against the **deepest descendant**, not against this category:\nmoving a two-level subtree down one level is legal only if the bottom of it still fits.\n\nRenaming the slug writes a `slugRedirects` row, exactly as a product rename does.",
+        "operationId": "AdminTaxonomyController_updateCategory_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCategoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a malformed field, a move that would create a cycle, or one that would push a descendant past the depth limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SLUG. CATEGORY_DELETED — restore it first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edit or reparent a category",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "delete": {
+        "description": "Refused with `409 CATEGORY_NOT_EMPTY` while products or live subcategories still point at\nit, and the message names both counts so the refusal is a work list rather than a wall.\n\nA cascade was rejected. It would soft-delete a subtree in one click with no way for the\noperator to know what went with it — and every product left behind would be filed under a\ncategory that renders nowhere, which is the exact state `POST /admin/catalog/products`\nalready refuses to create. Allowing it here would make that state reachable by another door.",
+        "operationId": "AdminTaxonomyController_deleteCategory_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CATEGORY_NOT_EMPTY — products or subcategories still belong to it. CATEGORY_DELETED — already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete an EMPTY category (soft)",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/brands": {
+      "get": {
+        "operationId": "AdminTaxonomyController_listBrands_v1",
+        "parameters": [
+          {
+            "name": "includeDeleted",
+            "required": false,
+            "in": "query",
+            "description": "Include soft-deleted rows. Excluded by default: a recoverable deletion has to be findable, but the working list is what an operator is editing.",
+            "schema": {
+              "default": false,
+              "example": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandListResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Every brand, alphabetically",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "post": {
+        "operationId": "AdminTaxonomyController_createBrand_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBrandDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SLUG.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a brand",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/brands/{id}": {
+      "get": {
+        "operationId": "AdminTaxonomyController_brandDetail_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "BRAND_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One brand, in any state",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "patch": {
+        "description": "A rename rewrites the `brand` snapshot on every product that references it (§6), and a slug change writes a `slugRedirects` row. Without the first, every product card keeps showing the old brand name — nothing else ever rewrites that snapshot.",
+        "operationId": "AdminTaxonomyController_updateBrand_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBrandDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "BRAND_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SLUG. BRAND_DELETED — restore it first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edit a brand",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "delete": {
+        "description": "Unlike a category, this is NOT refused when products reference the brand — and the\nasymmetry is the design, not an oversight. `product.brand` is nullable: 53 of 85 live\nproducts have no brand and every listing already renders without one, so a product whose\nbrand goes away lands in a state the whole system handles.\n\nTheir `brand` snapshot is therefore CLEARED. Leaving it would put a filter in the brand\nfacet that returns products whose brand page 404s. How many products were un-branded is\nrecorded in the audit metadata, because it is the consequence the operator did not\nexplicitly ask for.",
+        "operationId": "AdminTaxonomyController_deleteBrand_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "BRAND_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "BRAND_DELETED — already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a brand (soft), un-branding its products",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
     "/api/v1/cart": {
       "get": {
         "description": "Returns the cart, **re-priced and re-checked against live catalogue data on every**\n**request**. Stored numbers are never returned.\n\nA customer who has never added anything gets an empty cart, not a 404 — the underlying\ndocument is created lazily on the first add.\n\nLines whose product went out of stock or was delisted are KEPT and flagged rather than\ndeleted, so the customer can see why the total changed. They are excluded from\n`itemsSubtotal` and set `hasBlockingIssues`.",
@@ -4728,6 +5492,9 @@
               "OUT_OF_STOCK",
               "PRODUCT_UNAVAILABLE",
               "PRODUCT_DELETED",
+              "CATEGORY_DELETED",
+              "BRAND_DELETED",
+              "CATEGORY_NOT_EMPTY",
               "CONCURRENT_MODIFICATION",
               "ORDER_NOT_CANCELLABLE",
               "INVALID_STATE_TRANSITION",
@@ -7121,6 +7888,341 @@
           "isFeatured": {
             "type": "boolean",
             "example": false
+          }
+        }
+      },
+      "AdminCategoryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "slug": {
+            "type": "string",
+            "example": "microcontrollers"
+          },
+          "name": {
+            "$ref": "#/components/schemas/AdminLocalizedTextDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminLocalizedTextDto"
+              }
+            ]
+          },
+          "parentId": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "path": {
+            "description": "Ancestor ids, root first, EXCLUDING self — what a breadcrumb needs.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "depth": {
+            "type": "number",
+            "example": 1,
+            "description": "`path.length`. A root is 0; the limit is 3."
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          },
+          "productCount": {
+            "type": "number",
+            "example": 12,
+            "description": "Published, non-deleted products in this category’s SUBTREE. Maintained by the catalogue; a display count, never an authority."
+          },
+          "deletedAt": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "parentId",
+          "path",
+          "depth",
+          "sortOrder",
+          "isActive",
+          "productCount",
+          "deletedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "AdminCategoryListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminCategoryDto"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "AdminCategoryResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminCategoryDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CreateCategoryDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "example": "microcontrollers"
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "parentId": {
+            "type": "object",
+            "example": null,
+            "nullable": true,
+            "description": "The parent, or `null` for a root. The materialised `path` and `depth` are computed server-side from it — they are not accepted, because a caller-supplied ancestor chain is one that can disagree with `parentId`, and `path` is what every subtree query matches."
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0,
+            "default": 0,
+            "description": "Display order among siblings."
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true,
+            "default": true,
+            "description": "Categories default to ACTIVE, unlike products. A category is navigation, not merchandise: it has nothing to review before it goes live, and a hidden one is invisible in the very picker an operator needs in order to file the first product under it."
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ]
+      },
+      "UpdateCategoryDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Renaming writes a `slugRedirects` row, as for a product."
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "parentId": {
+            "type": "object",
+            "nullable": true,
+            "description": "REPARENTS the category. `null` makes it a root. The whole subtree’s `path` and `depth` are rewritten, cycle detection runs, and the depth limit is checked against the DEEPEST descendant rather than against this category."
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "AdminBrandDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0e"
+          },
+          "slug": {
+            "type": "string",
+            "example": "espressif"
+          },
+          "name": {
+            "$ref": "#/components/schemas/AdminLocalizedTextDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminLocalizedTextDto"
+              }
+            ]
+          },
+          "website": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          },
+          "productCount": {
+            "type": "number",
+            "example": 8
+          },
+          "deletedAt": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "website",
+          "isActive",
+          "productCount",
+          "deletedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "AdminBrandListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminBrandDto"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "AdminBrandResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminBrandDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CreateBrandDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "example": "espressif"
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "website": {
+            "type": "object",
+            "example": "https://www.espressif.com",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true,
+            "default": true
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ]
+      },
+      "UpdateBrandDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "website": {
+            "type": "object",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
           }
         }
       },

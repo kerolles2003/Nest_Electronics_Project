@@ -134,6 +134,30 @@ export enum ErrorCode {
    */
   PRODUCT_DELETED = 'PRODUCT_DELETED',
 
+  /**
+   * 409. A staff write was attempted against a soft-deleted category or brand.
+   *
+   * Two codes rather than one shared "entity is deleted", matching the shape
+   * the catalogue already uses for `PRODUCT_NOT_FOUND` / `CATEGORY_NOT_FOUND` /
+   * `BRAND_NOT_FOUND`. A console showing three different forms wants to say
+   * which of the three things it is looking at is gone.
+   */
+  CATEGORY_DELETED = 'CATEGORY_DELETED',
+  BRAND_DELETED = 'BRAND_DELETED',
+
+  /**
+   * 409. A category was asked to be deleted while products or live child
+   * categories still point at it.
+   *
+   * Refused rather than cascaded. A cascade would soft-delete a subtree in one
+   * click and give the operator no way to know what it took with it; and every
+   * product left pointing at a deleted category would be filed somewhere that
+   * renders nowhere — the same state `POST /admin/catalog/products` already
+   * refuses to create. `details` says how many of each are in the way, because
+   * that turns the refusal into a work list.
+   */
+  CATEGORY_NOT_EMPTY = 'CATEGORY_NOT_EMPTY',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

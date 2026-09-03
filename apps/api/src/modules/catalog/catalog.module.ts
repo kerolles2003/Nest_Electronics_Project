@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuditModule } from '../audit/audit.module';
 import { UsersModule } from '../users/users.module';
+import { BrandAdminService } from './application/brand-admin.service';
 import { BrandsService } from './application/brands.service';
+import { CategoryAdminService } from './application/category-admin.service';
 import { CategoriesService } from './application/categories.service';
 import { ProductAdminService } from './application/product-admin.service';
 import { ProductsService } from './application/products.service';
@@ -20,6 +22,7 @@ import { BrandsController } from './presentation/brands.controller';
 import { CategoriesController } from './presentation/categories.controller';
 import { AdminCatalogController } from './presentation/admin-catalog.controller';
 import { AdminProductsController } from './presentation/admin-products.controller';
+import { AdminTaxonomyController } from './presentation/admin-taxonomy.controller';
 import { ProductsController } from './presentation/products.controller';
 
 /**
@@ -67,12 +70,15 @@ import { ProductsController } from './presentation/products.controller';
     BrandsController,
     AdminCatalogController,
     AdminProductsController,
+    AdminTaxonomyController,
   ],
   providers: [
     ProductsService,
     CategoriesService,
     BrandsService,
     ProductAdminService,
+    CategoryAdminService,
+    BrandAdminService,
     ProductRepository,
     SlugRedirectService,
     SlugService,

@@ -475,6 +475,52 @@ export class AppException extends HttpException {
     ]);
   }
 
+  static categoryDeleted(): AppException {
+    return new AppException(
+      ErrorCode.CATEGORY_DELETED,
+      HttpStatus.CONFLICT,
+      'That category is deleted. Restore it before editing it.',
+    );
+  }
+
+  static brandDeleted(): AppException {
+    return new AppException(
+      ErrorCode.BRAND_DELETED,
+      HttpStatus.CONFLICT,
+      'That brand is deleted. Restore it before editing it.',
+    );
+  }
+
+  /**
+   * Refusing to delete a category something still points at.
+   *
+   * The counts are in the message because they turn a refusal into a work
+   * list — "move 12 products and delete 2 subcategories" is actionable, "cannot
+   * delete" is not. Both numbers are catalogue facts an admin is already
+   * entitled to see.
+   */
+  static categoryNotEmpty(products: number, children: number): AppException {
+    const parts: string[] = [];
+
+    if (products > 0) parts.push(`${String(products)} product(s)`);
+    if (children > 0) parts.push(`${String(children)} subcategor${children === 1 ? 'y' : 'ies'}`);
+
+    return new AppException(
+      ErrorCode.CATEGORY_NOT_EMPTY,
+      HttpStatus.CONFLICT,
+      'That category still has things in it and was not deleted.',
+      [
+        {
+          field: 'id',
+          message:
+            `${parts.join(' and ')} still belong to this category. Move or delete them first — ` +
+            'deleting it now would leave them filed somewhere that renders nowhere.',
+          code: ErrorCode.CATEGORY_NOT_EMPTY,
+        },
+      ],
+    );
+  }
+
   // --- Media ----------------------------------------------------------------
 
   /**

@@ -5355,3 +5355,124 @@ assets"*. Both halves are blocked on work that has not landed:
 
 It lands in Part 4, beside `retain()` and `release()`. Recorded here rather than
 discovered as an absence later.
+
+---
+
+# Phase 7 Part 3f — categories and brands, and the snapshot that has to follow them
+
+**Strays reaped before every run.** None found; the four `node.exe` processes on
+this machine remain `D:\ahmed-adel-project`'s.
+
+## The two frozen documents disagree, and here is the reading taken
+
+`MONGODB-DESIGN.md` §5: *"Max depth 3 is enforced."* Names the field, states a
+number — `depth <= 3`.
+
+`CATALOG-MODEL.md` §6: *"Max 3 levels enforced — the live tree uses 2."* Read as
+levels, three levels is `depth <= 2`, and the live tree would already be at the
+ceiling.
+
+**They reconcile, and §5 is the precise one.** §6's own table records the live
+shape as "27 categories, 17 roots, **max depth 2**" — Phase 0.5 measured it — so
+"the live tree uses 2" in the very next row means depth 2, and "3 levels" is
+loose phrasing for the depth §5 names. `depth <= 3` is the rule both describe.
+`category.schema.ts` had already written that reading into a comment; this is
+the first code to enforce it.
+
+Recorded here rather than settled quietly. If the owner meant three levels
+(`depth <= 2`), it is a one-constant change and one test.
+
+## Three things move when one category does
+
+This is the whole reason the category service is the longest file in Part 3.
+
+**1. The tree.** `path[]` is materialised because MongoDB has no recursive CTE
+(ADR-CATALOG-004). The price of that decision is that a reparent has to rewrite
+the subtree by hand — every descendant's `path` and `depth`, not just the
+category that moved. The rewrite splices at the *position of the moved id* in
+each descendant's path rather than assuming a direct child, which is what makes
+it correct more than one level down.
+
+**2. Every product's snapshot.** §6 names the mechanism outright —
+`updateMany({'category.id': X}, …)` — and nothing else in the system ever
+rewrites that field. A rename that skipped it leaves every product card showing
+the old category name indefinitely, and a card showing a stale label looks
+exactly like a correct one. On a reparent the products' snapshot `path` moves
+too, for every moved descendant: that array is what a subtree query matches, so
+missing it is a subtree query answering from the tree's *old shape* — F-MED-10,
+the defect `path[]` exists to fix.
+
+That one is asserted end to end through the public route: a product under a
+child category, the child moved to a new root, and `GET /products?category=<new
+root>` finds it where it found nothing a moment before.
+
+**3. The cached list.** Fifteen minutes, in-process. The test reads the public
+category endpoint *before* the rename specifically to warm the cache, so it
+fails if the write does not invalidate — the state an operator would otherwise
+experience as "my save did nothing".
+
+## Cycle detection
+
+Mandatory per §6, and not for tidiness: a cycle makes `path[]` unwritable —
+there is no finite ancestor chain — so every tree read afterwards either loops
+or silently drops the branch. Both shapes are refused: a category as its own
+parent, and a category moved underneath one of its own descendants at any depth.
+
+The depth limit is checked against the **deepest descendant**, not against the
+category being moved. Moving a two-level subtree down one level is legal only if
+the bottom of it still fits; checking the moved category alone would pass and
+leave a leaf at depth 4.
+
+## Delete: refused for categories, cascading for brands
+
+The asymmetry is deliberate and both directions follow from one fact —
+`product.category` is required and `product.brand` is nullable.
+
+A **category** deletion is refused while products or live subcategories point at
+it, and the message names both counts so the refusal is a work list rather than
+a wall. A cascade would soft-delete a subtree in one click with no way to know
+what went with it, and would leave products filed under a category that renders
+nowhere — the state `POST /admin/catalog/products` already refuses to create.
+Allowing it here would make that state reachable by another door.
+
+A **brand** deletion clears the snapshot on every product instead. 53 of 85 live
+products have no brand and every listing already renders without one, so an
+un-branded product is in a state the whole system handles. Leaving the snapshot
+would put a filter in the brand facet that returns products whose brand page
+404s. How many products were un-branded goes in the audit metadata, because it
+is the consequence the operator did not explicitly ask for.
+
+Both renames write `slugRedirects` rows, so `SlugRedirectEntityType`'s other two
+members stop being declarations and start being used.
+
+## Three new error codes
+
+`CATEGORY_DELETED` and `BRAND_DELETED` mirror `PRODUCT_DELETED` — three codes
+rather than one shared "entity is deleted", matching the shape the catalogue
+already uses for the three not-found codes, because a console showing three
+different forms wants to say which of the three things is gone.
+
+`CATEGORY_NOT_EMPTY` carries the counts in `details[0].message`.
+
+## Verification
+
+27 new tests; **132 in `test/catalog`**, all passing on the first run. Zero
+residue. `type-check` and `lint` clean, OpenAPI regenerated, drift gate green.
+
+**Browser-unverified:** all of it. The admin console's `category-brand.actions.ts`
+still writes to Supabase; re-pointing it is not in this unit.
+
+## Part 3 is now complete on the API side
+
+Products, categories and brands are all creatable, editable, publishable and
+deletable through the API, every write audited, every rename leaving a redirect,
+every snapshot and count maintained. What Part 3 does **not** include, each
+recorded rather than left to be discovered:
+
+- **The admin console still writes to Supabase.** Every endpoint above has no
+  caller. F-09 is closed on the API side and open on the console side.
+- **Hard delete** — deferred to Part 4 with the media work (see 3e).
+- **`specDefinitions`** — still owner data, still unbuilt, and still the reason
+  the console's `attributes` route is untouched.
+- **The audit-log screen.** The trail now records catalogue writes as well as
+  order transitions, and nothing reads any of it.
