@@ -1,3 +1,247 @@
+# HANDOFF — overnight session, Phase 7
+
+**Branch `phase-1-2-overnight`. Nothing pushed. Ten commits.**
+Your 16 in-flight storefront files are untouched — I did not stage, reconstruct
+or commit any of them.
+
+---
+
+## 1. What is done
+
+| Commit | What |
+|---|---|
+| `2fcd369` | One database per test suite; residue is an assertion that fails the run |
+| `1ead6df` | The admin console no longer 500s when a session expires — it renews |
+| `2e999a5` | That renewal's redirect kept neither the base path nor the origin. Fixed |
+| `68eec8b` | R1: what the per-suite fence actually prevented |
+| `0de5516` | R2: the admin Playwright suite split so a spec depends on what it uses |
+| `1d9c990` | **Part 2** — the order queue: search, date range, sort, one-request counts |
+| `88067bb` | Checkpoint report on Parts 1 and 2, including an audit conflict |
+| `42d67ac` | **Part 3a** — the security audit trail, and the gap it closes |
+| `a58db92` | **Part 3b** — a slug check that can say "I don't know" |
+| `090b721` | The seven order suites clean up the audit rows they now cause |
+
+### The three rulings
+
+**R1** is recorded. The fence's first real action was preventing the destruction
+of `nest_electronics_dev`: `ConfigModule.forRoot()` runs inside the `@Module`
+decorator, so the environment was frozen before the override could apply, and
+the next statement was a `dropDatabase`. Isolation was verified under abnormal
+termination — three runs killed mid-flight — rather than under a clean exit,
+which would have proven nothing, because a clean exit runs the teardown and the
+teardown was the mechanism that had already failed.
+
+**R2** is done. `webServer` belongs to a Playwright config, not a project, so
+the third server — the one four specs need — was a hard dependency of all
+thirty-seven. Now: `playwright.config.ts` runs 33 specs on two servers,
+`playwright.unreachable-api.config.ts` runs 4 on three. 33 + 4 = 37, verified
+with `--list`, which loads configs without starting a server. **The storefront
+was checked for the same shape and does not have it** — two servers, both used
+by every spec.
+
+**R3** is respected. The three open verification items are still in `WORK-LOG.md`
+under "What this machine could and could not verify". None has moved into a
+summary. `t1-catalogue.spec.ts:177` is still unexplained.
+
+### Part 2 — the order queue
+
+`GET /admin/orders` now takes `q`, `placedFrom`, `placedTo` and `sort` alongside
+`status`, `page` and `limit`. `GET /admin/orders/stats` answers every status
+count in one aggregation instead of seven requests whose numbers were taken at
+seven different instants and did not always add up to the total beside them.
+
+Search is escaped before it reaches the database and the repository is typed to
+accept only the parsed form, so there is no path by which a client string
+becomes part of a query expression. Two new indexes, both asserted to be in the
+readiness probe's expected list.
+
+**Two bugs the tests found, and both looked like working code.** The date filter
+validated and then vanished — the transform runs twice per request, and the
+second pass received a `Date` and returned `undefined`, so the parameter
+disappeared between validating and being read while a malformed date was still
+correctly rejected. And phone search found nothing for anybody, because the
+order snapshots the account phone, which registration never asks for, rather
+than the delivery-note phone an operator is actually holding.
+
+### Part 3a — the audit trail
+
+Part 3 requires every write to emit an audit row. **Nothing could: `auditLogs`
+did not exist on the API.** Built to `AUDIT-MODEL.md` §4 and §5 — system-written,
+post-commit, loud on failure, append-only, `strict: 'throw'`, two-year TTL.
+
+### Part 3b — slugs
+
+`GET /admin/catalog/slug-availability`, replacing a route that answered
+"available" on every failure path.
+
+---
+
+## 2. What is NOT done
+
+**Be clear on the shape of this: Parts 4, 5 and 6 were not started at all, and
+Part 3 is about one fifth done.** Nothing is half-finished — every commit is a
+complete unit with tests — but most of the brief is untouched.
+
+| Part | State |
+|---|---|
+| 2 — order queue | **Done**, except the UI is browser-unverified |
+| 3 — catalogue CRUD | **Audit foundation and slug check done. No CRUD.** No product, category or brand create/update/delete endpoints exist. `attributes` untouched. `slugRedirects` not built |
+| 4 — media upload UI | **Not started.** `retain()` is still never called by anything |
+| 5 — inventory operations | **Not started** |
+| 6 — customers, shipping rates, aggregates | **Not started** |
+
+Specifically absent, and each would be a surprise if assumed present:
+
+- **No catalogue writes at all.** The admin still cannot create or edit a
+  product through the API. This is the largest remaining piece of Phase 7.
+- **`slugRedirects` does not exist.** `CATALOG-MODEL.md` §2 rules 3–6 require
+  the old slug written on rename, read at resolution and answered with a 301.
+  A rename today would leave the old URL a 404 — legacy defect K4. There is no
+  rename endpoint yet, so nothing is broken; it must land with the update path.
+- **Reference counting is still unproven.** `retain()` has never been called.
+  `DELETE /admin/media` would still destroy an image a live page is showing.
+  Nothing changed there tonight.
+- **No audit-log screen.** The trail is written; nothing reads it.
+
+---
+
+## 3. Needs owner
+
+1. **The audit gap, and what to do about the blind period.** `AUDIT-MODEL.md` §3
+   lists admin status transitions as audited. Phase 6 recorded only
+   `statusHistory` — which is *business* history under §6.1 — and concluded the
+   security audit was covered. It was not. Every admin intervention between
+   Phase 6 and commit `42d67ac` is unaudited. `statusHistory` holds the actor,
+   the action and the time for each, so a backfill is possible. **Backfill, or
+   record a known blind period?**
+2. **`AuditInterceptor` vs a service.** §5's diagram names an interceptor. I
+   built a service called from the application layer, because an interceptor
+   sees the request and response while `changes.before/after` is a diff between
+   two entity states only the writing service holds. All four of §5's rules hold
+   either way. **The deviation is from the illustration, not the rules — confirm
+   or correct it.**
+3. **`specDefinitions` contents.** §7 replaces the EAV with embedded `specs[]`
+   plus a `specDefinitions` dictionary "used by the admin editor". The
+   collection does not exist and what belongs in it is owner data — which keys
+   are canonical, their labels, units, and which are filterable. I could derive
+   one from seeded products; that would be inventing a taxonomy and calling it
+   frozen. **The admin's `attributes` route is therefore untouched and still
+   reads Supabase.**
+4. **A denormalised order search field.** Two of the four search branches cannot
+   use an index — "name contains" and "phone contains" are unanchored patterns.
+   At this scale a bounded scan is right. The alternative is a `searchText`
+   field maintained on the order-writing path: a migration and a change to the
+   money path. **Not taken.**
+5. **No credentials were needed or invented.** Nothing here required a password,
+   a key or a placeholder.
+
+---
+
+## 4. What I broke, reverted, or am unsure about
+
+**I made one real mistake.** I wrote a command with `;` instead of `&&`, so when
+lint failed I started a second jest run believing the first had not begun — **two
+jest runs against the same scratch database**. That produced two failures that
+looked like regressions: `cart.spec.ts` seeing 35 products where 34 are seeded,
+and a reset-password failure. Neither was real. Recorded in `WORK-LOG.md` rather
+than only here.
+
+**A killed jest run leaves a 1 GB process behind, and it keeps working.** After
+three runs were killed by memory pressure, the next run behaved strangely —
+polluted baselines, products from a suite that was not in the batch, and one
+genuine-looking `authorization › refuses a CUSTOMER` failure. The cause was a
+surviving `jest.js` process at 1,011 MB still executing suites against the
+database. **Reap before re-running**; a stray makes the next run's evidence
+worthless in a way that looks exactly like a code failure.
+
+**Nothing was reverted.** No `reset`, no `checkout .`, no amend, no push.
+
+**Unsure about:** whether the `AuditInterceptor` deviation is acceptable (item 2
+above). Everything else I am confident in or have listed as unverified.
+
+---
+
+## 5. Test counts and failing names
+
+| | Before | After |
+|---|---|---|
+| Passed | 958 | **1046** |
+| Skipped | 15 | 15 |
+| Total | 973 | **1061** |
+| Suites | 44 | 46 |
+| **Failing names** | **none** | **none** |
+
+Four batches, because a single full run no longer completes on this machine:
+
+```
+test/orders test/database test/audit test/catalog    14 suites   309 passed
+test/auth test/users test/cart                       10 suites   290 passed
+test/checkout test/journey test/fulfilment ...       10 suites   238 passed
+test/infrastructure test/media test/import ... src   13 suites   209 passed, 15 skipped
+```
+
+Zero residue in every batch. `type-check`, `lint` and the OpenAPI drift gate are
+clean across all three workspaces.
+
+**One existing test was updated and is stricter, not looser:** the
+config-agreement test now follows the admin server definitions into
+`playwright.shared.ts` and additionally asserts the two admin configs select
+disjoint spec sets from one shared constant.
+
+**Seven existing test files gained an audit cleanup** — two lines each, an
+import and a delete. No assertion changed.
+
+---
+
+## 6. Browser-unverified
+
+The machine could not run a browser. Another project (`D:\ahmed-adel-project`)
+had a dev server and its own test suite resident on 8 GB of RAM for most of the
+session; free memory measured 0.6–1.4 GB with none of this repository's
+processes running. I did not kill their processes.
+
+Built, type-checked, and **not seen working**:
+
+- The queue search box, including that Enter submits it
+- The two date inputs and the sort selector
+- "Clear search and dates"
+- The status tiles reading from the single stats request
+- The `check-slug` route's new "unknown" state — the form must render neither a
+  tick nor a cross when the API cannot answer
+
+Still unverified from earlier in the session, unchanged:
+
+- The whole storefront browser suite
+- The nine session-renewal spec **files** under Playwright's runner — the
+  *behaviour* was verified by driving twelve assertions in a real browser
+  against hand-started servers, but the spec files themselves have never been
+  executed
+- `t1-catalogue.spec.ts:177` — still unexplained. An environmental explanation
+  that fits everything explains nothing
+
+---
+
+## 7. The first three things to do in the morning
+
+1. **Run the browser suites**, on a quiet machine.
+   `pnpm --filter admin test:e2e` now runs two configs in sequence;
+   `pnpm --filter storefront test:e2e` is the one that has never completed.
+   Compare failing **names** against §5 above, not counts.
+2. **Answer the audit backfill question** (§3 item 1). Part 3's remaining CRUD
+   will emit audit rows from day one, so the blind period only gets more awkward
+   to describe the longer it stands.
+3. **Start catalogue CRUD** — products first, it is the largest Supabase surface
+   left and the acceptance criterion for Phase 7 turns on it. `slugRedirects`
+   must land with the update path, in the same commit as the first rename.
+
+---
+---
+
+# Previous session — 2026-09-01 → 02
+
+Kept in full below. Nothing in it has been edited; the session above is the
+newer one and reads first.
+
 # HANDOFF — overnight session, 2026-09-01 → 02
 
 **Short version:** the interrupted Phase 0 run had actually finished all of its commits and
