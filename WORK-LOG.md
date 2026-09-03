@@ -3582,3 +3582,45 @@ owner and is in the report, not decided here.
 **Exactly one `<main>` on every route at every one of the five breakpoints** —
 24 routes × 5 widths, counted in the DOM rather than in the source. The root
 layout owns the only one and no page adds a second.
+
+### Six dead links in the chrome of every page — and the gap underneath them
+
+`/about`, `/faq` and `/vendors` have never been routes. They were in
+`TOP_NAV_LINKS` and `MAIN_NAV_LINKS` in `packages/config`, which the top bar,
+the category nav and the mobile menu all render, so each one was a 404 **in the
+chrome of every page on the site** — a crawl of fifteen customer-facing pages
+found six such links, each present on all fifteen. `/brands`, `/shipping` and
+`/returns` were the same story in the footer.
+
+Removed rather than pointed somewhere plausible: a link that lands on the wrong
+page is a worse answer than no link.
+
+**That is the bug. This is the finding underneath it, and it is not a bug.**
+
+An About page and an FAQ are missing content, not broken code, and for this shop
+specifically they are worth more than they would be for most. Everything here is
+**cash on delivery**: a customer in Egypt hands cash to a courier for goods they
+have not yet seen, from a shop they have not bought from before. The questions
+they need answered before they will do that are exactly the ones those two pages
+answer — who is behind this, where are you, what happens if the board arrives
+dead, how long does delivery take to my governorate, what does it cost, can I
+refuse it at the door.
+
+The API can already answer several of those factually. `GET /fulfilment/rates`
+knows the per-governorate delivery fee, and `ORDER-LIFECYCLE.md` defines what
+happens on a failed delivery and on a return. So an FAQ is not blocked on a
+decision — most of its content already exists as behaviour and only needs
+writing down for a buyer rather than for a developer.
+
+`/vendors` is different and should not come back: it describes a marketplace
+with third-party sellers, and this is a single-merchant shop. There is no vendor
+domain, no seller onboarding and no split settlement anywhere in the design.
+Removing that link corrected a claim the product does not make.
+
+**Recorded, not built.** Writing an About page is a content decision for the
+owner and copy nobody on this side should invent — inventing a company history
+is worse than having none. The entries go back into `TOP_NAV_LINKS` the day the
+pages do, and the same is true of `/shipping` and `/returns` in the footer.
+Flagged here as a launch-readiness gap rather than a defect: the site works
+without them, and a first-time COD buyer is measurably less likely to complete
+a purchase because of it.
