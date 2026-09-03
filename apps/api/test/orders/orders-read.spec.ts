@@ -7,6 +7,7 @@ import { getStorageToken, type ThrottlerStorage } from '@nestjs/throttler';
 import { Connection, Model, Types } from 'mongoose';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { AuditLog } from '../../src/modules/audit/infrastructure/schemas/audit-log.schema';
 import { validationExceptionFactory } from '../../src/common/pipes/validation-exception.factory';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { Cart } from '../../src/modules/cart/infrastructure/schemas/cart.schema';
@@ -274,6 +275,19 @@ beforeAll(async () => {
 afterAll(async () => {
   if (createdOrderIds.length > 0) {
     await inventoryEvents.deleteMany({ 'reference.id': { $in: createdOrderIds } }).exec();
+    /*
+     * The AUDIT rows for these orders, before the orders themselves.
+     *
+     * Admin lifecycle transitions are audited (AUDIT-MODEL.md §3), so a suite
+     * that confirms or ships an order now leaves a row per intervention. The
+     * application never deletes from `auditLogs` — it is append-only, and the
+     * TTL is the only remover — so this is a test removing its own fixture,
+     * which is a different thing from the application editing its trail.
+     */
+    await app
+      .get<Model<AuditLog>>(getModelToken(AuditLog.name))
+      .deleteMany({ 'entity.id': { $in: createdOrderIds } })
+      .exec();
     await orders.deleteMany({ _id: { $in: createdOrderIds } }).exec();
   }
   if (createdUserIds.length > 0) {
