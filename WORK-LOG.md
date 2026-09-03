@@ -3624,3 +3624,207 @@ pages do, and the same is true of `/shipping` and `/returns` in the footer.
 Flagged here as a launch-readiness gap rather than a defect: the site works
 without them, and a first-time COD buyer is measurably less likely to complete
 a purchase because of it.
+
+---
+
+# Phase 6 — the admin on the API: orders and staff identity
+
+The storefront has placed orders in Mongo through the NestJS API since T2. The
+admin console read Supabase. **So every order a customer placed was invisible
+to the console that exists to fulfil it**, and had been since T2.
+
+That is what this phase fixes, plus the two things that had to exist first: a
+way to create the operator who signs in, and a way to know that the browser
+tests of a second Next application are not as hollow as the storefront's were.
+
+## What I found about transition attribution, before building anything
+
+The API was **already recording it, correctly, and exposing it nowhere.**
+
+`OrderLifecycleService.apply` resolves the actor from the token, snapshots
+`{id, role, name}` onto the history entry, and writes it in the SAME guarded
+update as the status change. So an order whose status moved without a named
+actor is not representable — not discouraged, not unlikely, unrepresentable.
+The role comes from the database profile rather than the JWT claim, so an
+account demoted since its token was issued cannot still ship goods. That half
+was sound and I did not touch it.
+
+What was missing is that **no DTO serialised any of it**. `statusHistory` was
+absent from `OrderDto` and from `OrderSummaryDto`, so the trail existed only in
+the database. No console, no report and no support conversation could reach it;
+the only way to answer "who confirmed this order" was to open a Mongo shell.
+
+An unreadable audit trail is not an audit trail. Exposing it was the minimum,
+and it lands on a new `AdminOrderDto` rather than on the canonical `OrderDto` —
+a customer must be able to see that the shop cancelled their order without
+learning which member of staff did it, which is why `OrderCancellationDto.by`
+carries the ROLE and nothing else.
+
+### The second thing the admin needed, which also did not exist
+
+`allowedTransitions`. The console held its own transition maps — in
+`order.actions.ts` AND a second copy in `OrderDetail.tsx`, over a status
+vocabulary the API does not have — and they had already drifted from each other.
+Neither was enforced: the RPC underneath was callable by the `anon` role, so the
+state machine was advisory (F-CRIT-1 / F-HIGH-1).
+
+The API now computes the available moves with the same `checkTransition` its
+engine calls before it writes, and each move carries **its endpoint**, not just
+its target status. That last part matters more than it looks:
+
+- `-> SHIPPED` is `ship` from `CONFIRMED` and `retry-shipment` from
+  `DELIVERY_FAILED`, with different mandatory fields. A map keyed by target
+  status would be wrong half the time, in the expensive direction.
+- The matrix permits a staff actor to drive `-> CANCELLED`, and this API exposes
+  no staff route for it — cancelling is the customer's own operation. Reporting
+  `action: null` is the honest answer; omitting it would hide a thing the order
+  genuinely permits, and offering it would draw a button that posts to nothing.
+
+## Staff provisioning: what it looks like, and how it refuses to be run carelessly
+
+Nothing could mint the first `SUPER_ADMIN`. Registration hard-codes
+`Role.CUSTOMER`, and there is no endpoint, DTO field or flag that produces a
+staff account — correctly. So the shop could not be operated at all until
+somebody edited the database by hand.
+
+`pnpm --filter api staff:create` is the replacement, and it is deliberately
+awkward, because this is the exact shape of command that produces a default
+credential. The usual version takes `--password` with a fallback, prints
+"admin / ChangeMe123!", and is run once on every environment including the real
+one. **This project has already shipped that bug one layer down**: a
+`JWT_SECRET` placeholder that passed its own validator because it was 57
+characters and the rule was "at least 32".
+
+The lesson generalises, and it is the rule the command enforces: **a placeholder
+nothing rejects is a default.** Length rules and character classes reject
+nothing that matters. Asking whether the value is already written down rejects
+exactly the values that do.
+
+| Guard | What it refuses |
+|---|---|
+| No `--password` at all | Prompted twice, no echo. An argument is visible in `ps` and in shell history — and an argument is a thing that can be given a default. A prompt is not. |
+| The password policy | Everything a customer's password is refused for |
+| **The repository scan** | Any value appearing in a file in this checkout — including both passwords printed in `SANDBOX.md`. The refusal names the FILES, never the value |
+| Typed confirmation | The email, name and role are printed and the ADDRESS must be retyped. A `y/n` prompt is one keystroke from an accident |
+| Production second super-admin | Refused unless `--acknowledge-existing-super-admin` is passed |
+
+It prints no credential on success. Not the password, not a generated one, not a
+"temporary" one — the person who typed it is the only person who knows it, which
+is the only arrangement where nobody has to be trusted to rotate it afterwards.
+
+**If the repository cannot be scanned, it refuses** rather than assuming clean.
+A check that silently degrades to green when it cannot run is worse than no
+check, because it reports the same green as one that ran. There is no flag to
+skip it: a bypass on a control like this becomes the documented way to run the
+command.
+
+### The dev-only admin, and why a published password is acceptable there
+
+`pnpm --filter api dev-admin:seed` creates `admin@nest-electronics.test` with a
+password written in `SANDBOX.md` §4a. That is a fixture, not a default, and the
+distinction rests on three fences — the same three the sandbox customer has:
+
+1. `.test` is reserved and unresolvable (RFC 2606), so the address can never
+   belong to a person or receive mail.
+2. The seed refuses `NODE_ENV=production`, and `StaffProvisioningService`
+   independently refuses a `.test` address there. The seed failing open would
+   still not create it in production.
+3. `test/database/dev-admin-seed.spec.ts` asserts the docs, the seed and the
+   password policy all agree.
+
+It goes through the same service, so the documented password is provably one the
+real policy accepts. It is exempt from exactly one rule — the repository scan —
+and only because its address ends in `.test`, which production refuses one check
+earlier. The two rules are a pair; neither is safe alone.
+
+## The admin harness landed before the first admin spec
+
+The storefront ran 44 browser specs that were all hollow for five phases:
+`next dev` refused every cross-origin `/_next/*` request, React never booted,
+and everything passed because pages server-render and forms submit by
+progressive enhancement. The only visible symptom was a hot-reload WebSocket
+error, which was diagnosed as dev noise and added to a suppression list.
+
+The admin is a second Next application with its own dev server and its own
+config, so it could reproduce that independently, in a place nobody watches. Its
+harness therefore landed first: one HOST constant, the hydration canary before
+every spec body, and **the canary itself tested three ways** — live, dead
+(chunks aborted), and slow-then-alive, the last because a probe that only ever
+said `false` would satisfy the dead case and fail everything real.
+
+There is no blanket suppression list. `allowConsoleError(pattern, reason)` takes
+the reason as a required parameter, and the run prints every suppression with
+its reason, pass or fail. Across every admin run so far the line reads
+"nothing was ignored in this run".
+
+**Honestly, about what was measured:** the canary is proven by aborting chunks,
+not by reproducing a cross-origin refusal. I tried to reproduce one on Next
+16.2.4 and could not — `127.0.0.1` and `localhost` differ to the dev server's
+allow-list but are the same origin to the browser once the page is served from
+one of them, so a deliberately wrong `allowedDevOrigins` still hydrated cleanly.
+The origin pin stays anyway (it costs one constant and a release can tighten the
+rule again), but what actually protects the suite is that the canary asserts the
+OUTCOME — no React root — so it catches a dead client from any cause.
+
+## The specs found five bugs the code review had not
+
+Every one was found by running, not by reading — and the code had been read.
+
+1. **Every render of the sign-in page was a 500.** `EMPTY_LOGIN_STATE` was
+   exported from a `'use server'` module, which may export async functions and
+   nothing else; every other export is stripped silently. `useActionState` got
+   `undefined` and the form read `state.fieldErrors`. A console nobody could
+   sign in to.
+2. **The proxy's redirect dropped the basePath.** `new URL('/login',
+   request.url)` gives `/login`, not `/admin/login`. The redirect happened, the
+   browser left the guarded page, and it landed nowhere.
+3. **A second fabricated identity in `Sidebar.tsx`** — "Admin User /
+   admin@nest.com / AD" again, with its own `supabase.auth.signOut()` that
+   revoked nothing. Grepping the header alone missed it; the whole-page
+   assertion did not.
+4. **Radix cancelled the sign-out.** `DropdownMenuItem` calls `preventDefault()`
+   on the selecting click, which killed the form submit inside it. The button
+   did nothing at all, silently.
+5. **`getByRole('alert')` is ambiguous** — Next renders its own route announcer
+   with that role.
+
+And one in my own test, worth recording because it is the failure mode this
+engagement keeps finding: the "no fabricated identity" check listed `'AD'` as a
+forbidden substring of the whole page. It matched inside unrelated words. That
+is the same overbroad-substring mistake as the seven vacuous money assertions;
+the initials are now asserted on the avatar element.
+
+## What the console stopped claiming
+
+Three panels were removed rather than repointed, and the reasoning is the same
+each time: a plausible number is worse than an absent one.
+
+- **Revenue**, on both the queue and the dashboard. No API endpoint aggregates
+  it. Summing a page gives a figure that changes when you paginate; fetching
+  every order is a table scan per load.
+- **Top Products by units sold.** Its only source was a join through
+  `order_items` — discarded by D-6 — and the API has no sales ranking.
+- **The dashboard's five order queries.** Stale or zero, and every "Recent
+  Orders" row linked to `/orders/<supabase-uuid>`, which the API-backed detail
+  page refuses because it is not a 24-character hex id. A literal legacy-orders
+  view: a table of orders nobody could act on.
+
+Counts show an em dash, never `0`, when a request fails. Zero is a claim — "no
+orders are awaiting confirmation" — and a fulfilment console must not make it
+because a request failed. The same rule governs the queue: when it cannot be
+read it says so and shows nothing, because an empty table is indistinguishable
+from a quiet morning and is the most expensive lie this console could tell.
+
+## The audit trail is broken, and now says so
+
+`admin_audit_logs.admin_id` has a foreign key to Supabase `profiles.id`. The
+acting admin is now an API account, so every insert would violate it — and the
+previous code wrapped the insert in a `catch` that logged and continued, on the
+correct principle that audit logging must never break the operation it records.
+The consequence is that the trail would have gone silently empty on the day
+identity changed, and nobody would have found out until they needed it.
+
+It now refuses those writes up front and reports it once per process, naming the
+reason and Phase 7. **Order lifecycle actions are unaffected and are strictly
+better off** — the API records their actor on the order itself, and this phase
+is the first time any screen could read it.
