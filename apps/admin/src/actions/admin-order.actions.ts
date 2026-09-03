@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
-import { requireAdmin } from '@/lib/api/identity';
+import { requireAdminActor } from '@/lib/api/identity';
 import type { AdminOrder } from '@/lib/api/types';
 
 /**
@@ -65,7 +65,7 @@ async function run(
   orderId: string,
   call: () => Promise<{ data: AdminOrder }>,
 ): Promise<OrderActionResult> {
-  await requireAdmin();
+  await requireAdminActor();
 
   const result = await tryApi(call);
 

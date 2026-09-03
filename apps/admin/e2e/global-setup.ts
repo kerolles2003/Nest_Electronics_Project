@@ -1,5 +1,6 @@
-import { request } from '@playwright/test';
+import { request, type APIRequestContext } from '@playwright/test';
 import { API_BASE_URL } from './origin';
+import { DEV_ADMIN_EMAIL, DEV_ADMIN_PASSWORD } from './fixtures/operations';
 
 /**
  * Refuses to start a run against an API that will throttle it.
@@ -46,6 +47,8 @@ export default async function globalSetup(): Promise<void> {
   const context = await request.newContext();
 
   try {
+    await assertTheDevelopmentAdminExists(context);
+
     const response = await context.post(`${API_BASE_URL}/auth/login`, {
       data: {
         email: 'admin-rate-limit-probe@example.invalid',
@@ -93,4 +96,49 @@ export default async function globalSetup(): Promise<void> {
   } finally {
     await context.dispose();
   }
+}
+
+/**
+ * Refuses to start a run with no operator to sign in as.
+ *
+ * Every spec here signs in as the development admin, which
+ * `pnpm --filter api dev-admin:seed` creates. Without it every spec fails on a
+ * sign-in form with "those credentials are not valid for this console" — which
+ * is a true message about a missing fixture, and reads like a broken login.
+ *
+ * Checked by actually signing in, not by looking for an environment variable:
+ * the account either works or it does not, and only one of those is worth
+ * starting a run on.
+ */
+async function assertTheDevelopmentAdminExists(context: APIRequestContext): Promise<void> {
+  const response = await context.post(`${API_BASE_URL}/auth/login`, {
+    data: { email: DEV_ADMIN_EMAIL, password: DEV_ADMIN_PASSWORD },
+    failOnStatusCode: false,
+  });
+
+  if (response.ok()) {
+    const role = ((await response.json()) as { data: { user: { role: string } } }).data.user.role;
+
+    if (role === 'ADMIN' || role === 'SUPER_ADMIN') return;
+
+    throw new Error(
+      `${DEV_ADMIN_EMAIL} exists but its role is ${role}, not a staff role.\n\n` +
+        'Re-provision it: pnpm --filter api dev-admin:seed',
+    );
+  }
+
+  throw new Error(
+    [
+      `Could not sign in as ${DEV_ADMIN_EMAIL} (HTTP ${String(response.status())}).`,
+      '',
+      'Every admin spec signs in as the development admin. It is a local fixture',
+      'on a reserved .test domain, documented in docs/api/SANDBOX.md §4a, and the',
+      'seed refuses to run under NODE_ENV=production.',
+      '',
+      'Create it:  pnpm --filter api dev-admin:seed',
+      '',
+      'If it exists but the password was changed, recreate it:',
+      '            pnpm --filter api dev-admin:seed -- --reset',
+    ].join('\n'),
+  );
 }

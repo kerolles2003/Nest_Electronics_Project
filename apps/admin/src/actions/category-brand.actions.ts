@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/services'
+import { requireAdminActor } from '@/lib/api/identity'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { logger } from '@/lib/logger'
 import { revalidatePath } from 'next/cache'
@@ -34,7 +34,7 @@ const brandSchema = z.object({
 /* ------------------------------------------------------------------ */
 
 export async function createCategoryAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = {
@@ -82,7 +82,7 @@ export async function createCategoryAction(formData: FormData) {
 }
 
 export async function updateCategoryAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -135,7 +135,7 @@ export async function updateCategoryAction(formData: FormData) {
 }
 
 export async function softDeleteCategoryAction(id: string) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -169,7 +169,7 @@ export async function softDeleteCategoryAction(id: string) {
 /* ------------------------------------------------------------------ */
 
 export async function createBrandAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = {
@@ -215,7 +215,7 @@ export async function createBrandAction(formData: FormData) {
 }
 
 export async function updateBrandAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -266,7 +266,7 @@ export async function updateBrandAction(formData: FormData) {
 }
 
 export async function softDeleteBrandAction(id: string) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {

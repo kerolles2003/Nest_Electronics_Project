@@ -196,11 +196,13 @@ export function AdminHeader({ identity }: { identity: AdminIdentity | null }) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 h-10 px-2 rounded-xl transition-all duration-300 hover:bg-surface-high/50 active:scale-95 group">
-              <Avatar
-                size="sm"
-                fallback={identity?.initials ?? '?'}
-                className="border border-border/50 shadow-sm"
-              />
+              <span data-testid="header-avatar">
+                <Avatar
+                  size="sm"
+                  fallback={identity?.initials ?? '?'}
+                  className="border border-border/50 shadow-sm"
+                />
+              </span>
               <span className="hidden sm:block text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                 {identity?.fullName ?? 'Not identified'}
               </span>
@@ -230,20 +232,65 @@ export function AdminHeader({ identity }: { identity: AdminIdentity | null }) {
               )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="border-border/50 my-1" />
-            <DropdownMenuItem asChild>
+            <DropdownMenuItem
+              asChild
+              /*
+               * Radix calls `preventDefault()` on the click that selects an
+               * item and then closes the menu — which cancels the form submit
+               * inside it. The button appeared to do nothing at all, and the
+               * only symptom was a sign-out that never happened.
+               *
+               * `onSelect` is prevented so the native submit survives; the
+               * server action's redirect is what leaves the page, so the menu
+               * closing is not needed.
+               */
+              onSelect={(event) => {
+                event.preventDefault();
+              }}
+            >
               <Link href="/settings" className="flex items-center gap-2.5 px-2.5 py-2 text-sm text-foreground-subtle hover:text-foreground hover:bg-surface-high transition-colors duration-200 rounded-xl cursor-pointer">
                 <Settings className="w-4 h-4" />
                 Settings
               </Link>
             </DropdownMenuItem>
-            <DropdownMenuItem asChild>
+            <DropdownMenuItem
+              asChild
+              /*
+               * Radix calls `preventDefault()` on the click that selects an
+               * item and then closes the menu — which cancels the form submit
+               * inside it. The button appeared to do nothing at all, and the
+               * only symptom was a sign-out that never happened.
+               *
+               * `onSelect` is prevented so the native submit survives; the
+               * server action's redirect is what leaves the page, so the menu
+               * closing is not needed.
+               */
+              onSelect={(event) => {
+                event.preventDefault();
+              }}
+            >
               <Link href="/audit-log" className="flex items-center gap-2.5 px-2.5 py-2 text-sm text-foreground-subtle hover:text-foreground hover:bg-surface-high transition-colors duration-200 rounded-xl cursor-pointer">
                 <Shield className="w-4 h-4" />
                 Audit Log
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator className="border-border/50 my-1" />
-            <DropdownMenuItem asChild>
+            <DropdownMenuItem
+              asChild
+              /*
+               * Radix calls `preventDefault()` on the click that selects an
+               * item and then closes the menu — which cancels the form submit
+               * inside it. The button appeared to do nothing at all, and the
+               * only symptom was a sign-out that never happened.
+               *
+               * `onSelect` is prevented so the native submit survives; the
+               * server action's redirect is what leaves the page, so the menu
+               * closing is not needed.
+               */
+              onSelect={(event) => {
+                event.preventDefault();
+              }}
+            >
               {/*
                 A FORM, not an onClick.
 

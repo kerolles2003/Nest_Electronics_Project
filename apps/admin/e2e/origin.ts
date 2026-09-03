@@ -67,3 +67,39 @@ export function route(path: string): string {
 export const API_PORT = '3002';
 
 export const API_BASE_URL = `http://${HOST}:${API_PORT}/api/v1`;
+
+/**
+ * A SECOND admin dev server, pointed at an API that is not there.
+ *
+ * ## Why a whole extra server exists
+ *
+ * `readIdentity()` has a branch for "the API could not be asked", which is
+ * different from "you are not signed in" — one renders the shell with the
+ * identity stated as unavailable, the other redirects to the sign-in page. The
+ * distinction is load-bearing: collapsing it signs an operator out whenever the
+ * API hiccups.
+ *
+ * That branch is unreachable from a normal test. `GET /auth/me` is called
+ * SERVER-side by the Next process, so `page.route()` cannot intercept it, and
+ * stopping the real API would break every other spec in the run.
+ *
+ * So this server is the same application with `API_BASE_URL` pointed at port 9
+ * — the discard port, which refuses connections immediately. Cookies are scoped
+ * by HOST and not by port, so a spec signs in against the healthy server and
+ * then navigates here carrying the same session: a valid session, an
+ * unreachable API, which is exactly the state under test.
+ *
+ * Used by ONE spec (`admin-identity.spec.ts`). It costs a second `next dev`
+ * compile; the alternative was asserting the guarantee by reading the source,
+ * which is not a test.
+ */
+export const DEAD_API_PORT = process.env['E2E_DEAD_API_PORT'] ?? '3201';
+
+export const DEAD_API_BASE_URL = `http://${HOST}:${DEAD_API_PORT}`;
+
+/**
+ * Port 9 is DISCARD (RFC 863). Nothing listens, and a connection to it is
+ * refused at once rather than hanging — so the identity fetch fails fast and
+ * the page renders, which is the behaviour being asserted.
+ */
+export const UNREACHABLE_API_BASE_URL = `http://${HOST}:9/api/v1`;

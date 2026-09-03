@@ -6,6 +6,7 @@ import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
 import { isStaff } from '@/lib/api/identity';
 import { clearSession, readSession, writeSession } from '@/lib/api/session';
+import type { LoginFormState } from '@/lib/api/action-state';
 
 /**
  * Admin authentication against the NestJS API.
@@ -24,13 +25,16 @@ import { clearSession, readSession, writeSession } from '@/lib/api/session';
  * environment.
  */
 
-export interface LoginFormState {
-  error: string | null;
-  /** Keyed by field name, so the form can mark the input that was wrong. */
-  fieldErrors: Record<string, string>;
-}
-
-export const EMPTY_LOGIN_STATE: LoginFormState = { error: null, fieldErrors: {} };
+/*
+ * `LoginFormState` and `EMPTY_LOGIN_STATE` are NOT declared here.
+ *
+ * A `'use server'` module may export async functions and nothing else. Every
+ * other export is stripped from the client bundle silently, so a constant
+ * declared here reaches the form as `undefined` — which is exactly what
+ * happened: `useActionState(loginAction, EMPTY_LOGIN_STATE)` got `undefined`,
+ * the form read `state.fieldErrors`, and every render of the sign-in page was a
+ * 500. See `@/lib/api/action-state`.
+ */
 
 /**
  * Signs an operator in.

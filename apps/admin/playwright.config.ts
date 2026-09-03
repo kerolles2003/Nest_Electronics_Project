@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
-import { API_BASE_URL, BASE_URL, HOST, PORT } from './e2e/origin';
+import {
+  API_BASE_URL,
+  BASE_URL,
+  DEAD_API_PORT,
+  HOST,
+  PORT,
+  UNREACHABLE_API_BASE_URL,
+} from './e2e/origin';
 
 /**
  * Browser end-to-end configuration for the ADMIN console.
@@ -168,6 +175,38 @@ export default defineConfig({
          * A harness setting, not a product one: `next build` is unaffected and
          * production serves pre-built chunks.
          */
+        NODE_OPTIONS: '--max-old-space-size=4096',
+      },
+    },
+    {
+      /**
+       * The same application, pointed at an API that is not there.
+       *
+       * Exists so `admin-identity.spec.ts` can reach the "the API could not be
+       * asked" branch — see `e2e/origin.ts` for why that branch cannot be
+       * tested any other way. Cookies are host-scoped, so a spec signs in
+       * against the healthy server above and navigates here with the same
+       * session: a valid session and an unreachable API.
+       */
+      command: `pnpm exec next dev --hostname ${HOST} --port ${DEAD_API_PORT}`,
+      cwd: '.',
+      // The LOGIN page, which needs no API call to render — the dashboard here
+      // would render an error, and readiness must not depend on the thing this
+      // server exists to have broken.
+      url: `http://${HOST}:${DEAD_API_PORT}/admin/login`,
+      timeout: 180_000,
+      reuseExistingServer: process.env['CI'] === undefined,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        API_BASE_URL: UNREACHABLE_API_BASE_URL,
+        DEV_ORIGIN_HOST: HOST,
+        /*
+         * Its own build directory. Next 16 locks on that directory and refuses
+         * to start a second `next dev` for the same project without it —
+         * "Another next dev server is already running."
+         */
+        NEXT_DIST_DIR: '.next-dead-api',
         NODE_OPTIONS: '--max-old-space-size=4096',
       },
     },

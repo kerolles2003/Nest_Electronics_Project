@@ -104,6 +104,7 @@ export default async function OrdersPage(props: {
          */
         <div
           role="alert"
+          data-testid="queue-error"
           className="rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center"
         >
           <AlertCircle className="h-8 w-8 text-destructive mx-auto mb-3" />

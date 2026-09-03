@@ -17,10 +17,10 @@ import type { Role } from './types';
  * operator who believes they are signed in as themselves, and is not, will
  * attribute their own actions to somebody else in their own head.
  *
- * So there are exactly two outcomes here and no third: a real identity fetched
- * from `GET /auth/me`, or `null`. When it is `null` the header says so and
- * names nobody. `test/…/admin-identity.spec.ts` asserts that a failed fetch
- * renders no name at all.
+ * So the identity is a real one fetched from `GET /auth/me`, or it is stated to
+ * be unknown. There is no third option and no default. `e2e/admin-identity.spec.ts`
+ * drives the console against a dead API and asserts that no fabricated name
+ * appears anywhere on the page.
  */
 
 export interface AdminIdentity {
@@ -40,23 +40,45 @@ export function isStaff(role: Role): boolean {
 }
 
 /**
- * Resolves the signed-in operator, or `null`.
+ * WHY there is no identity, when there is none.
  *
- * Returns `null` for no session, for a session the API rejects, AND for a
- * signed-in account whose role is not staff. All three are the same thing from
- * a rendering point of view: there is no operator to name.
+ * The three cases need different responses and were originally collapsed into
+ * one `null`, which produced a real bug: a transient API failure looked
+ * identical to "not signed in", so `requireAdmin` redirected — and an operator
+ * whose API hiccuped for one request was thrown to the sign-in page and would
+ * sign in again to fix a problem that was never theirs.
+ */
+export type IdentityOutcome =
+  | { readonly status: 'ok'; readonly identity: AdminIdentity }
+  /** No session, a rejected session, or an account that may not be here. */
+  | { readonly status: 'unauthenticated' }
+  /** The API could not be asked. This is NOT the same as "not signed in". */
+  | { readonly status: 'unavailable'; readonly reason: string };
+
+/**
+ * Resolves the signed-in operator.
  *
  * **Never throws.** The header renders on every page including error pages, and
- * an unreachable API must degrade to "not signed in" rather than take the
- * console down. The guarded pages answer the question properly, with a
- * redirect — see `requireAdmin`.
+ * an unreachable API must degrade to a stated unknown rather than take the
+ * console down.
  */
-export async function readAdminIdentity(): Promise<AdminIdentity | null> {
-  if ((await readSession()) === null) return null;
+export async function readIdentity(): Promise<IdentityOutcome> {
+  if ((await readSession()) === null) return { status: 'unauthenticated' };
 
   const result = await tryApi(() => api.currentUser());
 
-  if (!result.ok) return null;
+  if (!result.ok) {
+    /*
+     * A network failure or a 5xx means the question was not answered. Saying
+     * "not signed in" would be a guess, and it is the expensive guess: it signs
+     * somebody out who is not signed out.
+     */
+    if (result.error.kind === 'network' || result.error.kind === 'server') {
+      return { status: 'unavailable', reason: result.error.message };
+    }
+
+    return { status: 'unauthenticated' };
+  }
 
   const user = result.data.data;
 
@@ -69,18 +91,32 @@ export async function readAdminIdentity(): Promise<AdminIdentity | null> {
    * strictly worse.
    *
    * This is still only about RENDERING. The API's `RolesGuard` refuses a
-   * non-staff token on every `admin/*` route regardless of what this returns,
-   * and that is the enforcement.
+   * non-staff token on every `admin/*` route regardless of what this returns.
    */
-  if (!isStaff(user.role)) return null;
+  if (!isStaff(user.role)) return { status: 'unauthenticated' };
 
   return {
-    id: user.id,
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    initials: initialsOf(user.fullName),
+    status: 'ok',
+    identity: {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      initials: initialsOf(user.fullName),
+    },
   };
+}
+
+/**
+ * The identity, or `null` when there is not one to show.
+ *
+ * For the HEADER, which must render either a real person or an explicit
+ * "unavailable" — never a placeholder name.
+ */
+export async function readAdminIdentity(): Promise<AdminIdentity | null> {
+  const outcome = await readIdentity();
+
+  return outcome.status === 'ok' ? outcome.identity : null;
 }
 
 /**
@@ -102,25 +138,33 @@ export async function readAdminIdentity(): Promise<AdminIdentity | null> {
  * performed against the SERVER's answer, which is what the requirement is
  * actually about.
  *
- * Callers that only need the guard can ignore the return value.
+ * ## It returns `null` rather than redirecting when the API is UNREACHABLE
+ *
+ * Only `unauthenticated` is grounds for the sign-in page. When the API cannot
+ * be asked, this returns `null` and lets the page render its own error state —
+ * every guarded page fetches from the same API and will fail the same way, so
+ * it will say so properly. Redirecting instead would sign an operator out over
+ * a hiccup, which is both wrong and indistinguishable from their session
+ * genuinely ending.
  */
-export async function requireAdmin(): Promise<AdminIdentity> {
-  const identity = await readAdminIdentity();
+export async function requireAdmin(): Promise<AdminIdentity | null> {
+  const outcome = await readIdentity();
 
-  if (identity === null) {
+  if (outcome.status === 'ok') return outcome.identity;
+
+  if (outcome.status === 'unauthenticated') {
     /*
      * One destination for both "no session" and "not staff".
      *
      * They are different facts, and telling them apart in the URL would be an
      * oracle: `/unauthorized` for a valid non-staff session confirms to
      * somebody holding a customer token that the address they guessed is a real
-     * console. `/login` is the honest instruction in both cases — sign in as
-     * somebody who may be here.
+     * console. `/login` is the honest instruction in both cases.
      */
     redirect('/login');
   }
 
-  return identity;
+  return null;
 }
 
 /**
@@ -138,4 +182,28 @@ function initialsOf(fullName: string): string {
     .toUpperCase();
 
   return letters.slice(0, 2) === '' ? '?' : letters.slice(0, 2);
+}
+
+/**
+ * The acting operator, for a MUTATION. Never null.
+ *
+ * A server action changes something, and an action whose actor is unknown must
+ * not run — "I could not establish who you are, so I did it anyway" is not an
+ * acceptable sentence about a console that adjusts stock and moves orders.
+ *
+ * So this is stricter than `requireAdmin`: an unreachable API throws here where
+ * it merely returns `null` there. A page with an unknown actor renders an error
+ * and shows nothing; an action with an unknown actor does nothing at all. The
+ * difference is that one of them writes.
+ */
+export async function requireAdminActor(): Promise<AdminIdentity> {
+  const outcome = await readIdentity();
+
+  if (outcome.status === 'ok') return outcome.identity;
+  if (outcome.status === 'unauthenticated') redirect('/login');
+
+  throw new Error(
+    `Refusing to act: the API could not confirm who is signed in (${outcome.reason}). ` +
+      'Nothing was changed.',
+  );
 }

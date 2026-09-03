@@ -110,7 +110,24 @@ export function proxy(request: NextRequest): NextResponse {
   if (!request.cookies.has(ADMIN_REFRESH_COOKIE)) {
     logAdminAuthFailure({ pathname, reason: 'no admin session cookie' });
 
-    return NextResponse.redirect(new URL('/login', request.url));
+    /*
+     * `nextUrl.clone()`, NOT `new URL('/login', request.url)`.
+     *
+     * This application has `basePath: '/admin'`. `request.nextUrl.pathname` is
+     * given WITHOUT the base path, and Next re-adds it when a cloned `nextUrl`
+     * is serialised — so cloning and setting the pathname produces
+     * `/admin/login`. Building a plain `URL` against `request.url` does not:
+     * it produces `/admin`-less `/login`, which is not a route in this app and
+     * 404s.
+     *
+     * It cost a whole e2e run to find, because the redirect still happened and
+     * the browser still left the guarded page — it just landed nowhere.
+     */
+    const target = request.nextUrl.clone();
+    target.pathname = '/login';
+    target.search = '';
+
+    return NextResponse.redirect(target);
   }
 
   return NextResponse.next();

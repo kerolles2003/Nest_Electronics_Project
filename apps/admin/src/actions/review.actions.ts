@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/services'
+import { requireAdminActor } from '@/lib/api/identity'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { logger } from '@/lib/logger'
 import { revalidatePath } from 'next/cache'
@@ -13,7 +13,7 @@ const reviewStatusSchema = z.object({
 })
 
 export async function updateReviewStatusAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = {
@@ -55,7 +55,7 @@ export async function updateReviewStatusAction(formData: FormData) {
 }
 
 export async function deleteReviewAction(reviewId: string) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {

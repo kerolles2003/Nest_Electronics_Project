@@ -54,3 +54,6 @@ next-env.d.ts
 /blob-report/
 /.playwright/
 /playwright/.cache/
+
+# The e2e identity fixture's separate build directory (NEXT_DIST_DIR).
+/.next-*

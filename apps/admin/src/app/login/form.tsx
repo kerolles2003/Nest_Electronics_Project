@@ -3,7 +3,8 @@
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { EMPTY_LOGIN_STATE, loginAction } from '@/actions/admin-auth.actions';
+import { loginAction } from '@/actions/admin-auth.actions';
+import { EMPTY_LOGIN_STATE } from '@/lib/api/action-state';
 
 /**
  * The sign-in form.
@@ -38,6 +39,7 @@ export function LoginForm() {
       {state.error !== null && (
         <div
           role="alert"
+          data-testid="login-error"
           className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm"
         >
           <AlertCircle className="w-4 h-4 shrink-0" />

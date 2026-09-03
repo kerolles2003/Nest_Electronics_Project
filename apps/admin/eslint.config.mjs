@@ -9,6 +9,13 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    /*
+     * The e2e identity fixture builds into its own directory (NEXT_DIST_DIR),
+     * because Next 16 refuses two dev servers sharing one. Without this, lint
+     * walks the generated bundle: 616 errors and 6000 warnings from code
+     * nobody wrote.
+     */
+    ".next-*/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

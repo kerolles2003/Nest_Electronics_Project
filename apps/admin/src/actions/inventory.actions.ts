@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/services'
+import { requireAdminActor } from '@/lib/api/identity'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { logger } from '@/lib/logger'
 import { revalidatePath } from 'next/cache'
@@ -14,7 +14,7 @@ const adjustStockSchema = z.object({
 })
 
 export async function adjustStockAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = {
@@ -84,7 +84,7 @@ export async function adjustStockAction(formData: FormData) {
 
 export async function getInventoryTransactionsAction(productId: string, page: number, limit: number) {
   /* CRITICAL: This action was missing auth validation. */
-  await requireAdmin()
+  await requireAdminActor()
 
   const supabase = await createClient()
   const offset = (page - 1) * limit

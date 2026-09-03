@@ -2,6 +2,21 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /**
+   * Where the build output goes.
+   *
+   * Overridable ONLY so the e2e suite can run a second dev server from this
+   * same directory. Next 16 refuses to start two `next dev` processes for one
+   * project — it locks on the build directory — and the identity suite needs a
+   * second instance whose `API_BASE_URL` points at nothing, because
+   * `GET /auth/me` is called server-side and cannot be intercepted from the
+   * browser (see `e2e/origin.ts`).
+   *
+   * Unset in every normal run, including `next build`, so production output is
+   * exactly where it has always been.
+   */
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
+
+  /**
    * Hosts allowed to request `/admin/_next/*` dev resources.
    *
    * Development only — Next 16 blocks cross-origin requests for dev assets, and

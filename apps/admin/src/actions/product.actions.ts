@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase'
 import { productSchema } from '@nest/types'
-import { requireAdmin } from '@/lib/services'
+import { requireAdminActor } from '@/lib/api/identity'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { validateUpload, generateStoragePath } from '@/lib/upload/validate-upload'
 import { logger } from '@/lib/logger'
@@ -35,7 +35,7 @@ function parseProductFormData(formData: FormData) {
 }
 
 export async function createProductAction(formData: FormData): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = parseProductFormData(formData)
@@ -135,7 +135,7 @@ export async function createProductAction(formData: FormData): Promise<CreatePro
 }
 
 export async function updateProductAction(formData: FormData): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const productId = formData.get('id') as string
@@ -255,7 +255,7 @@ export async function updateProductAction(formData: FormData): Promise<CreatePro
 }
 
 export async function deleteProductImageAction(imageId: string, productPath: string) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -290,7 +290,7 @@ export async function deleteProductImageAction(imageId: string, productPath: str
 }
 
 export async function softDeleteProductAction(productId: string): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -316,7 +316,7 @@ export async function softDeleteProductAction(productId: string): Promise<Create
 }
 
 export async function toggleProductStatusAction(productId: string, isActive: boolean): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -346,7 +346,7 @@ export async function reorderProductImagesAction(
   productId: string,
   imageOrders: { imageId: string; sortOrder: number }[]
 ): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -377,7 +377,7 @@ export async function setPrimaryImageAction(
   productId: string,
   imageId: string
 ): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -410,7 +410,7 @@ export async function setPrimaryImageAction(
 }
 
 export async function duplicateProductAction(productId: string): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -514,7 +514,7 @@ export async function createSlugRedirectAction(
   newSlug: string,
   entityType: string = 'product'
 ): Promise<CreateProductResponse> {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {

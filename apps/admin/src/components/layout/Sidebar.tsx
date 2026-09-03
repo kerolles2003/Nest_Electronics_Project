@@ -2,23 +2,28 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { getSupabaseBrowserClient } from '@nest/providers';
+import { usePathname } from 'next/navigation';
 import { LogOut, Menu, X, ChevronDown } from 'lucide-react';
+import { logoutAction } from '@/actions/admin-auth.actions';
+import type { AdminIdentity } from '@/lib/api/identity';
 import { navSections } from '@/config/navigation';
 import { Avatar } from '@nest/ui';
 
-export function AdminSidebar() {
+/**
+ * ## The second fabricated identity
+ *
+ * This rendered "Admin User / admin@nest.com / AD" too — the same lie as the
+ * header, in a second place, which is why grepping the header alone was not
+ * enough and the e2e assertion is a whole-page one.
+ *
+ * It also had its OWN sign-out, calling `supabase.auth.signOut()` and pushing a
+ * route: against this API that revoked nothing at all. Both sign-outs now go
+ * through `logoutAction`, which revokes the refresh token server-side first.
+ */
+export function AdminSidebar({ identity }: { identity: AdminIdentity | null }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
-  const supabase = getSupabaseBrowserClient();
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/' || pathname === '/admin' || pathname === '/admin/';
@@ -139,19 +144,27 @@ export function AdminSidebar() {
         {/* Bottom: User + Sign Out */}
         <div className="shrink-0 border-t border-border/60 p-3">
           <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors group">
-            <Avatar size="sm" fallback="AD" />
+            <Avatar size="sm" fallback={identity?.initials ?? '?'} />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">Admin User</p>
-              <p className="text-[11px] text-muted-foreground">admin@nest.com</p>
+              {identity === null ? (
+                <p className="text-sm font-medium text-warning truncate">Identity unavailable</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-foreground truncate">{identity.fullName}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{identity.email}</p>
+                </>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100"
-              title="Sign Out"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-            </button>
+            <form action={logoutAction}>
+              <button
+                type="submit"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-200 opacity-0 group-hover:opacity-100"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </form>
           </div>
         </div>
       </aside>

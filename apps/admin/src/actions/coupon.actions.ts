@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/services'
+import { requireAdminActor } from '@/lib/api/identity'
 import { logAdminAction } from '@/lib/audit/log-action'
 import { logger } from '@/lib/logger'
 import { revalidatePath } from 'next/cache'
@@ -20,7 +20,7 @@ const couponSchema = z.object({
 })
 
 export async function createCouponAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const raw = {
@@ -70,7 +70,7 @@ export async function createCouponAction(formData: FormData) {
 }
 
 export async function updateCouponAction(formData: FormData) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -122,7 +122,7 @@ export async function updateCouponAction(formData: FormData) {
 }
 
 export async function toggleCouponActiveAction(id: string, isActive: boolean) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
@@ -152,7 +152,7 @@ export async function toggleCouponActiveAction(id: string, isActive: boolean) {
 }
 
 export async function deleteCouponAction(id: string) {
-  const admin = await requireAdmin()
+  const admin = await requireAdminActor()
   const supabase = await createClient()
 
   try {
