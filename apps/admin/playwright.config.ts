@@ -52,6 +52,13 @@ export default defineConfig({
    * rather than letting it surface as unrelated specs failing in a helper.
    */
   globalSetup: './e2e/global-setup.ts',
+  /*
+   * Removes the accounts and orders every run creates, and gives the seeded
+   * catalogue back exactly the stock they took. It was missing at first, and
+   * the residue surfaced as the STOREFRONT suite failing on a stock filter —
+   * see the file for what that cost.
+   */
+  globalTeardown: './e2e/global-teardown.ts',
 
   /*
    * One worker. The lifecycle specs drive orders through a shared catalogue and

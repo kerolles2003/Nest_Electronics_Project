@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type APIRequestContext, type Page, request } from '@playwright/test';
 import { API_BASE_URL, route } from '../origin';
+import { E2E_EMAIL_PREFIX } from '../global-teardown';
 
 /**
  * What an admin spec needs: an operator to sign in as, and real orders to work.
@@ -123,7 +124,7 @@ export async function placeOrder(runId: string, label: string): Promise<PlacedOr
   const context = await api();
 
   try {
-    const email = `admin-e2e-${label}.${runId}@example.test`;
+    const email = `${E2E_EMAIL_PREFIX}.${label}.${runId}@example.test`;
 
     const registered = await context.post(url('/auth/register'), {
       data: { email, password: CUSTOMER_PASSWORD, fullName: `Admin E2E ${label}` },
@@ -227,7 +228,7 @@ export async function registerCustomer(
   const context = await api();
 
   try {
-    const email = `admin-e2e-${label}.${runId}@example.test`;
+    const email = `${E2E_EMAIL_PREFIX}.${label}.${runId}@example.test`;
 
     const registered = await context.post(url('/auth/register'), {
       data: { email, password: CUSTOMER_PASSWORD, fullName: `Customer ${label}` },
