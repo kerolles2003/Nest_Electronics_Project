@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { BASE_PATH } from './src/lib/api/renewal';
 
 const nextConfig: NextConfig = {
   /**
@@ -38,7 +39,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: [process.env['DEV_ORIGIN_HOST'] ?? '127.0.0.1'],
 
   transpilePackages: ['@nest/types', '@nest/config', '@nest/repositories', '@nest/providers', '@nest/services', '@nest/ui'],
-  basePath: '/admin',
+  basePath: BASE_PATH,
   images: {
     /*
      * `dangerouslyAllowSVG` is deliberately ABSENT.

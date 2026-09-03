@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { renewSession } from '@/lib/api/client';
-import { RENEWAL_PATH, safeNextPath } from '@/lib/api/renewal';
+import { BASE_PATH, safeNextPath } from '@/lib/api/renewal';
 import {
   clearSession,
   markRenewalAttempted,
@@ -42,10 +42,7 @@ import {
  */
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const url = new URL(request.url);
-  const base = basePathOf(url.pathname);
-  const next = safeNextPath(url.searchParams.get('next'));
-
+  const next = safeNextPath(request.nextUrl.searchParams.get('next'));
   const session = await readSession();
 
   /*
@@ -58,7 +55,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
    */
   await markRenewalAttempted();
 
-  if (session === null) return redirectTo(url, base, '/login');
+  if (session === null) return redirectTo('/login');
 
   const renewed = await renewSession(session.refreshToken);
 
@@ -70,7 +67,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
      */
     await clearSession();
 
-    return redirectTo(url, base, '/login');
+    return redirectTo('/login');
   }
 
   await writeSession({
@@ -78,31 +75,31 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     refreshToken: renewed.refreshToken,
   });
 
-  return redirectTo(url, base, next);
+  return redirectTo(next);
 }
 
 /**
- * The base path, derived from the request rather than written down.
+ * A RELATIVE redirect, carrying the base path explicitly.
  *
- * This application is served under `basePath: '/admin'`, and `redirect()`'s
- * handling of that in a route handler is not something this version's docs
- * state. Rather than assume — the last assumption about base paths cost a whole
- * browser run, because the redirect happened and landed nowhere — the prefix is
- * read off the path that actually arrived: everything before this route's own
- * known suffix IS the base path, whatever it is configured to be.
+ * Both halves were learned the hard way, by measurement.
+ *
+ * The base path is written out because a Route Handler cannot recover it:
+ * `request.url` arrives with the prefix already stripped and
+ * `nextUrl.basePath` is empty. `BASE_PATH` is the same constant
+ * `next.config.ts` mounts the application with, so the two cannot disagree.
+ *
+ * The location is RELATIVE — legal per RFC 7231, and resolved by the browser
+ * against the URL it actually requested. `NextResponse.redirect` needs an
+ * absolute URL, and building one meant reading the origin off `request.url`,
+ * which Next reports as `http://localhost:3200` even for a request made to
+ * `127.0.0.1`. Those are different origins to `next dev`, to a cookie jar, and
+ * to this suite's origin pinning; silently moving the operator between them is
+ * exactly the class of bug that cost the storefront five phases of client-side
+ * coverage.
+ *
+ * 303, not 307: the browser must GET the destination. A 307 preserves the
+ * method, which is correct today and wrong the moment somebody adds POST.
  */
-function basePathOf(pathname: string): string {
-  return pathname.endsWith(RENEWAL_PATH)
-    ? pathname.slice(0, pathname.length - RENEWAL_PATH.length)
-    : '';
-}
-
-function redirectTo(url: URL, base: string, path: string): NextResponse {
-  /*
-   * 303, not 307. The browser must GET the destination; a 307 would preserve
-   * the method, and while this handler only answers GET today, a redirect that
-   * silently replays a method is the kind of thing that is correct until
-   * somebody adds POST.
-   */
-  return NextResponse.redirect(new URL(`${base}${path}`, url.origin), 303);
+function redirectTo(path: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { Location: `${BASE_PATH}${path}` } });
 }

@@ -28,7 +28,25 @@
  * state lives in `identity.ts`, which is server-only already.
  */
 
-/** The route that renews. Under `basePath`, so this is `/admin/session/renew`. */
+/**
+ * THE base path, and the only place it is written down.
+ *
+ * `next.config.ts` imports this rather than repeating the literal, so the
+ * application's own mount point and the redirects that have to reproduce it
+ * cannot drift apart.
+ *
+ * It has to be written down at all because a Route Handler CANNOT derive it.
+ * Measured on Next 16.2.4: for a request to `/admin/session/renew`,
+ * `request.url` is `http://localhost:3200/session/renew` — the prefix is
+ * already stripped — `nextUrl.pathname` is `/session/renew`, and
+ * `nextUrl.basePath` is the empty string. There is nothing left to read it
+ * from, which is exactly the sort of thing worth measuring rather than
+ * assuming: the first version of this file assumed the prefix survived, and
+ * every redirect it produced landed on a 404.
+ */
+export const BASE_PATH = '/admin';
+
+/** The route that renews. Under `BASE_PATH`, so this is `/admin/session/renew`. */
 export const RENEWAL_PATH = '/session/renew';
 
 /** The header `proxy.ts` writes so a Server Component knows where it is. */

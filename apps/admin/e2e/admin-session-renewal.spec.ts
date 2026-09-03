@@ -62,18 +62,27 @@ test.describe('an access token that is no longer usable', () => {
     await signInAsAdmin(page);
     await breakCookie(page, ACCESS_COOKIE);
 
-    const response = await page.goto(route('/orders'));
+    await page.goto(route('/orders'));
 
     /*
-     * 200 and the real page. Against the previous implementation this is a 500
-     * and a Next error overlay, so this line is the regression test.
+     * Waiting for the heading, NOT asserting on the navigation's status code.
      *
-     * The browser-health fixture is doing the other half silently: it fails any
-     * test that saw a 5xx, a console error or a page error, and the old code
-     * produced all three here.
+     * Renewal is a chain — `/orders` -> `/session/renew` -> `/orders` — and the
+     * console shell has already streamed by the time the page segment decides
+     * to renew. HTTP cannot redirect a response that has begun, so Next
+     * performs it client-side and the FIRST response is a 200 carrying the
+     * instruction. `expect(response.status()).toBe(200)` would therefore pass
+     * against a broken implementation as easily as a working one, which is the
+     * kind of assertion this repository has been burned by before.
+     *
+     * The heading only appears once the chain has finished with a working
+     * session. Against the previous implementation the page 500'd instead, and
+     * the browser-health fixture fails any test that saw a 5xx, a console error
+     * or a page error — the old code produced all three here.
      */
-    expect(response?.status()).toBe(200);
-    await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test('leaves a WORKING session behind, not just a rendered page', async ({ page }) => {
@@ -81,6 +90,9 @@ test.describe('an access token that is no longer usable', () => {
     await breakCookie(page, ACCESS_COOKIE);
 
     await page.goto(route('/orders'));
+    await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible({
+      timeout: 30_000,
+    });
 
     /*
      * The cookie is the assertion, not the page.
@@ -107,7 +119,9 @@ test.describe('an access token that is no longer usable', () => {
 
     await page.goto(route('/orders'));
 
-    await expect(page.getByRole('button', { name: DEV_ADMIN_NAME })).toBeVisible();
+    await expect(page.getByRole('button', { name: DEV_ADMIN_NAME })).toBeVisible({
+      timeout: 30_000,
+    });
   });
 
   test('a second navigation does not renew again', async ({ page }) => {
@@ -115,9 +129,16 @@ test.describe('an access token that is no longer usable', () => {
     await breakCookie(page, ACCESS_COOKIE);
 
     await page.goto(route('/orders'));
+    await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible({
+      timeout: 30_000,
+    });
+
     const afterFirst = await cookieValue(page, REFRESH_COOKIE);
 
     await page.goto(route('/orders'));
+    await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible({
+      timeout: 30_000,
+    });
 
     /*
      * The renewed access token is good for fifteen minutes, so the second

@@ -4122,7 +4122,58 @@ convenient. They assert the renewed pair was PERSISTED, not merely that a page
 rendered: a page can render from a renewal whose result was thrown away, and
 that is exactly what the old code did.
 
-**They have not been run.** See the note below on what this machine could do.
+### Verifying it found two more bugs, both in the redirect
+
+The Playwright config needs three web servers and this machine could not start
+the third, so the same twelve assertions were driven against two servers started
+by hand. That run went **5 passed, 7 failed**, and every failure had one cause:
+
+```
+location: http://localhost:3200/orders     <- should be /admin/orders
+```
+
+1. **The redirect dropped the base path.** Every renewal landed on a route that
+   does not exist. The first implementation derived the prefix from the request,
+   on the reasoning that deriving beats assuming — but the derivation was itself
+   an assumption. Measured on Next 16.2.4, for a request to
+   `/admin/session/renew`: `request.url` is `http://localhost:3200/session/renew`
+   with the prefix **already stripped**, `nextUrl.pathname` is `/session/renew`,
+   and `nextUrl.basePath` is the empty string. There is nothing left to read it
+   from. So `BASE_PATH` is written down once, in `renewal.ts`, and
+   `next.config.ts` mounts the application with that same constant — the two
+   cannot drift.
+
+2. **Rebuilding an absolute URL moved the origin.** `NextResponse.redirect`
+   requires one, and the origin came from `request.url`, which Next reports as
+   `http://localhost:3200` even for a request made to `127.0.0.1`. Those are
+   different origins to `next dev`, to a cookie jar, and to this suite's origin
+   pinning — the exact class of mismatch that cost the storefront five phases of
+   client-side coverage. The route now returns a RELATIVE `Location`, which is
+   legal and which the browser resolves against the URL it actually asked for.
+
+After both fixes: **12 assertions, 0 failures** — the page renders, the rotated
+pair is persisted, the operator is still the operator, a second navigation does
+not rotate again, an unrenewable session goes to sign-in with no dead cookies
+left behind, and the renewal route refuses both a protocol-relative and an
+absolute `next` while still honouring an ordinary path.
+
+### And it corrected the spec
+
+The first diagnosis of the base-path bug was wrong, and wrong in an instructive
+way. `curl` showed `/admin/orders` answering **200** rather than a redirect,
+which read as "the renewal never fires". It fires: the console shell has already
+streamed by the time the page segment decides to renew, and HTTP cannot redirect
+a response that has begun — so Next performs it client-side and the first
+response is a 200 carrying the instruction.
+
+The spec had asserted `expect(response.status()).toBe(200)`, which would have
+passed against a broken implementation exactly as readily as a working one. It
+now waits for the heading that only appears once the chain has completed against
+a working session.
+
+**Status:** the behaviour is verified in a real browser. The spec FILE has still
+not been executed under Playwright's own runner, because the third web server
+cannot start here — see the note at the end of this log.
 
 ## Storefront failure set, by name
 
@@ -4182,5 +4233,12 @@ all three workspaces, and a full `next build` of the admin — which is what
 proves `/session/renew` is a legal, registered Route Handler rather than merely
 legal TypeScript.
 
-**Left unverified:** the storefront browser suite, and the nine session-renewal
-specs. They are written and they type-check; nothing has executed them.
+**Verified against hand-started servers:** the session-renewal behaviour, twelve
+assertions, zero failures — after that run found two real bugs in the redirect.
+Two of the three web servers the admin config needs did start; only the
+unreachable-API one, which these specs do not use, could not.
+
+**Left unverified:** the storefront browser suite, and the spec FILES themselves
+under Playwright's own runner. They are written, they type-check, and the
+behaviour they describe has been driven end-to-end — but nothing has executed
+them as specs.
