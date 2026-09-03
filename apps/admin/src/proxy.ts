@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { ADMIN_REFRESH_COOKIE } from '@/lib/api/session';
+import { PATH_HEADER } from '@/lib/api/renewal';
 import { logAdminAuthFailure } from '@/lib/logger';
 
 /**
@@ -130,7 +131,28 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.redirect(target);
   }
 
-  return NextResponse.next();
+  return passThroughWithPath(request);
+}
+
+/**
+ * Passes the request on, recording the pathname in a request header.
+ *
+ * A Server Component cannot read its own URL, and `requireAdmin` needs it: when
+ * the access token has expired it sends the browser to the renewal route and
+ * has to say where to come back to. This is the documented way to get that
+ * fact from middleware into a render.
+ *
+ * It is a PATH, not a decision. Nothing downstream authorises anything on the
+ * strength of this header, and a client that forged one could only change where
+ * it lands after renewing — `safeNextPath` refuses anything that is not a local
+ * path, so the worst forgery available is sending yourself to another page of
+ * the console you were already entitled to open.
+ */
+function passThroughWithPath(request: NextRequest): NextResponse {
+  const forwarded = new Headers(request.headers);
+  forwarded.set(PATH_HEADER, request.nextUrl.pathname);
+
+  return NextResponse.next({ request: { headers: forwarded } });
 }
 
 /**

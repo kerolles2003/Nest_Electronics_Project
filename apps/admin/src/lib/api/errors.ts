@@ -12,6 +12,16 @@
 export type ApiErrorKind =
   /** No credential, or one the API rejected. Sign in again. */
   | 'unauthenticated'
+  /**
+   * The access token is expired or malformed, and a refresh token may still be
+   * good. Distinct from `unauthenticated` because the RESPONSE is different:
+   * this one is renewable without the operator doing anything, and treating it
+   * as "sign in again" throws somebody out of a session they still have.
+   *
+   * Renewal happens in `app/session/renew/route.ts` — never here, and never
+   * during a page render. See `client.ts` for why.
+   */
+  | 'expired'
   /** Authenticated, but not permitted. The role is wrong. */
   | 'forbidden'
   /** The thing is not there. */
@@ -54,7 +64,17 @@ interface WireError {
 }
 
 function kindFor(status: number, code: string): ApiErrorKind {
-  if (status === 401) return 'unauthenticated';
+  if (status === 401) {
+    /*
+     * The CODE decides, not the status. `TOKEN_EXPIRED` and `TOKEN_INVALID`
+     * mean the ACCESS token is no good and the refresh token may still be —
+     * that is renewable. Anything else 401 (no credential at all, a rejected
+     * refresh, a reused one) is terminal and means sign in again.
+     */
+    return code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID'
+      ? 'expired'
+      : 'unauthenticated';
+  }
   if (status === 403) return 'forbidden';
   if (status === 404) return 'not-found';
   if (status === 409) return 'conflict';
@@ -118,7 +138,16 @@ export function toNetworkError(cause: unknown): ApiError {
 export function operatorMessage(error: ApiError): string {
   switch (error.kind) {
     case 'unauthenticated':
-      return 'Your session has expired. Sign in again.';
+      return 'Your session has ended. Sign in again.';
+    case 'expired':
+      /*
+       * A navigation renews itself — `requireAdmin` sends the browser through
+       * the renewal route. An ACTION cannot: it is a POST whose result the
+       * React runtime is waiting for, and renewing mid-action would rotate the
+       * session under a request that is already in flight. So the operator is
+       * told to reload, and nothing was written.
+       */
+      return 'Your session expired before that was sent. Reload the page and try again — nothing was changed.';
     case 'forbidden':
       return 'Your account does not have permission to do that.';
     case 'not-found':

@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { ApiError, toApiError, toNetworkError } from './errors';
-import { clearSession, readSession, writeSession } from './session';
+import { readSession } from './session';
 import type { SessionTokens } from './types';
 
 /**
@@ -12,8 +12,28 @@ import type { SessionTokens } from './types';
  *
  * Every call goes through here, which is what makes the cross-cutting rules
  * enforceable in ONE place instead of being re-remembered per screen: the base
- * URL, the bearer header, the JSON envelope, the error translation, and the
- * silent 401 refresh.
+ * URL, the bearer header, the JSON envelope, and the error translation.
+ *
+ * ## It NEVER writes a cookie, and that is the point
+ *
+ * This used to refresh on an expired access token and store the new pair. It
+ * was wrong in a way that only showed up after fifteen idle minutes:
+ * `writeSession` writes cookies, **Next forbids writing cookies during a page
+ * render**, and `tryApi` only catches `ApiError` — so the write threw, the page
+ * 500'd, and the operator saw a stack trace where an order should be.
+ *
+ * The second half was worse than the crash. The refresh had already SUCCEEDED
+ * server-side, so the API had rotated the refresh token and burned the old one;
+ * the new pair was never persisted, so the browser kept presenting the burned
+ * token, and the next attempt came back `REFRESH_TOKEN_REUSED` — which the API
+ * correctly treats as theft and answers by revoking the whole family. A stack
+ * trace, then a silent sign-out, from nothing but sitting still.
+ *
+ * So renewal lives in exactly one place that is allowed to write cookies and is
+ * single-flight by construction: `app/session/renew/route.ts`, reached by one
+ * redirect from `requireAdmin`. Not here, and not in `proxy.ts` — middleware
+ * runs on every parallel request a page load makes, including RSC prefetches,
+ * and concurrent rotations of one rotating token burn each other.
  *
  * It is SERVER-ONLY by construction. The tokens live in httpOnly cookies that
  * client JavaScript cannot read (see `session.ts`), so there is no way to make
@@ -114,8 +134,14 @@ function safeJson(text: string): unknown {
  * one is issued, so the result must always be persisted. Reusing a burned token
  * returns `REFRESH_TOKEN_REUSED`, which the API treats as suspected theft and
  * which is terminal — the session is cleared rather than retried.
+ *
+ * EXPORTED, and called from exactly one place: the renewal route handler. It is
+ * exported rather than inlined there so that the rule "every call to this API
+ * goes through this module" still holds for the one call that renews the
+ * session. Calling it anywhere that cannot persist the result would burn a live
+ * refresh token — see the note at the top of this file.
  */
-async function refreshSession(refreshToken: string): Promise<SessionTokens | null> {
+export async function renewSession(refreshToken: string): Promise<SessionTokens | null> {
   const { status, body } = await send(
     '/auth/refresh',
     { method: 'POST', body: { refreshToken }, auth: false },
@@ -128,56 +154,27 @@ async function refreshSession(refreshToken: string): Promise<SessionTokens | nul
 }
 
 /**
- * Performs one API call, refreshing ONCE on an expired access token.
+ * Performs one API call. Renews NOTHING and writes NO cookie.
  *
- * The retry is deliberately limited to a single attempt and to the
- * authentication failures a refresh can actually fix. A second 401 means the
- * session is genuinely over, and looping would just burn refresh tokens — each
- * rotation invalidates the last, so a retry storm is how a valid session gets
- * destroyed.
+ * An expired access token comes back as an `ApiError` of kind `expired`, which
+ * is a fact about this request rather than an instruction to sign anybody out.
+ * `requireAdmin` turns it into a redirect through the renewal route; a server
+ * action turns it into a message saying nothing was changed.
+ *
+ * The important property is that this function is now safe to call from a page
+ * render, which is where most of the console's calls happen. Nothing it does
+ * can rotate a refresh token, so nothing it does can leave the browser holding
+ * a burned one.
  */
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const wantsAuth = options.auth !== false;
   const session = wantsAuth ? await readSession() : null;
 
-  let result = await send(path, options, session?.accessToken ?? null);
-
-  const expired = result.status === 401 && wantsAuth && session !== null && isRenewable(result.body);
-
-  if (expired) {
-    const renewed = await refreshSession(session.refreshToken);
-
-    if (renewed === null) {
-      // The refresh token is gone, revoked, or reused. Nothing here can recover
-      // it, and keeping the cookies would make every later request repeat this.
-      await clearSession();
-      throw toApiError(401, result.body);
-    }
-
-    await writeSession({
-      accessToken: renewed.accessToken,
-      refreshToken: renewed.refreshToken,
-    });
-
-    result = await send(path, options, renewed.accessToken);
-  }
+  const result = await send(path, options, session?.accessToken ?? null);
 
   if (result.status >= 400) throw toApiError(result.status, result.body);
 
   return result.body as T;
-}
-
-/**
- * Only these two 401s are worth a refresh.
- *
- * `UNAUTHENTICATED` means no credential was presented at all, and
- * `REFRESH_TOKEN_REUSED` is terminal by design — refreshing either would be
- * pointless work that also destroys a valid rotation chain.
- */
-function isRenewable(body: unknown): boolean {
-  const code = (body as { error?: { code?: string } } | null)?.error?.code;
-
-  return code === 'TOKEN_EXPIRED' || code === 'TOKEN_INVALID';
 }
 
 /**

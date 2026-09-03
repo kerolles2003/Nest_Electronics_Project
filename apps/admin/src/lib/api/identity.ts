@@ -1,9 +1,11 @@
 import 'server-only';
 
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { tryApi } from './client';
+import { PATH_HEADER, renewalUrl, safeNextPath } from './renewal';
 import * as api from './endpoints';
-import { readSession } from './session';
+import { readSession, renewalWasJustAttempted } from './session';
 import type { Role } from './types';
 
 /**
@@ -52,6 +54,13 @@ export type IdentityOutcome =
   | { readonly status: 'ok'; readonly identity: AdminIdentity }
   /** No session, a rejected session, or an account that may not be here. */
   | { readonly status: 'unauthenticated' }
+  /**
+   * The access token expired. The session is probably still good and the
+   * operator has done nothing wrong; it needs renewing, which a page render is
+   * not allowed to do. `requireAdmin` turns this into one redirect through
+   * `app/session/renew`.
+   */
+  | { readonly status: 'expired' }
   /** The API could not be asked. This is NOT the same as "not signed in". */
   | { readonly status: 'unavailable'; readonly reason: string };
 
@@ -76,6 +85,13 @@ export async function readIdentity(): Promise<IdentityOutcome> {
     if (result.error.kind === 'network' || result.error.kind === 'server') {
       return { status: 'unavailable', reason: result.error.message };
     }
+
+    /*
+     * Expired is not the same as signed out, and collapsing the two is what
+     * used to throw operators onto the sign-in page — or, before that, into a
+     * 500 — for the crime of leaving a tab open for fifteen minutes.
+     */
+    if (result.error.kind === 'expired') return { status: 'expired' };
 
     return { status: 'unauthenticated' };
   }
@@ -152,6 +168,8 @@ export async function requireAdmin(): Promise<AdminIdentity | null> {
 
   if (outcome.status === 'ok') return outcome.identity;
 
+  if (outcome.status === 'expired') await renewOrGiveUp();
+
   if (outcome.status === 'unauthenticated') {
     /*
      * One destination for both "no session" and "not staff".
@@ -200,10 +218,53 @@ export async function requireAdminActor(): Promise<AdminIdentity> {
   const outcome = await readIdentity();
 
   if (outcome.status === 'ok') return outcome.identity;
-  if (outcome.status === 'unauthenticated') redirect('/login');
 
-  throw new Error(
-    `Refusing to act: the API could not confirm who is signed in (${outcome.reason}). ` +
-      'Nothing was changed.',
-  );
+  if (outcome.status === 'unavailable') {
+    throw new Error(
+      `Refusing to act: the API could not confirm who is signed in (${outcome.reason}). ` +
+        'Nothing was changed.',
+    );
+  }
+
+  /*
+   * `renewOrGiveUp` never returns — it redirects either way — but an async
+   * function typed `Promise<never>` does not narrow control flow for the
+   * compiler the way a synchronous `never` does. Handling `unavailable` above
+   * leaves `unauthenticated` as the only case that can reach the last line,
+   * which is both true and checkable.
+   */
+  if (outcome.status === 'expired') await renewOrGiveUp();
+
+  redirect('/login');
+}
+
+/**
+ * The path the browser actually asked for, as `proxy.ts` recorded it.
+ *
+ * A Server Component has no supported way to read its own URL, and renewal has
+ * to know where to send the operator back to. `headers()` is the documented
+ * way to carry that fact from middleware into a render.
+ *
+ * Falling back to the console index is safe: the worst case is landing on the
+ * dashboard instead of the page that was asked for, which is an annoyance
+ * rather than a wrong destination.
+ */
+async function renewOrGiveUp(): Promise<never> {
+  /*
+   * The loop guard.
+   *
+   * Renewal genuinely succeeding and the very next request still being refused
+   * is possible — an account revoked between the two, a clock that disagrees —
+   * and without this it is an infinite `page -> renew -> page` cycle in which
+   * every step reports success. One attempt is allowed; a second consecutive
+   * expiry means the session cannot be saved, and the honest answer is the
+   * sign-in page.
+   */
+  if (await renewalWasJustAttempted()) redirect('/login');
+
+  redirect(renewalUrl(await currentPath()));
+}
+
+async function currentPath(): Promise<string> {
+  return safeNextPath((await headers()).get(PATH_HEADER));
 }

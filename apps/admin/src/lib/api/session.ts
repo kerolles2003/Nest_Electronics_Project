@@ -63,6 +63,22 @@ const REFRESH_COOKIE = 'nest_admin_rt';
  */
 export const ADMIN_REFRESH_COOKIE = REFRESH_COOKIE;
 
+/**
+ * A 30-second breadcrumb saying "renewal has just been attempted".
+ *
+ * The loop guard. Without it a session that renews successfully and is STILL
+ * refused — an API that has revoked the account, a clock that disagrees — sends
+ * the browser round `page -> renew -> page -> renew` forever, because each
+ * renewal genuinely succeeds. With it, the second consecutive expiry goes to
+ * the sign-in page instead.
+ *
+ * Thirty seconds because a freshly issued access token is good for fifteen
+ * minutes: any second expiry inside that window is a real fault, not a race.
+ */
+const RENEWAL_MARKER_COOKIE = 'nest_admin_renewed';
+
+const RENEWAL_MARKER_MAX_AGE_SECONDS = 30;
+
 /** 30 days, matching the API's `JWT_REFRESH_TTL` default. */
 const REFRESH_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -119,4 +135,25 @@ export async function clearSession(): Promise<void> {
   const jar = await cookies();
   jar.set(ACCESS_COOKIE, '', { ...BASE_COOKIE, maxAge: 0 });
   jar.set(REFRESH_COOKIE, '', { ...BASE_COOKIE, maxAge: 0 });
+}
+
+/**
+ * Records that renewal has just run. Write-context only, like the pair itself.
+ */
+export async function markRenewalAttempted(): Promise<void> {
+  const jar = await cookies();
+  jar.set(RENEWAL_MARKER_COOKIE, '1', {
+    ...BASE_COOKIE,
+    maxAge: RENEWAL_MARKER_MAX_AGE_SECONDS,
+  });
+}
+
+/**
+ * Whether renewal ran in the last thirty seconds.
+ *
+ * READ ONLY, so a page render may call it — which is the point: `requireAdmin`
+ * needs to know whether it has already tried, and it cannot write anything.
+ */
+export async function renewalWasJustAttempted(): Promise<boolean> {
+  return (await cookies()).get(RENEWAL_MARKER_COOKIE)?.value === '1';
 }

@@ -4050,13 +4050,10 @@ What it does NOT do is stop three scratch databases being created on somebody's
 shared cluster. The right answer is still a local Mongo for tests; this makes
 the wrong answer survivable rather than acceptable.
 
-## Found while probing, not fixed: the admin console 500s when an access token expires
+## The admin console 500'd when an access token expired
 
-Recorded here rather than fixed, because the fix is a change to the
-authentication boundary and belongs in its own unit with its own tests.
-
-Probing the admin dev server with a session cookie the API rejects produces
-this, from a page render:
+Found by probing the dev server with a session the API rejects, not by a test —
+no test in this suite has ever held a token long enough:
 
 ```
 ⨯ Error: Cookies can only be modified in a Server Action or Route Handler.
@@ -4067,32 +4064,65 @@ this, from a page render:
     at async OrdersPage (src/app/(dashboard)/orders/page.tsx:75)
 ```
 
-`apiFetch` refreshes once on an expired access token and then calls
-`writeSession()` to store the rotated pair. Both `writeSession` and
-`clearSession` write cookies, and **Next forbids writing cookies during a page
-render**. `tryApi` only catches `ApiError`, so this one propagates and the page
-500s.
+`apiFetch` refreshed on an expired access token and stored the new pair.
+Storing means writing cookies, and this version's own documentation is
+unambiguous: *"Setting cookies is not supported during Server Component
+rendering. To modify cookies, invoke a Server Function from the client or use a
+Route Handler."* `tryApi` only catches `ApiError`, so the write threw and the
+page 500'd.
 
-It is reachable in ordinary use, not just under a probe. The access token lives
-fifteen minutes; an operator who leaves the console open for twenty and then
-clicks anything hits it. Worse than the 500 is what follows: the refresh
-succeeded server-side, so the rotation already happened and the NEW refresh
-token was never persisted. The browser still holds the old one, the next attempt
-is `REFRESH_TOKEN_REUSED`, and the API revokes the whole family — the operator
-is silently signed out of a console that just showed them a stack trace.
+**The half that was worse than the crash.** The refresh had already SUCCEEDED
+server-side, so the API had rotated the refresh token and burned the old one.
+The new pair was never persisted, so the browser went on presenting the burned
+token, and the next attempt came back `REFRESH_TOKEN_REUSED` — which the API
+correctly treats as theft and answers by revoking the whole family. A stack
+trace, then a silent sign-out, from leaving a tab open for fifteen minutes.
+On a console that moves money.
 
-**Why the browser suite did not catch it.** Every spec signs in and finishes in
-seconds, so no access token in the suite has ever expired. A test IS cheap: sign
-in, replace `nest_admin_at` with a garbage value while keeping a valid
-`nest_admin_rt`, then navigate — `isRenewable` treats `TOKEN_INVALID` the same
-as `TOKEN_EXPIRED`, so that is the same code path.
+### Why not middleware, which can write cookies
 
-**The shape of the fix.** Refreshing belongs in `proxy.ts`, which runs in
-middleware where cookies ARE writable and runs once per navigation rather than
-once per parallel request — which also removes the concurrent-rotation hazard
-the dashboard layout comment already worries about. That is a change to the
-boundary, so it wants its own commit, and it should land before Phase 7 adds
-more screens on top of it: every new admin page inherits this.
+It was the obvious candidate and `proxy.ts` already argued against it, in
+writing, before any of this: middleware runs on every request a page load
+makes, including the RSC prefetch a hovered link fires. The refresh token
+rotates on every use, so two concurrent renewals burn each other and the loser
+is read as theft. The symptom is a sign-out nobody can reproduce — the same
+failure, arrived at from the other direction.
+
+### One place, reached by one redirect
+
+`app/session/renew/route.ts`. `apiFetch` now writes no cookie at all and an
+expired access token surfaces as a new typed kind, `expired`, distinct from
+`unauthenticated` — collapsing the two is what threw operators onto the sign-in
+page for the crime of sitting still. `requireAdmin` redirects to the renewal
+route; the route renews once, stores the pair, and redirects back. Single-flight
+by construction rather than by hoping two requests do not overlap.
+
+Three things the route is careful about:
+
+- **The base path is derived, not assumed.** The docs promise automatic
+  `basePath` prefixing for links and say nothing about route handlers. The last
+  assumption about base paths cost a whole browser run — the redirect happened
+  and landed nowhere — so the prefix is read off the path that actually arrived.
+- **A loop guard.** Renewal succeeding and the very next request still being
+  refused is possible (an account revoked between the two), and every step
+  reports success, so it loops forever. A thirty-second breadcrumb cookie sends
+  the second consecutive expiry to the sign-in page instead. Thirty seconds
+  because a fresh access token is good for fifteen minutes: any second expiry
+  inside that window is a fault, not a race.
+- **`next` is an open redirect unless checked.** `//evil.example` is another
+  origin to most parsers. It is discarded rather than repaired.
+
+### The specs break the token instead of waiting
+
+Waiting fifteen minutes is not a test. The nine specs replace the access cookie
+with a value the API rejects and leave the refresh cookie intact —
+`TOKEN_INVALID` and `TOKEN_EXPIRED` take the identical path through both the API
+and the console, which is what makes the substitution honest rather than
+convenient. They assert the renewed pair was PERSISTED, not merely that a page
+rendered: a page can render from a renewal whose result was thrown away, and
+that is exactly what the old code did.
+
+**They have not been run.** See the note below on what this machine could do.
 
 ## Storefront failure set, by name
 
@@ -4113,3 +4143,44 @@ is a name that had never failed before. It passes 3/3 in isolation, and
 Playwright had already cleared its artefacts by the time I looked, so it is
 recorded as **unexplained rather than as a flake** — calling it a flake without
 its error text is exactly the reasoning this section argues against.
+
+## What this machine could and could not verify
+
+Stated because a verification section that quietly omits the tests that did not
+run is worse than one that says so.
+
+This box has **7.7 GB of physical memory**. For most of this session another
+project on the same machine — `D:\ahmed-adel-project` — has had a `next dev`
+server up and, for part of it, its own full unit suite running: seven worker
+processes and roughly 500 MB. Free physical memory measured between **0.6 and
+1.4 GB** throughout, with none of this repository's processes running.
+
+The browser suites do not fit in that. The admin suite alone starts three
+servers — the API plus two `next dev` instances, the second existing so the
+unreachable-API specs have something to point at — and each Next server is
+configured to be allowed a 4 GB heap. Runs were killed repeatedly, and the
+failures they produced were not test results:
+
+- `not-found.spec.ts:92` reported `Expected 404, Received 500`, and the browser
+  console named the cause: `Jest worker encountered 2 child process exceptions,
+  exceeding retry limit` — Next's dev compile worker being killed, so the dev
+  server answered 500.
+- The last attempt did not reach a test at all: `Process from config.webServer
+  was not able to start. Exit code: 3221225794` — `0xC0000142`,
+  `STATUS_DLL_INIT_FAILED`. `nest build` could not initialise.
+
+None of that is attributable to the code, and reading it as a regression would
+have been the same mistake as reading a count instead of a name.
+
+**Not touched:** the other project's processes. They are somebody's work in
+flight, and killing them to make a test run green is not a trade this repository
+gets to make. Only orphans belonging to this repository's own killed runs were
+reaped.
+
+**Verified anyway, without a browser:** `tsc --noEmit` and `eslint` clean across
+all three workspaces, and a full `next build` of the admin — which is what
+proves `/session/renew` is a legal, registered Route Handler rather than merely
+legal TypeScript.
+
+**Left unverified:** the storefront browser suite, and the nine session-renewal
+specs. They are written and they type-check; nothing has executed them.
