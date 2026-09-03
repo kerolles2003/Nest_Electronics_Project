@@ -2,6 +2,7 @@ import 'server-only';
 
 import { apiFetch } from './client';
 import type {
+  OrderQueueStats,
   AdminOrder,
   AuthUser,
   Envelope,
@@ -70,9 +71,21 @@ export function currentUser(): Promise<Envelope<AuthUser>> {
  * tie-breaker, so paging is stable and a row cannot appear on two pages or on
  * none.
  */
-export function listOrders(
-  params: { page?: number; limit?: number; status?: readonly OrderStatus[] } = {},
-): Promise<PagedEnvelope<OrderSummary>> {
+export type OrderQueueSort = 'newest' | 'oldest' | 'total_high' | 'total_low';
+
+export interface OrderQueueParams {
+  page?: number;
+  limit?: number;
+  status?: readonly OrderStatus[];
+  /** Order number, customer name, email or phone. */
+  q?: string;
+  /** `YYYY-MM-DD` or a full ISO timestamp. A bare date bounds the whole day. */
+  placedFrom?: string;
+  placedTo?: string;
+  sort?: OrderQueueSort;
+}
+
+export function listOrders(params: OrderQueueParams = {}): Promise<PagedEnvelope<OrderSummary>> {
   const query = new URLSearchParams();
 
   if (params.page !== undefined) query.set('page', String(params.page));
@@ -81,9 +94,35 @@ export function listOrders(
   // and a joined value would be one unrecognised enum member and a 400.
   for (const status of params.status ?? []) query.append('status', status);
 
+  /*
+   * Empty strings are DROPPED rather than sent.
+   *
+   * A cleared search box submits `q=`, and the API treats a blank term as "no
+   * filter" — so sending it is harmless but it puts `?q=` in the URL, which
+   * makes a cleared filter look like an active one in the address bar and in
+   * the back button's history. The same for the date inputs, which submit ''
+   * when empty.
+   */
+  if (params.q !== undefined && params.q.trim() !== '') query.set('q', params.q.trim());
+  if (params.placedFrom) query.set('placedFrom', params.placedFrom);
+  if (params.placedTo) query.set('placedTo', params.placedTo);
+  if (params.sort !== undefined && params.sort !== 'newest') query.set('sort', params.sort);
+
   const suffix = query.toString();
 
   return apiFetch(`/admin/orders${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+/**
+ * Every status and its count, in ONE request.
+ *
+ * Replaces seven `limit=1` requests whose totals were read off `meta.total`.
+ * Those were seven real numbers, but taken at seven different instants — so an
+ * order confirmed midway through could be counted twice or not at all, and the
+ * tiles would not add up to the total beside them.
+ */
+export function orderQueueStats(): Promise<Envelope<OrderQueueStats>> {
+  return apiFetch('/admin/orders/stats');
 }
 
 /** One order in full, with `allowedTransitions` and `statusHistory`. */

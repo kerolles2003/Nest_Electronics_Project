@@ -7,28 +7,29 @@ import type { OrderStatus } from './types';
 /**
  * How many orders are in each lifecycle status, from the API.
  *
- * ## Why counts rather than a stats endpoint
+ * ## One request, and why that is a correctness change rather than a saving
  *
- * There is no aggregate endpoint. `GET /admin/orders` answers `meta.total` —
- * the TRUE match count across all pages, not the size of the page — so seven
- * requests with `limit=1` produce seven real numbers that the server computed
- * over the whole collection. They run in parallel and each rides the
- * `order_admin_queue` index.
+ * This used to issue SEVEN requests with `limit=1` and read `meta.total` off
+ * each. Every number was real — the server computed each over the whole
+ * collection — but they were taken at seven different instants. An order
+ * confirmed midway through the fan-out was counted in the status it left and
+ * the status it entered, or in neither, so the tiles did not always add up to
+ * the total printed beside them. On a screen an operator works a queue from,
+ * numbers that disagree with each other are worse than numbers that are late.
  *
- * It is more requests than a `GROUP BY` would be. It is also the only version
- * that cannot be wrong: the alternative on offer was summing a page, which
- * gives a number that changes when you paginate.
- *
- * An aggregate endpoint is the right fix and is noted in the report. Until it
- * exists, this is what honest looks like.
+ * `GET /admin/orders/stats` is one `$group` at one instant. The parts sum to
+ * the whole by construction.
  *
  * ## A failed count is `null`, never `0`
  *
- * Zero is a claim — "no orders are awaiting confirmation" — and a fulfilment
- * console must not make it because a request failed. Callers render `null` as
- * an em dash. The total is `null` if ANY count failed, because a partial sum is
- * a confident number that is quietly too low, which is worse than no number on
- * a queue somebody works from.
+ * Unchanged, and the reason is unchanged: zero is a claim — "no orders are
+ * awaiting confirmation" — and a fulfilment console must not make it because a
+ * request failed. Callers render `null` as an em dash.
+ *
+ * What DID change is that the failure is now all-or-nothing rather than
+ * per-status, because there is one request. That is a simplification in the
+ * right direction: a partial answer was never rendered as one anyway, since
+ * the total was `null` unless every count arrived.
  */
 
 /** The seven statuses, in lifecycle order. */
@@ -45,25 +46,37 @@ export const ORDER_STATUSES: readonly OrderStatus[] = [
 export interface OrderStatusCounts {
   /** Keyed by status. `null` for one the API did not answer. */
   readonly counts: Record<string, number | null>;
-  /** `null` unless every count answered. */
+  /** `null` when the request failed. */
   readonly total: number | null;
 }
 
+/** Every count unknown. Rendered as em dashes, never as zeroes. */
+function unknown(): OrderStatusCounts {
+  return {
+    counts: Object.fromEntries(ORDER_STATUSES.map((status) => [status, null])),
+    total: null,
+  };
+}
+
 export async function orderStatusCounts(): Promise<OrderStatusCounts> {
-  const results = await Promise.all(
-    ORDER_STATUSES.map(async (status) => {
-      const result = await tryApi(() => api.listOrders({ status: [status], limit: 1 }));
+  const result = await tryApi(() => api.orderQueueStats());
 
-      return [status, result.ok ? result.data.meta.total : null] as const;
-    }),
-  );
+  if (!result.ok) return unknown();
 
-  const values = results.map(([, count]) => count);
-  const answered = values.filter((count): count is number => count !== null);
+  const { byStatus, total } = result.data.data;
+
+  /*
+   * Built from THIS console's status list rather than from the response, so a
+   * status the API stopped sending renders as unknown instead of disappearing
+   * from the screen. A missing tile is a silent change to what the operator is
+   * looking at; an em dash is a visible one.
+   */
+  const answered = new Map(byStatus.map((row) => [row.status, row.count]));
 
   return {
-    counts: Object.fromEntries(results),
-    total:
-      answered.length === values.length ? answered.reduce((sum, count) => sum + count, 0) : null,
+    counts: Object.fromEntries(
+      ORDER_STATUSES.map((status) => [status, answered.get(status) ?? null]),
+    ),
+    total,
   };
 }

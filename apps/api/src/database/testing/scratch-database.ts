@@ -135,6 +135,29 @@ export async function ensureCleanScratchDatabase(
   });
 
   if (reasons.length === 0) {
+    /*
+     * Indexes are synchronised even on the fast path, and that is not belt and
+     * braces — it closes a real gap.
+     *
+     * The baseline fingerprints the seed DATA. It says nothing about the
+     * indexes the schemas declare, so adding one to a schema does not make a
+     * clean database look dirty: the next run reuses it, the index is absent,
+     * and `autoIndex` is off so nothing creates it. Every test of that index
+     * then fails for a reason that has nothing to do with the code under test.
+     *
+     * `syncIndexes()` converges — it creates what is missing and drops what is
+     * no longer declared — so running it always costs one context boot and
+     * removes the whole class.
+     *
+     * Index names are deliberately NOT part of the baseline instead. That would
+     * detect a hand-dropped index, but `test/infrastructure/index-health.spec.ts`
+     * drops `brand_visibility` on purpose and puts it back, so a baseline that
+     * tracked indexes would report that suite's own fixture as residue.
+     */
+    const { syncDeclaredIndexes } = await import('../sync-indexes');
+
+    await syncDeclaredIndexes();
+
     logger.log(`${database} is clean; reusing it`);
 
     return { database, rebuilt: false, reasons };

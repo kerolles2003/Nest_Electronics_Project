@@ -21,6 +21,7 @@ import type { AuthenticatedUser } from '../../auth/domain/authenticated-user';
 import { Role } from '../../users/infrastructure/schemas/user.schema';
 import { OrderLifecycleService } from '../application/order-lifecycle.service';
 import { OrdersService } from '../application/orders.service';
+import { parseOrderSearch } from '../domain/order-search';
 import { OrderStatus } from '../domain/order-status';
 import {
   ConfirmOrderDto,
@@ -31,7 +32,11 @@ import {
   ShipOrderDto,
 } from './dto/admin-order-request.dto';
 import { AdminOrderDto, AdminOrderResponseDto } from './dto/admin-order-response.dto';
-import { OrderHistoryQueryDto, OrderIdParamDto } from './dto/order-query.dto';
+import { AdminOrderQueueQueryDto, OrderIdParamDto } from './dto/order-query.dto';
+import {
+  OrderQueueStatsDto,
+  OrderQueueStatsResponseDto,
+} from './dto/order-queue-stats.dto';
 import { OrderHistoryResponseDto, OrderSummaryDto } from './dto/order-summary.dto';
 
 const NO_STORE = 'no-store';
@@ -109,8 +114,17 @@ export class AdminOrdersController {
       '`?status=CONFIRMED` is ready-to-ship, `?status=DELIVERY_FAILED` is the exception queue.',
       '`?status=` is repeatable and matches ANY of the given values.',
       '',
-      'Ordering is `placedAt` descending with the order id as a tie-breaker, so paging is stable',
-      'and a row cannot appear on two pages or on none.',
+      'Search with `?q=`. It matches the order number and the customer SNAPSHOT recorded on',
+      'the order — name, email and phone — so an order is still findable by the name on its',
+      'delivery note after that customer has changed their name. The term is ESCAPED before',
+      'it reaches the database: regular-expression syntax in it matches itself.',
+      '',
+      'Narrow by date with `?placedFrom=` and `?placedTo=`. A date with no time as `placedTo`',
+      'means the END of that day in UTC, so `?placedTo=2026-09-03` includes the third.',
+      '',
+      'Ordering is `?sort=`: `newest` (the default), `oldest`, `total_high`, `total_low`.',
+      'Every option is served by an index and every one breaks ties on the order id, so',
+      'paging is stable and a row cannot appear on two pages or on none.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: OrderHistoryResponseDto })
@@ -122,17 +136,66 @@ export class AdminOrdersController {
   })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.forbidden })
-  async list(@Query() query: OrderHistoryQueryDto): Promise<OrderHistoryResponseDto> {
+  async list(@Query() query: AdminOrderQueueQueryDto): Promise<OrderHistoryResponseDto> {
+    /*
+     * The raw string becomes escaped patterns HERE, at the boundary, and the
+     * repository is typed to accept only the parsed form. That is what makes
+     * "no client string becomes part of a query expression" a property of the
+     * types rather than a habit — there is no overload that takes the text.
+     *
+     * A whitespace-only term parses to `null` and is not a filter, because an
+     * empty pattern matches everything: treating `?q=%20` as a search would
+     * return the unfiltered queue while the caller believed it was narrowed.
+     */
+    const search = query.q === undefined ? null : parseOrderSearch(query.q);
+
     const outcome = await this.orders.listForStaff({
       ...(query.status !== undefined ? { statuses: query.status } : {}),
       ...(query.page !== undefined ? { page: query.page } : {}),
       ...(query.limit !== undefined ? { limit: query.limit } : {}),
+      ...(search !== null ? { search } : {}),
+      ...(query.placedFrom !== undefined ? { placedFrom: query.placedFrom } : {}),
+      ...(query.placedTo !== undefined ? { placedTo: query.placedTo } : {}),
+      ...(query.sort !== undefined ? { sort: query.sort } : {}),
     });
 
     return {
       data: outcome.items.map((row) => OrderSummaryDto.from(row)),
       meta: PaginationMetaDto.of(outcome.page, outcome.limit, outcome.total),
     };
+  }
+
+  /**
+   * Declared BEFORE `:id`, and that ordering is load-bearing.
+   *
+   * Nest matches routes in declaration order, so with `@Get(':id')` first this
+   * path would bind `id = 'stats'`, fail the 24-hex-character check, and answer
+   * a documented endpoint with a validation error about an order id.
+   */
+  @Get('stats')
+  @Header('Cache-Control', NO_STORE)
+  @ApiOperation({
+    summary: 'How many orders are in each status',
+    description: [
+      'One row of numbers for the queue tiles, in a single request.',
+      '',
+      'It replaces asking for seven pages of one order each and reading `meta.total` off every',
+      'response. That cost seven index scans to draw one row — but the real defect was that the',
+      'seven numbers were taken at seven different instants, so an order confirmed midway',
+      'through could be counted twice or not at all, and the tiles would not add up to the',
+      'total beside them. This is one aggregation at one instant, so they always do.',
+      '',
+      'Every lifecycle status is present, including the ones nothing is in: a status with no',
+      'orders has a count of `0` rather than being omitted. A console cannot otherwise tell',
+      '"no cancelled orders" from "the count could not be read", and on a fulfilment screen',
+      'those are very different sentences.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: OrderQueueStatsResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: LIFECYCLE_ERRORS.forbidden })
+  async stats(): Promise<OrderQueueStatsResponseDto> {
+    return { data: OrderQueueStatsDto.from(await this.orders.countByStatusForStaff()) };
   }
 
   @Get(':id')

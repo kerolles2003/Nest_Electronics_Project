@@ -4348,3 +4348,261 @@ other server's keys as `?: undefined` — and `undefined` is not assignable to t
 Two web servers, the API and the storefront's own `next dev`, and every spec
 uses both. There is no server there that only some specs need, so there is
 nothing to split. Reported rather than assumed.
+
+---
+
+# Phase 7 Part 2 — the order queue, on the API side
+
+`GET /admin/orders` took `status`, `page` and `limit`, so search, date filtering
+and sorting were removed from the console in Phase 6 rather than left pointing
+at a Supabase query. Fine at twenty orders; painful at two hundred.
+
+## What it takes now
+
+| Parameter | Behaviour |
+|---|---|
+| `q` | Order number and email match from the start; customer name matches anywhere; phone matches on digits alone |
+| `placedFrom` / `placedTo` | Inclusive bounds. A DATE with no time as `placedTo` means the end of that day, in UTC |
+| `sort` | `newest` (default), `oldest`, `total_high`, `total_low` |
+
+Plus `GET /admin/orders/stats` — every status and its count, in one request.
+
+## Search does not become a query language
+
+The rule this repository already applies to `status` is that a client string is
+narrowed to an enum before it reaches a query operator. Free text cannot be
+narrowed to an enum, so it is **escaped** instead: `parseOrderSearch` turns
+every character with a meaning in a regular expression into itself, and the
+repository is typed to accept only the parsed form. There is no overload that
+takes the raw string, which is what makes "no client string becomes part of a
+query expression" a property of the types rather than a habit.
+
+Escaping also disposes of the ReDoS question without a second mechanism.
+Catastrophic backtracking needs nested quantifiers; a pattern built only from
+literals has none. `(a+)+$` escaped is nine ordinary characters.
+
+The test that matters asserts the escaping **can fail**: an unescaped `a.b`
+matches `axb`, and the escaped one must not. Without that line the escaping
+could be a no-op and every other search test would still pass.
+
+A blank term is `null` rather than an empty pattern, because an empty pattern
+matches everything — `?q=%20` would return the unfiltered queue while the caller
+believed it was narrowed.
+
+## Two bugs the tests found, both of which looked like working code
+
+**The date filter validated and then vanished.** `?placedFrom=2026-02-01` was
+accepted, a malformed date was still correctly rejected with a 400, and the
+filter was never applied. The transform runs more than once per request: the
+validation pipe converts the string to a `Date`, and a later pass hands that
+`Date` back in — at which point `typeof value !== 'string'` returned `undefined`
+and the parameter disappeared between validating and being read. The transform
+is idempotent now. The symptom was the worst kind: every visible signal said the
+parameter was wired up.
+
+**Phone search found nothing, for anybody.** The order snapshots
+`customer.phone` from the account profile, and registration never asks for one,
+so it is routinely null. The number an operator is actually holding is on the
+delivery note — `shippingAddress.phone`, which is required at checkout. Search
+covers both now. This was only visible because the fixture created a customer
+the way the API really does, rather than writing an order with a phone on it.
+
+## The end-of-day rule, which is wrong by default
+
+`?placedTo=2026-09-03` means "up to and including the third". Parsed as a plain
+instant it is midnight at the START of the third, so every order placed that day
+is silently excluded — fewer rows, no error, and it looks like it worked. A
+date-only upper bound is therefore widened to the end of that day; a full
+timestamp is taken literally, because widening a precise query would be the
+opposite mistake. Both halves are tested.
+
+UTC, in line with the order-number counter, which is the only other place in
+this system that turns an instant into a day. No timezone is configured
+anywhere, and inventing one in a DTO would put a business rule in a parser.
+
+## Counting: one request instead of seven
+
+The console asked for seven pages of one order each and read `meta.total` off
+every response. Seven index scans to draw one row of tiles — but the real defect
+was that the seven numbers were taken at seven different instants, so an order
+confirmed midway through could be counted twice or not at all, and the tiles
+would not add up to the total beside them. One `$group` fixes both, and the test
+asserts the property that used not to hold: **the parts sum to the whole.**
+
+Every status is present, including the ones nothing is in. `$group` cannot
+produce a bucket for a value it never saw, so the service fills the gaps with
+`0` — a console that renders a missing key as an em dash and a zero as "0" would
+otherwise show "no cancelled orders" and "the count could not be read"
+identically, and on a fulfilment screen those are very different sentences.
+
+`@Get('stats')` is declared **before** `@Get(':id')`. Nest matches in
+declaration order, so the other way round this path binds `id = 'stats'`, fails
+the 24-hex check, and answers a documented endpoint with a validation error
+about an order id. There is a test for that ordering.
+
+## Indexes, and the gap that would have hidden them
+
+Two new ones: `order_admin_total` on `{ pricing.grandTotal, _id }`, and
+`order_customer_email`. Both are asserted to be in the readiness probe's
+expected list, which `IndexHealthService` derives from `model.schema.indexes()`
+— so declaring on the schema is what registers them, and the test says so rather
+than assuming it.
+
+Every sort ends in `_id`. Two orders can share a placement instant or a grand
+total exactly, and a sort without a unique tail is unstable — which makes offset
+pagination silently skip one row and repeat another. That bug looks like missing
+orders and reproduces on nobody's machine. There is a test that pages a
+money-ordered queue and asserts the two pages are disjoint.
+
+**Search is honest about its cost.** Two of the four `$or` branches can use an
+index; "the name contains" and "the phone contains" are unanchored patterns and
+no B-tree answers those. Search is a bounded scan, narrowed by whatever status
+and date range accompany it. At this console's scale that is the right trade —
+the alternative is a denormalised search field maintained on the order-writing
+path, which is a migration and a change to the money path. **Recorded for the
+owner rather than taken here.**
+
+### And a gap in the harness this exposed
+
+The scratch database's baseline fingerprints the seed DATA. It says nothing
+about the indexes the schemas declare, so adding one did not make a clean
+database look dirty: the next run would reuse it, `autoIndex` is off, and every
+test of the new index would fail for a reason unrelated to the code. Index
+synchronisation now runs on the fast path too — `syncIndexes()` converges, so
+running it always costs one context boot and removes the whole class.
+
+Index names are deliberately NOT tracked in the baseline instead. That would
+catch a hand-dropped index, but `index-health.spec.ts` drops `brand_visibility`
+on purpose and puts it back, so a baseline that tracked indexes would report
+that suite's own fixture as residue.
+
+## The residue check earned itself again
+
+The new suite placed three orders, which write inventory events, and deleting an
+order does not delete the event that refers to it. Three orphaned ledger rows
+per run, invisible, until the teardown named them.
+
+### A self-inflicted failure, recorded so it is not read as a regression
+
+The first full run after this work reported two failures:
+
+```
+POST /auth/reset-password › sets the new password, and the old one stops working
+the rest of the API is unaffected › leaves the seeded catalogue intact
+   Expected: 34   Received: 35
+```
+
+Neither was real. I had written the command as
+`pnpm --filter api lint | tail -3; pnpm --filter api test > log` — with a
+semicolon rather than `&&` — so when lint failed I started a second run
+believing the first had not begun. **Two jest runs against the same scratch
+database at the same time**, both writing to the same log.
+
+`cart.spec.ts` counts the products that are not its own and asserts the seeded
+34; it saw the other run's fixture product and reported 35. The reset-password
+failure is the same collision on a shared account.
+
+Two things worth keeping from it:
+
+- The per-suite database confines a mistake like this to one database, but it
+  does not make two runs of the SAME suite safe against each other. Nothing in
+  the harness prevents that, and nothing here claims to.
+- Both killed runs left 23 orphaned accounts behind. The next run's
+  `ensure-clean` found the drift and rebuilt, which is the design working
+  under exactly the abnormal termination it was written for — this time caused
+  by me rather than by memory pressure.
+
+## Part 2 — the console side
+
+`components/orders/QueueFilters.tsx` is new: search, a placed-from/placed-to
+range, and a sort selector. The status tiles and the table are unchanged.
+
+**Every filter value lives in the URL and nowhere else.** No local state for
+them. That is what makes a filtered queue linkable, bookmarkable, survivable
+across a reload and correct under the back button — and it means the server
+component reads exactly what the operator is looking at, rather than a second
+copy that can disagree.
+
+**An empty value removes its parameter rather than setting it blank.** `?q=` is
+"no filter" to the API, so sending it would work; it would also leave a cleared
+search box looking like an active filter in the address bar and put an
+indistinguishable entry in the back-button history.
+
+**Every filter change returns to page one**, the same rule the status tiles
+already followed. Staying on page 4 of a filter that now has two pages shows an
+empty table, and an empty table on a fulfilment queue reads as "no orders"
+rather than "you are past the end".
+
+The search control is a real `<form>`, so Enter submits it and it works before
+the bundle has arrived. The queue is the first screen an operator opens.
+
+The sort narrowing happens in the page, not the API client: a hand-typed
+`?sort=createdAt` renders the default queue rather than a 400. The API would
+correctly reject it — this is about not turning a mistyped URL into an error
+page on a screen somebody is working from.
+
+### The tiles are one request now
+
+`orderStatusCounts()` calls `GET /admin/orders/stats` instead of fanning out
+seven `limit=1` requests. The `null`-not-zero rule is unchanged and unchanged
+for the same reason: zero is a claim — "no orders are awaiting confirmation" —
+and a fulfilment console must not make it because a request failed.
+
+One thing did change and is worth stating: the failure is now all-or-nothing
+rather than per-status. That is a simplification in the right direction, because
+a partial answer was never rendered as one anyway — the total was already `null`
+unless every count arrived.
+
+The count map is still built from **this console's** status list rather than
+from the response, so a status the API stopped sending renders as an em dash
+instead of the tile silently disappearing. A missing tile is an invisible change
+to what the operator is looking at.
+
+### Browser-unverified
+
+The machine could not run a browser tonight — another project's dev server and
+test suite were resident on 8 GB throughout, and the admin suite needs two
+servers. Everything in this section is **built and type-checked and not seen
+working**:
+
+- the search box, including that Enter submits it
+- the two date inputs
+- the sort selector
+- "Clear search and dates"
+- the tiles reading from the single stats request
+
+The API beneath all of it is covered by 41 jest tests that do run.
+
+### A killed jest run leaves a 1 GB process behind, and it keeps working
+
+Full jest runs stopped completing part-way through this part. Three of them were
+killed by memory pressure, and each time the next run behaved strangely: a
+polluted baseline, `CHK-TEST-*` products appearing in a batch that does not run
+`checkout.spec.ts`, and once a genuine-looking failure —
+`authorization › refuses a CUSTOMER on the admin queue and the admin detail read`.
+
+The cause was one process:
+
+```
+2916   1,011 MB   apps/api/node_modules/.bin/../jest/bin/jest.js
+```
+
+**Killing the run does not kill jest.** The survivor kept executing suites
+against the scratch database — writing fixtures, deleting them, and being
+counted by whatever else was running. It also held a gigabyte on a machine with
+1.3 GB free, which is what killed the run that replaced it.
+
+Two consequences worth keeping:
+
+- **Reap before re-running.** After any killed run, check for surviving
+  `node` processes under this repository before starting another. A stray one
+  makes the next run's evidence worthless in a way that looks like a code
+  failure. The `refuses a CUSTOMER` failure was exactly that, and it would have
+  been an hour of chasing an authorization bug that did not exist.
+- **Run jest in batches on this machine.** Four batches of ten-ish suites each
+  complete reliably where one run of forty-four does not. The residue check
+  runs per batch, which is if anything stricter.
+
+The per-suite database confines all of this to one database. It does not make
+two runs of the SAME suite safe against each other, and nothing here claims it
+does.

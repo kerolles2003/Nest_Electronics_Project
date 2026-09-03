@@ -2469,7 +2469,7 @@
     },
     "/api/v1/admin/orders": {
       "get": {
-        "description": "Every order in the system, **newest first**, paginated — the screen an operator works\nfrom. Same page shape, same pagination contract and same card model as the customer’s own\nhistory, so there is one order-summary type rather than two that drift.\n\nFilter by lifecycle status to get a work list: `?status=PLACED` is the confirmation queue,\n`?status=CONFIRMED` is ready-to-ship, `?status=DELIVERY_FAILED` is the exception queue.\n`?status=` is repeatable and matches ANY of the given values.\n\nOrdering is `placedAt` descending with the order id as a tie-breaker, so paging is stable\nand a row cannot appear on two pages or on none.",
+        "description": "Every order in the system, **newest first**, paginated — the screen an operator works\nfrom. Same page shape, same pagination contract and same card model as the customer’s own\nhistory, so there is one order-summary type rather than two that drift.\n\nFilter by lifecycle status to get a work list: `?status=PLACED` is the confirmation queue,\n`?status=CONFIRMED` is ready-to-ship, `?status=DELIVERY_FAILED` is the exception queue.\n`?status=` is repeatable and matches ANY of the given values.\n\nSearch with `?q=`. It matches the order number and the customer SNAPSHOT recorded on\nthe order — name, email and phone — so an order is still findable by the name on its\ndelivery note after that customer has changed their name. The term is ESCAPED before\nit reaches the database: regular-expression syntax in it matches itself.\n\nNarrow by date with `?placedFrom=` and `?placedTo=`. A date with no time as `placedTo`\nmeans the END of that day in UTC, so `?placedTo=2026-09-03` includes the third.\n\nOrdering is `?sort=`: `newest` (the default), `oldest`, `total_high`, `total_low`.\nEvery option is served by an index and every one breaks ties on the order id, so\npaging is stable and a row cannot appear on two pages or on none.",
         "operationId": "AdminOrdersController_list_v1",
         "parameters": [
           {
@@ -2519,6 +2519,55 @@
                   "RETURNED"
                 ]
               }
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Free text, matched against the order number and the customer SNAPSHOT on the order — name, email and phone. The order number and email match from the start; the name matches anywhere; the phone matches on digits alone, so `010-1234` and `0101234` are the same search. The term is escaped before it reaches the database, so regular expression syntax in it is matched literally. Whitespace-only is not a filter.",
+            "schema": {
+              "maxLength": 64,
+              "example": "NE-20260903",
+              "type": "string"
+            }
+          },
+          {
+            "name": "placedFrom",
+            "required": false,
+            "in": "query",
+            "description": "Only orders placed at or after this instant. Accepts a date (`2026-09-01`) or a full ISO 8601 timestamp. Interpreted in UTC.",
+            "schema": {
+              "format": "date-time",
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "placedTo",
+            "required": false,
+            "in": "query",
+            "description": "Only orders placed at or before this instant. A DATE with no time means the END of that day in UTC, so `2026-09-03` includes everything placed on the third.",
+            "schema": {
+              "format": "date-time",
+              "example": "2026-09-03",
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "description": "Ordering. Every option is served by an index and every one breaks ties on the order id, so paging through the queue cannot skip or repeat a row.",
+            "schema": {
+              "default": "newest",
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest",
+                "total_high",
+                "total_low"
+              ]
             }
           }
         ],
@@ -2570,6 +2619,54 @@
           }
         ],
         "summary": "The order work queue",
+        "tags": [
+          "admin · orders"
+        ]
+      }
+    },
+    "/api/v1/admin/orders/stats": {
+      "get": {
+        "description": "One row of numbers for the queue tiles, in a single request.\n\nIt replaces asking for seven pages of one order each and reading `meta.total` off every\nresponse. That cost seven index scans to draw one row — but the real defect was that the\nseven numbers were taken at seven different instants, so an order confirmed midway\nthrough could be counted twice or not at all, and the tiles would not add up to the\ntotal beside them. This is one aggregation at one instant, so they always do.\n\nEvery lifecycle status is present, including the ones nothing is in: a status with no\norders has a count of `0` rather than being omitted. A console cannot otherwise tell\n\"no cancelled orders\" from \"the count could not be read\", and on a fulfilment screen\nthose are very different sentences.",
+        "operationId": "AdminOrdersController_stats_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderQueueStatsResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — lifecycle operations require an ADMIN or SUPER_ADMIN account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "How many orders are in each status",
         "tags": [
           "admin · orders"
         ]
@@ -6429,6 +6526,67 @@
         },
         "required": [
           "reason"
+        ]
+      },
+      "OrderStatusCountDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "PLACED",
+              "CONFIRMED",
+              "SHIPPED",
+              "DELIVERED",
+              "DELIVERY_FAILED",
+              "CANCELLED",
+              "RETURNED"
+            ],
+            "example": "PLACED"
+          },
+          "count": {
+            "type": "number",
+            "example": 12,
+            "minimum": 0,
+            "description": "Orders currently in this status."
+          }
+        },
+        "required": [
+          "status",
+          "count"
+        ]
+      },
+      "OrderQueueStatsDto": {
+        "type": "object",
+        "properties": {
+          "byStatus": {
+            "description": "One entry per lifecycle status, in the state machine’s own order, always complete — a status with no orders is present with a count of `0` rather than omitted.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderStatusCountDto"
+            }
+          },
+          "total": {
+            "type": "number",
+            "example": 37,
+            "minimum": 0,
+            "description": "Every order in the system. Equal to the sum of `byStatus` by construction: both come from the same aggregation at the same instant."
+          }
+        },
+        "required": [
+          "byStatus",
+          "total"
+        ]
+      },
+      "OrderQueueStatsResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/OrderQueueStatsDto"
+          }
+        },
+        "required": [
+          "data"
         ]
       },
       "AdminOrderTransitionDto": {

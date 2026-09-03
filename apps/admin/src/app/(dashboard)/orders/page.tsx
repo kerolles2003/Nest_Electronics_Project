@@ -3,8 +3,10 @@ import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { requireAdmin } from '@/lib/api/identity';
 import { ORDER_STATUSES, orderStatusCounts } from '@/lib/api/order-stats';
+import type { OrderQueueSort } from '@/lib/api/endpoints';
 import type { OrderStatus } from '@/lib/api/types';
 import OrdersTable from '@/components/orders/OrdersTable';
+import QueueFilters from '@/components/orders/QueueFilters';
 import { AlertCircle } from 'lucide-react';
 
 /**
@@ -37,11 +39,22 @@ import { AlertCircle } from 'lucide-react';
  * page load. A wrong money figure on a money console is worse than no figure,
  * so there is none, and an aggregate endpoint is the real fix.
  *
- * **Text search, date-range filters, and the fulfilment filter.** The API's
- * queue takes `status`, `page` and `limit`; it has no `q`, no date range and no
- * second axis. The controls are gone rather than left inert — a search box that
- * silently does nothing is worse than no search box. Restoring them is an API
- * change, noted in the report.
+ * **The fulfilment filter.** Legacy had a second status axis; the API has one,
+ * so there is nothing for a second filter to filter. Not a regression — the
+ * 210 combinations it used to offer included incoherent ones that live data
+ * already held.
+ *
+ * ## What came BACK in Phase 7
+ *
+ * Text search, the date range and sorting. They were removed in Phase 6
+ * because the API's queue took only `status`, `page` and `limit`, and a search
+ * box that silently does nothing is worse than no search box. `GET
+ * /admin/orders` now takes `q`, `placedFrom`, `placedTo` and `sort`, so the
+ * controls are real again — see `components/orders/QueueFilters.tsx`.
+ *
+ * The status tiles are now ONE request rather than seven. They were seven real
+ * numbers taken at seven different instants, which is why they did not always
+ * add up to the total beside them.
  */
 
 export const dynamic = 'force-dynamic';
@@ -62,6 +75,33 @@ function OrdersSkeleton() {
   );
 }
 
+/** The four orderings the API serves. Anything else is ignored, not passed on. */
+const SORTS: readonly OrderQueueSort[] = ['newest', 'oldest', 'total_high', 'total_low'];
+
+/**
+ * Reads one query parameter as a string.
+ *
+ * A repeated parameter arrives as an array; taking the first is the same rule
+ * the status filter already follows, and it keeps a hand-edited URL from
+ * producing a 400 on a screen somebody is trying to work from.
+ */
+function text(raw: string | string[] | undefined): string {
+  return (Array.isArray(raw) ? raw[0] : raw)?.trim() ?? '';
+}
+
+/**
+ * A sort the API serves, or the default.
+ *
+ * Narrowed HERE rather than passed through, so a hand-typed `?sort=createdAt`
+ * renders the default queue instead of a 400. The API would reject it — this is
+ * about not turning a mistyped URL into an error page on a work screen.
+ */
+function parseSort(raw: string | string[] | undefined): OrderQueueSort {
+  const value = text(raw);
+
+  return SORTS.find((sort) => sort === value) ?? 'newest';
+}
+
 /** A status is only honoured if the API actually has it. */
 function parseStatus(raw: string | string[] | undefined): OrderStatus | null {
   const value = Array.isArray(raw) ? raw[0] : raw;
@@ -77,13 +117,21 @@ export default async function OrdersPage(props: {
   const sp = await props.searchParams;
   const page = Math.max(1, Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1);
   const status = parseStatus(sp.status);
+  const q = text(sp.q);
+  const placedFrom = text(sp.placedFrom);
+  const placedTo = text(sp.placedTo);
+  const sort = parseSort(sp.sort);
 
   const [queue, stats] = await Promise.all([
     tryApi(() =>
       api.listOrders({
         page,
         limit: PAGE_SIZE,
+        sort,
         ...(status === null ? {} : { status: [status] }),
+        ...(q === '' ? {} : { q }),
+        ...(placedFrom === '' ? {} : { placedFrom }),
+        ...(placedTo === '' ? {} : { placedTo }),
       }),
     ),
     orderStatusCounts(),
@@ -95,6 +143,8 @@ export default async function OrdersPage(props: {
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Orders</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage and fulfil customer orders.</p>
       </div>
+
+      <QueueFilters q={q} placedFrom={placedFrom} placedTo={placedTo} sort={sort} />
 
       {!queue.ok ? (
         /*

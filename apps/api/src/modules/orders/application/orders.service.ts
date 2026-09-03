@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '../../../common/dto/pagination-query.dto';
 import { AppException } from '../../../common/errors/app.exception';
-import type { OrderStatus } from '../domain/order-status';
+import { OrderStatus } from '../domain/order-status';
+import type { OrderSearchTerm } from '../domain/order-search';
+import type { OrderQueueSort } from '../infrastructure/repositories/order.repository';
+
+/** Every status, in declaration order, so a count map is always complete. */
+const ORDER_STATUSES = Object.values(OrderStatus);
 import {
   OrderRepository,
   type OrderSummaryRow,
@@ -13,6 +18,28 @@ export interface OrderHistoryQuery {
   readonly statuses?: readonly OrderStatus[];
   readonly page?: number;
   readonly limit?: number;
+}
+
+/**
+ * The queue query: the history query plus what only an operator may ask for.
+ *
+ * A SEPARATE type rather than optional fields on `OrderHistoryQuery`, so that
+ * `listForCustomer` cannot accidentally grow a search across other people's
+ * orders. A customer's history is scoped by their token; a search that ignored
+ * that scope would be an enumeration surface, and the type is the cheapest
+ * place to make it impossible rather than merely absent.
+ */
+export interface OrderQueueQuery extends OrderHistoryQuery {
+  readonly search?: OrderSearchTerm;
+  readonly placedFrom?: Date;
+  readonly placedTo?: Date;
+  readonly sort?: OrderQueueSort;
+}
+
+/** Every status, including the ones nothing is in. */
+export interface OrderStatusCounts {
+  readonly counts: ReadonlyMap<OrderStatus, number>;
+  readonly total: number;
 }
 
 export interface OrderHistoryOutcome {
@@ -111,10 +138,18 @@ export class OrdersService {
    * with an optional `userId`: an optional ownership scope is one forgotten
    * argument away from leaking every customer's orders to a customer.
    */
-  async listForStaff(query: OrderHistoryQuery): Promise<OrderHistoryOutcome> {
+  async listForStaff(query: OrderQueueQuery): Promise<OrderHistoryOutcome> {
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
-    const criteria = { page, limit, ...(query.statuses ? { statuses: query.statuses } : {}) };
+    const criteria = {
+      page,
+      limit,
+      ...(query.statuses ? { statuses: query.statuses } : {}),
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.placedFrom ? { placedFrom: query.placedFrom } : {}),
+      ...(query.placedTo ? { placedTo: query.placedTo } : {}),
+      ...(query.sort ? { sort: query.sort } : {}),
+    };
 
     const [items, total] = await Promise.all([
       this.orders.findPageForStaff(criteria),
@@ -122,6 +157,28 @@ export class OrdersService {
     ]);
 
     return { items, total, page, limit };
+  }
+
+  /**
+   * Every status and its count, in one round trip.
+   *
+   * The map the repository returns omits statuses nothing is in, because
+   * `$group` cannot invent a bucket for a value it never saw. Filling those in
+   * with `0` happens HERE rather than in the caller: a console that renders a
+   * missing key as an em dash and a zero as "0" would otherwise show "no
+   * cancelled orders" and "cancelled orders unknown" identically, and only one
+   * of those is a fact.
+   */
+  async countByStatusForStaff(): Promise<OrderStatusCounts> {
+    const observed = await this.orders.countByStatusForStaff();
+    const counts = new Map<OrderStatus, number>(
+      ORDER_STATUSES.map((status) => [status, observed.get(status) ?? 0]),
+    );
+
+    let total = 0;
+    for (const count of counts.values()) total += count;
+
+    return { counts, total };
   }
 
   /**

@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, FilterQuery, Model, UpdateQuery } from 'mongoose';
 import { Types } from 'mongoose';
 import { OrderStatus } from '../../domain/order-status';
+import type { OrderSearchTerm } from '../../domain/order-search';
 import {
   Order,
   type OrderCancellation,
@@ -32,10 +33,34 @@ export interface OrderHistoryCriteria {
   readonly limit: number;
 }
 
+/**
+ * How the queue may be ordered.
+ *
+ * A closed set rather than a field name from the client. A caller-supplied sort
+ * key is a query expression built from a string, which is the thing this
+ * repository does not do anywhere — and it would also let a caller ask for a
+ * sort no index serves, turning one request into a collection-wide in-memory
+ * sort.
+ */
+export type OrderQueueSort = 'newest' | 'oldest' | 'total_high' | 'total_low';
+
 /** The admin queue. The same shape minus the ownership scope. */
 export interface OrderQueueCriteria {
   /** OR within the list. Absent means every status. */
   readonly statuses?: readonly OrderStatus[];
+  /**
+   * Free text, already escaped and compiled by `parseOrderSearch`.
+   *
+   * The repository never sees the raw string, which is what makes "no client
+   * string becomes part of a query expression" checkable here rather than a
+   * convention.
+   */
+  readonly search?: OrderSearchTerm;
+  /** Inclusive lower bound on `placedAt`. */
+  readonly placedFrom?: Date;
+  /** Inclusive upper bound on `placedAt`. */
+  readonly placedTo?: Date;
+  readonly sort?: OrderQueueSort;
   readonly page: number;
   readonly limit: number;
 }
@@ -76,6 +101,21 @@ const SUMMARY_PROJECTION = {
  * stable across requests.
  */
 const HISTORY_SORT = { placedAt: -1, _id: -1 } as const;
+
+/**
+ * The four orderings the queue offers, each matching an index exactly.
+ *
+ * Every one ends in `_id`, and that is not decoration: two orders can share a
+ * placement instant or a grand total, and a sort without a unique tail is
+ * unstable — which makes offset pagination silently skip one row and repeat
+ * another. The bug looks like missing orders and reproduces on nobody's machine.
+ */
+const QUEUE_SORTS = {
+  newest: { placedAt: -1, _id: -1 },
+  oldest: { placedAt: 1, _id: 1 },
+  total_high: { 'pricing.grandTotal': -1, _id: -1 },
+  total_low: { 'pricing.grandTotal': 1, _id: 1 },
+} as const satisfies Record<OrderQueueSort, Record<string, 1 | -1>>;
 
 /**
  * Every order query in the system.
@@ -261,7 +301,7 @@ export class OrderRepository {
     return this.model
       .find(OrderRepository.queueFilter(criteria))
       .select(SUMMARY_PROJECTION)
-      .sort(HISTORY_SORT)
+      .sort(QUEUE_SORTS[criteria.sort ?? 'newest'])
       .skip((criteria.page - 1) * criteria.limit)
       .limit(criteria.limit)
       .lean<OrderSummaryRow[]>()
@@ -275,12 +315,82 @@ export class OrderRepository {
 
   /** ONE place builds the queue filter, so the page and its count cannot diverge. */
   private static queueFilter(criteria: OrderQueueCriteria): FilterQuery<Order> {
-    if (criteria.statuses === undefined || criteria.statuses.length === 0) {
-      return {};
+    const filter: FilterQuery<Order> = {};
+
+    if (criteria.statuses !== undefined && criteria.statuses.length > 0) {
+      // `$in` over values already narrowed to the OrderStatus enum by the DTO.
+      filter.status = { $in: [...criteria.statuses] };
     }
 
-    // `$in` over values already narrowed to the OrderStatus enum by the DTO.
-    return { status: { $in: [...criteria.statuses] } };
+    /*
+     * The range is built from whichever bounds are present, so "everything
+     * since Monday" and "everything before Friday" are both expressible. An
+     * absent bound is absent, not a sentinel date — `new Date(0)` as a floor
+     * would quietly exclude anything predating the epoch and would read as a
+     * real bound to whoever changed it next.
+     */
+    if (criteria.placedFrom !== undefined || criteria.placedTo !== undefined) {
+      filter.placedAt = {
+        ...(criteria.placedFrom !== undefined ? { $gte: criteria.placedFrom } : {}),
+        ...(criteria.placedTo !== undefined ? { $lte: criteria.placedTo } : {}),
+      };
+    }
+
+    if (criteria.search !== undefined) {
+      const { prefix, contains, digits } = criteria.search;
+
+      /*
+       * Four denormalised fields, because the order carries a SNAPSHOT of the
+       * customer rather than a join — an operator searching for an order by the
+       * name on the delivery note must find it even if that customer has since
+       * changed their name.
+       *
+       * The patterns arrive already escaped from `parseOrderSearch`. Nothing
+       * here interpolates a client string.
+       */
+      filter.$or = [
+        { orderNumber: prefix },
+        { 'customer.email': prefix },
+        { 'customer.fullName': contains },
+        /*
+         * BOTH phone numbers, and the second is the one that matters.
+         *
+         * `customer.phone` comes from the account profile and is frequently
+         * null — registration does not ask for one. `shippingAddress.phone` is
+         * required at checkout and is the number printed on the delivery note,
+         * so it is the number an operator is holding when they search. Omitting
+         * it made phone search find nothing at all for any customer who had not
+         * separately filled in their profile.
+         */
+        ...(digits === null
+          ? []
+          : [{ 'customer.phone': digits }, { 'shippingAddress.phone': digits }]),
+      ];
+    }
+
+    return filter;
+  }
+
+  /**
+   * Every status and its count, in ONE round trip.
+   *
+   * The console used to ask for seven pages of one order each and read the
+   * total off each response — seven requests, seven index scans and seven
+   * chances for the numbers to disagree with each other, because they were
+   * taken at seven different instants. A `$group` answers all of them from a
+   * single pass at a single point in time.
+   *
+   * Statuses with no orders are absent from the result, which the caller fills
+   * in: `$group` cannot invent a bucket for something it never saw.
+   */
+  async countByStatusForStaff(): Promise<ReadonlyMap<OrderStatus, number>> {
+    const rows = await this.model
+      .aggregate<{ _id: OrderStatus; count: number }>([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ])
+      .exec();
+
+    return new Map(rows.map((row) => [row._id, row.count]));
   }
 
   /**

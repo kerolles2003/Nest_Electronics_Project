@@ -463,3 +463,35 @@ OrderSchema.index({ orderNumber: 1 }, { unique: true, name: 'order_number_unique
 OrderSchema.index({ idempotencyKey: 1 }, { unique: true, name: 'order_idempotency_key_unique' });
 OrderSchema.index({ userId: 1, placedAt: -1, _id: -1 }, { name: 'order_user_history' });
 OrderSchema.index({ placedAt: -1, _id: -1 }, { name: 'order_admin_queue' });
+
+/**
+ * `{ pricing.grandTotal, _id }` — the work queue sorted by MONEY.
+ *
+ * The queue can be ordered by value as well as by date, and a sort MongoDB
+ * cannot serve from an index is an in-memory sort of every matching document on
+ * every page. `_id` is the tiebreaker for the same reason it is in
+ * `order_admin_queue`: two orders can share a grand total exactly, and a sort
+ * without a unique tail gives an unstable order, which makes offset pagination
+ * skip and repeat rows.
+ *
+ * One index covers both directions. MongoDB walks an index backwards, so
+ * highest-first and lowest-first are the same scan read the other way; a second
+ * ascending index would cost writes and buy nothing.
+ */
+OrderSchema.index({ 'pricing.grandTotal': -1, _id: -1 }, { name: 'order_admin_total' });
+
+/**
+ * `{ customer.email }` — the indexed branch of order search.
+ *
+ * Search is an `$or` over four denormalised fields. Two of the branches can use
+ * an index — the order number, from its own unique index, and this one — and
+ * two cannot, because "the name contains" and "the phone contains" are
+ * unanchored patterns and no B-tree answers those.
+ *
+ * That is stated rather than hidden: search is a bounded scan, narrowed by
+ * whatever status and date range accompany it. At the scale this console works
+ * at that is the right trade; the alternative is a denormalised search field
+ * maintained on the order-writing path, which is a migration and a change to
+ * the money path, and is recorded for the owner rather than taken here.
+ */
+OrderSchema.index({ 'customer.email': 1 }, { name: 'order_customer_email' });

@@ -199,3 +199,16 @@ export interface AdminOrder {
   allowedTransitions: AdminOrderTransition[];
   statusHistory: OrderStatusHistoryEntry[];
 }
+
+/**
+ * The queue tiles, from `GET /admin/orders/stats`.
+ *
+ * Every lifecycle status is present, including the ones nothing is in — the API
+ * fills those with `0` rather than omitting them, so the console can tell "no
+ * cancelled orders" from "the count could not be read". Those are different
+ * sentences and only one of them is a fact.
+ */
+export interface OrderQueueStats {
+  readonly byStatus: readonly { readonly status: OrderStatus; readonly count: number }[];
+  readonly total: number;
+}

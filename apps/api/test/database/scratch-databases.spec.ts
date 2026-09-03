@@ -223,12 +223,48 @@ describe('the three suites name the same three databases', () => {
   });
 
   it('each Playwright config hands its API process the database it prepared', () => {
-    for (const path of ['apps/storefront/playwright.config.ts', 'apps/admin/playwright.config.ts']) {
+    /*
+     * The admin's server definitions moved into `playwright.shared.ts` when its
+     * suite was split in two — the unreachable-API specs need a third web
+     * server and Playwright has no per-project one, so a server four specs need
+     * was a hard dependency of all thirty-seven.
+     *
+     * This test went red on that change, correctly: it was asserting against
+     * the file the definitions used to be in. Updated to follow them, and made
+     * STRICTER while doing so — it now also checks that the two admin configs
+     * select disjoint spec sets from one shared constant, which is the failure
+     * a two-config split invites and which would look like a passing suite.
+     */
+    for (const path of [
+      'apps/storefront/playwright.config.ts',
+      'apps/admin/playwright.shared.ts',
+    ]) {
       const config = source(path);
 
       expect(config).toContain('MONGODB_DB_NAME: SCRATCH_DATABASE');
       expect(config).toContain('--suite ${SCRATCH_SUITE} --ensure-clean');
     }
+  });
+
+  it('the two admin configs cannot leave a spec in neither run', () => {
+    /*
+     * A spec that falls out of BOTH runs is the failure this shape invites, and
+     * it is invisible: the suite passes, having quietly stopped running one
+     * file. The `testIgnore`/`testMatch` pair is written against a single
+     * exported constant so the two are complements by construction rather than
+     * by somebody keeping two globs in step.
+     */
+    const main = source('apps/admin/playwright.config.ts');
+    const unreachable = source('apps/admin/playwright.unreachable-api.config.ts');
+    const shared = source('apps/admin/playwright.shared.ts');
+
+    expect(shared).toContain('export const UNREACHABLE_API_SPECS');
+    expect(main).toContain('testIgnore: UNREACHABLE_API_SPECS');
+    expect(unreachable).toContain('testMatch: UNREACHABLE_API_SPECS');
+
+    // And the main run must not start the server it exists to be free of.
+    expect(main).toContain('webServer: [API_SERVER, ADMIN_SERVER]');
+    expect(unreachable).toContain('UNREACHABLE_API_SERVER');
   });
 });
 
