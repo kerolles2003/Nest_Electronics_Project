@@ -1590,6 +1590,97 @@
         ]
       }
     },
+    "/api/v1/admin/catalog/slug-availability": {
+      "get": {
+        "description": "Answers whether a slug is available for a product, category or brand, and offers the\nnext free alternative when it is not — `esp32-devkit-2`, per CATALOG-MODEL.md §2.\n\nPass `excludeId` when EDITING an existing entity, or it will report its own slug as\ntaken and every save of an unchanged product will be refused.\n\n**This endpoint fails closed.** The admin route it replaces answered \"available\" on\nevery failure path — a database error, a missing service, any exception — so a check\nthat could not reach the database told the operator their slug was free. The form is\nbuilt to trust this answer, which makes a wrong \"available\" worse than no check at all.\nA failure here is a 5xx.\n\nA soft-deleted entity still holds its slug. Reusing it would silently repoint every\nexisting link to a different product.",
+        "operationId": "AdminCatalogController_slugAvailability_v1",
+        "parameters": [
+          {
+            "name": "type",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "product",
+              "type": "string",
+              "enum": [
+                "product",
+                "category",
+                "brand"
+              ]
+            }
+          },
+          {
+            "name": "slug",
+            "required": true,
+            "in": "query",
+            "description": "Lowercase alphanumerics separated by single hyphens, no leading or trailing hyphen.",
+            "schema": {
+              "maxLength": 80,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "example": "esp32-devkit-v1",
+              "type": "string"
+            }
+          },
+          {
+            "name": "excludeId",
+            "required": false,
+            "in": "query",
+            "description": "The entity being EDITED. Without it, saving an unchanged product reports its own slug as taken and the save is refused.",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlugAvailabilityResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a malformed slug or an unknown `type`. UNKNOWN_FIELD — an undocumented query parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Is this slug free",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
     "/api/v1/cart": {
       "get": {
         "description": "Returns the cart, **re-priced and re-checked against live catalogue data on every**\n**request**. Stored numbers are never returned.\n\nA customer who has never added anything gets an empty cart, not a 404 — the underlying\ndocument is created lazily on the first add.\n\nLines whose product went out of stock or was delisted are KEPT and flagged rather than\ndeleted, so the customer can see why the total changed. They are excluded from\n`itemsSubtotal` and set `hasBlockingIssues`.",
@@ -5564,6 +5655,41 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/BrandDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SlugAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "example": "esp32-devkit-v1"
+          },
+          "available": {
+            "type": "boolean",
+            "example": false
+          },
+          "suggestion": {
+            "type": "string",
+            "example": "esp32-devkit-v1-2",
+            "nullable": true,
+            "description": "The next free alternative, or `null` when the requested slug is already free. Numeric suffixes start at 2, because the unsuffixed slug is the first one."
+          }
+        },
+        "required": [
+          "slug",
+          "available",
+          "suggestion"
+        ]
+      },
+      "SlugAvailabilityResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SlugAvailabilityDto"
           }
         },
         "required": [

@@ -204,3 +204,16 @@ function noted(note: string | undefined): { note?: string } {
 
   return trimmed === '' ? {} : { note: trimmed };
 }
+
+/** Is a catalogue slug free? Fails closed — see the route that calls it. */
+export function checkSlugAvailability(params: {
+  type: string;
+  slug: string;
+  excludeId?: string;
+}): Promise<Envelope<{ slug: string; available: boolean; suggestion: string | null }>> {
+  const query = new URLSearchParams({ type: params.type, slug: params.slug });
+
+  if (params.excludeId !== undefined) query.set('excludeId', params.excludeId);
+
+  return apiFetch(`/admin/catalog/slug-availability?${query.toString()}`);
+}

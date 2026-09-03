@@ -4816,3 +4816,84 @@ with the rest of Part 3; writing it correctly had to come first, because every
 administrative action taken before the mechanism exists is unrecoverable.
 
 23 tests, all passing.
+
+---
+
+# Phase 7 Part 3b — slugs, and a uniqueness check that could not say "I don't know"
+
+## The defect
+
+`apps/admin/src/app/api/check-slug/route.ts` answered `{ exists: false }` on
+**every** failure path — a database error, a missing service, any thrown
+exception. `exists: false` means *the slug is free*.
+
+The product form is built to trust that answer. So a check that could not reach
+the database told the operator to carry on, and the create then failed on the
+unique index — after they had filled in the name, the price, the category, the
+specs and the images.
+
+**A uniqueness check that answers "available" when it does not know is worse
+than no check**, because the form treats silence and certainty identically. The
+old route had four `return NextResponse.json({ exists: false })` statements and
+only one of them meant "free".
+
+## What replaces it
+
+`GET /admin/catalog/slug-availability?type=&slug=&excludeId=` on the API, staff
+only, and **nothing in the path catches anything**. A failure propagates and the
+endpoint answers 5xx. The admin route forwards `available: null` with a non-200
+status, and the form must render that as unknown — neither a tick nor a cross,
+because both are claims the route cannot support.
+
+Per `CATALOG-MODEL.md` §2, a taken slug comes back with the next free suffix.
+Suffixes start at **2**, because the unsuffixed slug is the first one and
+`esp32-devkit-1` beside `esp32-devkit` reads as though there were a zeroth.
+
+Three details that are each a bug if got wrong:
+
+- **`excludeId`.** Without it, opening a product and saving it unchanged reports
+  its own slug as taken, and every edit to any other field becomes impossible.
+- **A soft-deleted entity still holds its slug.** `CATALOG-MODEL.md` says SKUs
+  and slugs must not be silently reusable, and the reason is that reusing one
+  repoints every existing link — every bookmark, every search result, every
+  message someone sent a customer — at a different product, silently.
+- **The answer is scoped to the type.** A brand and a product may share a slug;
+  they are different collections with different URL spaces. Answering across all
+  three would refuse a perfectly valid brand slug because some product uses it.
+
+The generator refuses to produce an empty slug. Arabic text reduces to nothing
+under an ASCII rule and so does a name of pure punctuation — `!!!` is a
+plausible typo, not an adversarial input — and an empty slug goes into a URL and
+a unique index.
+
+A malformed manual edit is a **400, not a silent rewrite**. §2 rule 6 makes the
+slug admin-editable; rewriting it quietly leaves the operator looking at one
+value in the form and another in the URL, and neither is wrong enough to notice.
+
+23 tests. type-check, lint and the drift gate clean.
+
+## NOT done, and it is part of the same section
+
+`slugRedirects`. §2 rules 3 to 6 say that on rename the old slug is written to a
+redirect collection, that product resolution reads it and answers 301, and that
+chains are collapsed at write time. **None of that exists.** The collection is
+not in the codebase, and a rename today changes the slug and leaves the old URL
+a 404 — which is precisely legacy defect K4, where redirects were written and
+nothing ever read them.
+
+It belongs with the product UPDATE path, which is not built yet, so nothing is
+half-done: there is no rename endpoint to leave broken. It is on the handoff.
+
+## Needs owner — the `attributes` handler
+
+`CATALOG-MODEL.md` §7 replaces the three-table EAV with an embedded `specs[]`
+array plus "a separate small `specDefinitions` collection holding the canonical
+`key → label/unit/filterable` dictionary used by the admin editor".
+
+**That collection does not exist**, and what belongs in it is owner data: which
+spec keys are canonical, what each is labelled, which unit it carries, and which
+are filterable. I could derive a dictionary from the keys currently used by
+seeded products, but that would be inventing a taxonomy and calling it frozen.
+
+So the admin's `attributes` route is **untouched** and still reads Supabase. It
+is listed under Needs owner rather than guessed at.
