@@ -39,3 +39,36 @@ export const BASE_URL = `http://${HOST}:${PORT}`;
 export const API_PORT = '3002';
 
 export const API_BASE_URL = `http://${HOST}:${API_PORT}/api/v1`;
+
+/**
+ * THE database this suite owns, and the only one it may touch.
+ *
+ * ## Why the suite has one at all
+ *
+ * It used to share the development database with the API's jest suites, the
+ * admin browser suite and whatever the developer was doing in another window.
+ * Each suite cleaned up after itself by tracked identity, which works exactly
+ * as long as the process survives to run its teardown — and the admin suite,
+ * for a while, had no teardown at all. It left 62 accounts, 35 orders and four
+ * products at zero stock, and the failure surfaced HERE: `/products › filters
+ * by brand and by stock` and the purchase journey went red over a catalogue
+ * this suite had not touched.
+ *
+ * A crashed run can now only damage this database, and the next run drops it.
+ *
+ * ## Why the name is written out rather than imported
+ *
+ * `apps/api/src/database/testing/scratch-databases.ts` is the authority, and it
+ * lives in another workspace: importing it here would pull NestJS and Mongoose
+ * types into this application's type-check to obtain one string.
+ *
+ * The copy is safe rather than merely tolerated. The API refuses to drop or
+ * rebuild any database that is not in its own list, so a drifted value fails
+ * the very next run with a message naming it — and
+ * `apps/api/test/database/scratch-databases.spec.ts` reads THIS file and
+ * asserts the two still agree.
+ */
+export const SCRATCH_DATABASE = 'nest_electronics_scratch_storefront';
+
+/** The suite's name to `pnpm --filter api test-db`. Paired with the above. */
+export const SCRATCH_SUITE = 'storefront-e2e';

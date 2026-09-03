@@ -15,6 +15,7 @@ import {
   MediaAsset,
   type MediaAssetLean,
 } from '../../src/modules/media/infrastructure/schemas/media-asset.schema';
+import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { MediaAssetRepository } from '../../src/modules/media/infrastructure/repositories/media-asset.repository';
 import { Role, User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
 import { InMemoryMediaStorage } from '../../src/providers/media/memory/in-memory-media-storage';
@@ -56,6 +57,7 @@ const ENTITY_ID = '68b000000000000000000001';
 
 let app: INestApplication;
 let users: Model<User>;
+let refreshTokens: Model<RefreshToken>;
 let assets: Model<MediaAsset>;
 let storage: InMemoryMediaStorage;
 let ledger: MediaAssetRepository;
@@ -144,6 +146,7 @@ beforeAll(async () => {
   await app.init();
 
   users = app.get<Model<User>>(getModelToken(User.name));
+  refreshTokens = app.get<Model<RefreshToken>>(getModelToken(RefreshToken.name));
   assets = app.get<Model<MediaAsset>>(getModelToken(MediaAsset.name));
   ledger = app.get(MediaAssetRepository);
   config = app.get<MediaConfig>(mediaConfig.KEY);
@@ -168,6 +171,16 @@ beforeEach(async () => {
 
 afterAll(async () => {
   if (createdUserIds.length > 0) {
+    /*
+     * The sessions those accounts opened, before the accounts themselves.
+     *
+     * Signing in writes a refresh token, and deleting the user does not
+     * remove it — so this suite used to leave two orphaned token rows per
+     * run. Nothing noticed until every suite was given its own database and
+     * a teardown that compares the result against the state preparation
+     * recorded; residue with no visible symptom is still residue.
+     */
+    await refreshTokens.deleteMany({ userId: { $in: createdUserIds } }).exec();
     await users.deleteMany({ _id: { $in: createdUserIds } }).exec();
   }
   await assets.deleteMany({ publicId: /^nest\// }).exec();

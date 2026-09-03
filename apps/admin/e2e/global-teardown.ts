@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { DEV_ADMIN_EMAIL, E2E_EMAIL_PREFIX } from './fixtures/accounts';
+import { SCRATCH_DATABASE, SCRATCH_SUITE } from './origin';
 
 /**
  * Removes everything the admin suite created, and puts the stock back.
@@ -42,18 +44,12 @@ import { resolve } from 'node:path';
  */
 
 /**
- * The namespace this suite owns.
- *
- * Fixed rather than per-run, so a crashed run's residue is collected by the
- * NEXT run rather than being orphaned forever. Every address the fixtures
- * create begins `admin-e2e.`, and nothing else in the system does.
- *
- * It deliberately does NOT match `admin@nest-electronics.test`, the development
- * admin: that account is a seeded fixture with its own lifecycle
- * (`dev-admin:seed`), and deleting it would make the next run fail in
- * `global-setup` with a message about a missing operator.
+ * Re-exported so `fixtures/operations.ts` keeps its single import, and so the
+ * two halves of this suite cannot disagree about which addresses it owns. The
+ * definition lives in `fixtures/accounts.ts` — see that file for what the split
+ * used to cost.
  */
-export const E2E_EMAIL_PREFIX = 'admin-e2e';
+export { E2E_EMAIL_PREFIX };
 
 /**
  * Runs inside `apps/api`, where Mongoose resolves.
@@ -83,7 +79,10 @@ function readUri() {
 }
 
 (async () => {
-  await mongoose.connect(readUri());
+  // The suite's OWN database, overriding whatever the URI names. Passed in
+  // rather than derived, so this script and the API under test cannot end up
+  // cleaning and writing two different databases.
+  await mongoose.connect(readUri(), { dbName: process.env.MONGODB_DB_NAME });
   const db = mongoose.connection.db;
 
   const pattern = new RegExp('^' + process.env.E2E_EMAIL_PREFIX + '\\\\.');
@@ -136,9 +135,29 @@ function readUri() {
     await db.collection('users').deleteMany({ _id: { $in: ids } });
   }
 
+  /*
+   * THE OPERATOR'S OWN SESSIONS.
+   *
+   * Every spec signs the development admin in, and that account is a seeded
+   * fixture: it is deliberately outside the namespace above, so it survives the
+   * cleanup — and so did its refresh tokens. Fifteen orphaned session rows per
+   * run, invisible until the database started being checked against the state
+   * preparation recorded.
+   *
+   * The ACCOUNT is left alone; only its sessions go. Deleting it would make the
+   * next run fail in global-setup with a message about a missing operator.
+   */
+  const operator = await db.collection('users')
+    .findOne({ email: process.env.DEV_ADMIN_EMAIL }, { projection: { _id: 1 } });
+
+  const sessions = operator === null
+    ? { deletedCount: 0 }
+    : await db.collection('refreshTokens').deleteMany({ userId: operator._id });
+
   // Counts only. No email address, no id, no connection string.
   console.log(
     'admin e2e teardown: removed ' + ids.length + ' user(s), ' + orders + ' order(s), ' +
+      sessions.deletedCount + ' operator session(s), ' +
       'reversed ' + restocked + ' stock movement(s)',
   );
   await mongoose.disconnect();
@@ -149,9 +168,36 @@ function readUri() {
 `;
 
 export default function globalTeardown(): void {
-  execFileSync(process.execPath, ['-e', CLEANUP], {
-    cwd: resolve(__dirname, '../../api'),
-    env: { ...process.env, E2E_EMAIL_PREFIX },
-    stdio: 'inherit',
-  });
+  const api = resolve(__dirname, '../../api');
+  const env = {
+    ...process.env,
+    E2E_EMAIL_PREFIX,
+    DEV_ADMIN_EMAIL,
+    MONGODB_DB_NAME: SCRATCH_DATABASE,
+  };
+
+  execFileSync(process.execPath, ['-e', CLEANUP], { cwd: api, env, stdio: 'inherit' });
+
+  /**
+   * And then PROVE it.
+   *
+   * The cleanup above reports what it removed, which says nothing about what
+   * it missed — and what it missed is the entire failure mode. This compares
+   * the database against the state preparation recorded before the run: every
+   * collection's document count, and every product's stock, per SKU. Anything
+   * left over fails the run and is named.
+   *
+   * It runs from `dist`, which the Playwright web server built before it
+   * started the API.
+   */
+  execFileSync(
+    process.execPath,
+    [
+      'dist/database/testing/scratch-database.cli.js',
+      '--suite',
+      SCRATCH_SUITE,
+      '--assert-clean',
+    ],
+    { cwd: api, env, stdio: 'inherit' },
+  );
 }

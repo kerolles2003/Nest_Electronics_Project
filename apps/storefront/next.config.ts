@@ -2,6 +2,29 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /**
+   * Where compiled output goes, and why the browser suite gets its own.
+   *
+   * `next dev` keeps its build cache and route manifest under this directory.
+   * A developer running `pnpm dev` and a Playwright run starting its own
+   * `next dev` both used `.next`, so the two shared one cache — and a run that
+   * was killed part way, or two servers racing on it, leaves that cache in a
+   * state the next server serves happily and WRONGLY.
+   *
+   * That is not hypothetical. On the admin console it produced a dev server
+   * that answered `/admin` with 200 and every nested route with a clean 404 —
+   * no error, no warning, just a Page Not Found for half the application, while
+   * a second dev server on the same source with its own build directory served
+   * every one of them correctly. Eleven specs failed and the cause looked like
+   * anything but a build cache.
+   *
+   * The same reasoning as the per-suite databases in
+   * `apps/api/src/database/testing/`: shared mutable state between a developer
+   * and a test run is a defect waiting for a schedule. The suite passes
+   * `NEXT_DIST_DIR`; `pnpm dev` keeps `.next`.
+   */
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
+
+  /**
    * Hosts allowed to request `/_next/*` dev resources.
    *
    * Development only — Next 16 blocks cross-origin requests for dev assets, and

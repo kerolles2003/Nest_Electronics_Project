@@ -77,7 +77,18 @@ function registerConnectionLogging(connection: Connection): Connection {
     MongooseModule.forRootAsync({
       inject: [databaseConfig.KEY],
       useFactory: (config: DatabaseConfig) => {
-        logger.log('database connection starting');
+        /*
+         * The database NAME is logged; the URI never is. The name carries no
+         * host and no credential, and it is the one piece of connection state
+         * worth seeing at boot — a test run pointed at the wrong database is
+         * otherwise indistinguishable from one pointed at the right one until
+         * something is already destroyed.
+         */
+        logger.log(
+          config.database === undefined
+            ? 'database connection starting'
+            : `database connection starting (database: ${config.database})`,
+        );
 
         return {
           uri: config.uri,

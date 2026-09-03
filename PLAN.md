@@ -435,7 +435,7 @@ Gaps → work items:
 4. **Real-verification e2e** — one spec that runs with `AUTH_REQUIRE_EMAIL_VERIFICATION=true` + console provider, harvests the emitted link (the audit proved this technique), and completes verify→login.
 5. **Cutover regression specs** — as each T1/T2 route migrates, a journey spec on the *canonical* URL joins the suite; the audit’s browser matrix (auth, store, failure paths incl. 401/404/409/429) is the checklist.
 6. **New-domain specs (D-5/D-8)** — shipping-fee table tests over the frozen `shippingRates` collection (Cairo/Giza 5 000 pt, every other governorate 10 000 pt, an unlisted-governorate miss, threshold interplay, coupon-then-fee ordering per the frozen formula) **plus explicit `shippingPriced` tests — a priced-zero fee must render as free, never as “not calculated”**; coupon validation table from `DISCOUNT-MODEL.md` incl. double-redemption; review moderation gating (unmoderated content never publicly readable); wishlist auth boundaries; blog rendering; import-tool report tests.
-7. **Test isolation debt** `[A→low]`: suites share one database; parallel runs collide (observed when audit runs raced). Either enforce `--runInBand` in CI (current reality) or per-run database names.
+7. ~~**Test isolation debt**~~ **DONE, 3 Sep 2026** `[V]`: the three suites each own a database (`nest_electronics_scratch_api` / `_storefront` / `_admin`), chosen with `MONGODB_DB_NAME`. Preparation rebuilds one that has drifted from its recorded baseline; teardown fails the run if it drifted during it. Taken early, out of order, because the debt stopped being theoretical: a suite with no teardown drained the shared catalogue and the failure appeared in another suite entirely. See §25 item 7 and `WORK-LOG.md`.
 8. Full pipeline target (CI’s shape + seed): `fresh clone → pnpm install --frozen-lockfile → env per .env.example → seed → type-check → lint → build → test → e2e`.
 
 ## 21. Production Readiness Plan
@@ -769,7 +769,7 @@ P0 baseline
 4. **Coupons introduce new money math into the pricing envelope.** Mitigated by the pre-existing frozen spec (`DISCOUNT-MODEL.md` `[V]`), last position in Phase 8, the structural double-redemption index, and §20 item 6 tests.
 5. **Phase 8 is the schedule pinch** (~2.5–3 weeks where both rails converge). The cheapest-first internal order exists so the owner can defer reviews/coupons with a recorded decision rather than schedule slip.
 6. **Admin capability depth is still unverified per screen** `[A]` — budgeted as screen-by-screen audits inside Phases 6/7; estimates there may move.
-7. **Shared dev/test database** — parallel test runs collide (observed `[V]`); enforce the §20 isolation policy before team size grows.
+7. ~~**Shared dev/test database**~~ **CLOSED, 3 Sep 2026** — each suite now owns a scratch database and the harness refuses to drop anything else. What forced it: an admin browser suite shipped without a teardown, left 62 accounts, 35 orders and four products at zero stock in the shared development database, and the damage surfaced as STOREFRONT failures on a stock filter and a purchase journey. A teardown fixes an instance; only isolation fixes the class, because a teardown does not run when the process is killed.
 8. **D-10 deferral** — provisioning unknowns (cookie topology, platform quirks) surface only at Phase 11; mitigated by the staging-on-real-subdomains gate and by keeping `DEPLOYMENT-DECISION.md` current.
 
 ---

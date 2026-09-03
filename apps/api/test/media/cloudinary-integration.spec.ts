@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
+import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { ImageImporter } from '../../src/database/import/image-importer';
 import { ImportRunner } from '../../src/database/import/import-runner';
 import type { RowResult } from '../../src/database/import/import-report';
@@ -73,6 +74,7 @@ const ENTITY_ID = '68b000000000000000000001';
 
 let app: INestApplication;
 let users: Model<User>;
+let refreshTokens: Model<RefreshToken>;
 let assets: Model<MediaAsset>;
 let storage: CloudinaryMediaStorage;
 let config: MediaConfig;
@@ -208,6 +210,7 @@ suite('the media pipeline, against the real Cloudinary account', () => {
     await app.init();
 
     users = app.get<Model<User>>(getModelToken(User.name));
+    refreshTokens = app.get<Model<RefreshToken>>(getModelToken(RefreshToken.name));
     assets = app.get<Model<MediaAsset>>(getModelToken(MediaAsset.name));
     config = app.get<MediaConfig>(mediaConfig.KEY);
 
@@ -255,6 +258,16 @@ suite('the media pipeline, against the real Cloudinary account', () => {
       await assets.deleteMany({ publicId: new RegExp(`^${TEST_ROOT}/`) }).exec();
 
       if (createdUserIds.length > 0) {
+      /*
+       * The sessions those accounts opened, before the accounts themselves.
+       *
+       * Signing in writes a refresh token, and deleting the user does not
+       * remove it — so this suite used to leave two orphaned token rows per
+       * run. Nothing noticed until every suite was given its own database and
+       * a teardown that compares the result against the state preparation
+       * recorded; residue with no visible symptom is still residue.
+       */
+        await refreshTokens.deleteMany({ userId: { $in: createdUserIds } }).exec();
         await users.deleteMany({ _id: { $in: createdUserIds } }).exec();
       }
 

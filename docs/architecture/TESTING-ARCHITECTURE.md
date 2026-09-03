@@ -214,7 +214,19 @@ apps/api/
 | Fixtures | **Builder functions** (`aProduct({ stock: 5 })`), not JSON blobs — a schema change breaks one builder, not forty files |
 | Naming | `<subject>.spec.ts` beside code; `<feature>.e2e-spec.ts` in `test/e2e/` |
 
-**Isolation:** each suite gets a clean database; tests never depend on execution order or on each other's data.
+**Isolation:** each of the three suites owns a database, selected with `MONGODB_DB_NAME` and named in `apps/api/src/database/testing/scratch-databases.ts`:
+
+| Suite | Database |
+|---|---|
+| `apps/api` jest | `nest_electronics_scratch_api` |
+| `apps/storefront` Playwright | `nest_electronics_scratch_storefront` |
+| `apps/admin` Playwright | `nest_electronics_scratch_admin` |
+
+Preparation (`test-db --ensure-clean`) rebuilds a database that does not match the baseline it recorded — index sync, catalogue, shipping rates, development admin — and reuses one that does. Teardown (`--assert-clean`) FAILS the run if the database is not still that baseline, naming every difference. Only those three names may be dropped; anything else is refused. Within a suite, tests isolate by tracked identity and must not depend on execution order.
+
+The same rule applies to Next's build directory. `pnpm dev` uses `.next`; each browser suite passes `NEXT_DIST_DIR` and gets its own (`.next-e2e`, plus `.next-dead-api` for the admin's unreachable-API server). A shared dev cache is shared mutable state with no fence around it, and a poisoned one is silent: it once made the admin dev server answer `/admin` with 200 and every nested route with a clean 404, failing eleven specs with no error anywhere.
+
+> **Corrected 3 September 2026.** This line previously read "each suite gets a clean database", and that was never true — every suite shared `nest_electronics_dev`. The cost is recorded in `WORK-LOG.md`: a browser suite without a teardown drained the shared catalogue, and the failure surfaced in a *different* suite while the guilty one stayed green.
 
 ---
 

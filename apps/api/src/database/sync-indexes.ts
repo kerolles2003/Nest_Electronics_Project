@@ -22,7 +22,7 @@ import { AppModule } from '../app.module';
 
 const logger = new Logger('IndexSync');
 
-async function main(): Promise<void> {
+export async function syncDeclaredIndexes(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -51,12 +51,21 @@ async function main(): Promise<void> {
     }
 
     logger.log('index sync complete');
-  } catch (error) {
-    logger.error(`index sync failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
   } finally {
     await app.close();
   }
 }
 
-void main();
+/*
+ * The CLI half, kept separate from the operation above.
+ *
+ * The scratch-database harness rebuilds a database by CALLING these functions,
+ * so a failure has to reach the caller as an exception rather than as an exit
+ * code nobody reads. The same split as `staff.provision.ts` and its CLI.
+ */
+if (require.main === module) {
+  void syncDeclaredIndexes().catch((error: unknown) => {
+    logger.error(`index sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}

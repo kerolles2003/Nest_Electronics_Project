@@ -68,7 +68,7 @@ function effectivePriceOf(product: SeedProduct): number {
   return salePrice ?? basePrice;
 }
 
-async function main(): Promise<void> {
+export async function seedDevelopmentCatalogue(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -79,9 +79,7 @@ async function main(): Promise<void> {
     if (config.nodeEnv === 'production') {
       // A seed is development data. Refusing here is cheaper than explaining
       // later why a production catalogue contains an Arduino Uno.
-      logger.error('refusing to seed: NODE_ENV=production');
-      process.exitCode = 1;
-      return;
+      throw new Error('refusing to seed: NODE_ENV=production');
     }
 
     const categories = app.get<Model<Category>>(getModelToken(Category.name));
@@ -276,12 +274,21 @@ async function main(): Promise<void> {
 
     logger.log('counts      recomputed');
     logger.log('seed complete');
-  } catch (error) {
-    logger.error(`seed failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
   } finally {
     await app.close();
   }
 }
 
-void main();
+/*
+ * The CLI half, kept separate from the operation above.
+ *
+ * The scratch-database harness rebuilds a database by CALLING these functions,
+ * so a failure has to reach the caller as an exception rather than as an exit
+ * code nobody reads. The same split as `staff.provision.ts` and its CLI.
+ */
+if (require.main === module) {
+  void seedDevelopmentCatalogue().catch((error: unknown) => {
+    logger.error(`seed failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}

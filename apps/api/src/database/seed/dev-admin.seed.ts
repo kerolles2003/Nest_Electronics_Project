@@ -67,7 +67,7 @@ interface Services {
  * every super-admin would be a very effective way to lose a real one on a
  * machine pointed at the wrong database.
  */
-async function reset(services: Services): Promise<void> {
+async function resetTheAccount(services: Services): Promise<void> {
   const existing = await services.users
     .findOne({ email: DEV_ADMIN_EMAIL })
     .lean<UserLean>()
@@ -114,7 +114,13 @@ async function repair(services: Services, existing: UserLean): Promise<void> {
   logger.log('            the password is unchanged; use --reset to recreate it');
 }
 
-async function main(): Promise<void> {
+/**
+ * @param reset  Recreate the account even if one is already there. Taken as a
+ *               parameter rather than read from `process.argv` inside, because
+ *               the scratch-database harness calls this in a process whose
+ *               arguments belong to something else entirely.
+ */
+export async function seedDevelopmentAdmin(reset = false): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -129,10 +135,10 @@ async function main(): Promise<void> {
        * `.test` address here anyway; this refuses earlier and says why, so the
        * message names the reason rather than the mechanism.
        */
-      logger.error('refusing to seed a development admin: NODE_ENV=production');
-      logger.error('provision a real account instead: pnpm --filter api staff:create -- --help');
-      process.exitCode = 1;
-      return;
+      throw new Error(
+        'refusing to seed a development admin: NODE_ENV=production. Provision a real ' +
+          'account instead: pnpm --filter api staff:create -- --help',
+      );
     }
 
     const services: Services = {
@@ -141,8 +147,8 @@ async function main(): Promise<void> {
       connection: app.get<Connection>(getConnectionToken()),
     };
 
-    if (process.argv.includes('--reset')) {
-      await reset(services);
+    if (reset) {
+      await resetTheAccount(services);
     }
 
     const existing = await services.users
@@ -166,7 +172,22 @@ async function main(): Promise<void> {
 
     logger.log(`development admin ready: ${DEV_ADMIN_EMAIL}`);
     logger.log('the password is in docs/api/SANDBOX.md — it is a local fixture, not a secret');
-  } catch (error) {
+  } finally {
+    const connection = app.get<Connection>(getConnectionToken());
+    await app.close();
+    await connection.close();
+  }
+}
+
+/*
+ * The CLI half, kept separate from the operation above.
+ *
+ * The scratch-database harness rebuilds a database by CALLING these functions,
+ * so a failure has to reach the caller as an exception rather than as an exit
+ * code nobody reads. The same split as `staff.provision.ts` and its CLI.
+ */
+if (require.main === module) {
+  void seedDevelopmentAdmin(process.argv.includes('--reset')).catch((error: unknown) => {
     if (error instanceof StaffProvisioningError) {
       logger.error(`refused (${error.reason}): ${error.message}`);
     } else {
@@ -176,11 +197,5 @@ async function main(): Promise<void> {
     }
 
     process.exitCode = 1;
-  } finally {
-    const connection = app.get<Connection>(getConnectionToken());
-    await app.close();
-    await connection.close();
-  }
+  });
 }
-
-void main();

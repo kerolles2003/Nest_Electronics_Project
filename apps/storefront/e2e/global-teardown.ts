@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { SCRATCH_DATABASE, SCRATCH_SUITE } from './origin';
 
 /**
  * Removes everything the browser journey created.
@@ -61,7 +62,10 @@ function readUri() {
 }
 
 (async () => {
-  await mongoose.connect(readUri());
+  // The suite's OWN database, overriding whatever the URI names. Passed in
+  // rather than derived, so this script and the API under test cannot end up
+  // cleaning and writing two different databases.
+  await mongoose.connect(readUri(), { dbName: process.env.MONGODB_DB_NAME });
   const db = mongoose.connection.db;
 
   const pattern = new RegExp('^' + process.env.E2E_EMAIL_PREFIX + '\\\\.');
@@ -126,9 +130,31 @@ function readUri() {
 `;
 
 export default function globalTeardown(): void {
-  execFileSync(process.execPath, ['-e', CLEANUP], {
-    cwd: resolve(__dirname, '../../api'),
-    env: { ...process.env, E2E_EMAIL_PREFIX },
-    stdio: 'inherit',
-  });
+  const api = resolve(__dirname, '../../api');
+  const env = { ...process.env, E2E_EMAIL_PREFIX, MONGODB_DB_NAME: SCRATCH_DATABASE };
+
+  execFileSync(process.execPath, ['-e', CLEANUP], { cwd: api, env, stdio: 'inherit' });
+
+  /**
+   * And then PROVE it.
+   *
+   * The cleanup above reports what it removed, which says nothing about what
+   * it missed — and what it missed is the entire failure mode. This compares
+   * the database against the state preparation recorded before the run: every
+   * collection's document count, and every product's stock, per SKU. Anything
+   * left over fails the run and is named.
+   *
+   * It runs from `dist`, which the Playwright web server built before it
+   * started the API.
+   */
+  execFileSync(
+    process.execPath,
+    [
+      'dist/database/testing/scratch-database.cli.js',
+      '--suite',
+      SCRATCH_SUITE,
+      '--assert-clean',
+    ],
+    { cwd: api, env, stdio: 'inherit' },
+  );
 }

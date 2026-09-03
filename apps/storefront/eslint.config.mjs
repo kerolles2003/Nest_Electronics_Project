@@ -9,6 +9,9 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // The browser suite's own build directories. Without this eslint walks
+    // generated output and reports hundreds of errors in files nobody wrote.
+    ".next-*/**",
     "out/**",
     "build/**",
     "next-env.d.ts",

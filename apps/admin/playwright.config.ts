@@ -5,6 +5,8 @@ import {
   DEAD_API_PORT,
   HOST,
   PORT,
+  SCRATCH_DATABASE,
+  SCRATCH_SUITE,
   UNREACHABLE_API_BASE_URL,
 } from './e2e/origin';
 
@@ -112,14 +114,43 @@ export default defineConfig({
    */
   webServer: [
     {
-      command: 'pnpm --filter api build && pnpm --filter api start',
+      /*
+       * Build, then prepare this suite's database, then serve.
+       *
+       * `test-db --ensure-clean` reuses the database when it still matches the
+       * baseline recorded at preparation and drops and rebuilds it when it does
+       * not — which is what the last run leaves behind when it is killed part
+       * way. It carries no build step of its own because the line before it is
+       * one.
+       */
+      command:
+        'pnpm --filter api build && ' +
+        `pnpm --filter api test-db -- --suite ${SCRATCH_SUITE} --ensure-clean && ` +
+        'pnpm --filter api start',
       cwd: '../..',
       url: `${API_BASE_URL}/health`,
       timeout: 180_000,
-      reuseExistingServer: process.env['CI'] === undefined,
+      /**
+       * NEVER reused, locally or in CI.
+       *
+       * A reused API is one a developer started by hand, pointed at the
+       * DEVELOPMENT database. This suite places a real order per spec, and
+       * pointing those orders at a shared database is precisely the mistake
+       * that drained the catalogue and broke the storefront suite. The
+       * rate-limit probe in `global-setup` caught the throttle half of a reused
+       * server; nothing caught the database half, and that is the half that
+       * destroys data.
+       */
+      reuseExistingServer: false,
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
+        /**
+         * The suite's own database. Overrides the one named in `MONGODB_URI`,
+         * for this process only — see `e2e/origin.ts`.
+         */
+        MONGODB_DB_NAME: SCRATCH_DATABASE,
+
         /**
          * Rate limits raised for THIS process only — see
          * `apps/api/src/config/throttle.config.ts` for the multiplier and the
@@ -165,6 +196,18 @@ export default defineConfig({
       stderr: 'pipe',
       env: {
         API_BASE_URL,
+        /**
+         * Its OWN build directory, not `.next`.
+         *
+         * A developer's `pnpm dev` and this suite both used `.next`, so they
+         * shared one dev cache and route manifest. A killed run or two servers
+         * racing on it leaves that cache in a state the next server serves
+         * happily and wrongly — on the admin console it produced clean 404s for
+         * every nested route while the index answered 200. Same reasoning as
+         * the per-suite databases: no shared mutable state between a developer
+         * and a run.
+         */
+        NEXT_DIST_DIR: '.next-e2e',
         /**
          * The third use of HOST: the origin `next dev` will serve
          * `/admin/_next/*` to. Passed rather than written out in

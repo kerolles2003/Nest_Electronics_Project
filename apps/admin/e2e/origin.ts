@@ -103,3 +103,34 @@ export const DEAD_API_BASE_URL = `http://${HOST}:${DEAD_API_PORT}`;
  * the page renders, which is the behaviour being asserted.
  */
 export const UNREACHABLE_API_BASE_URL = `http://${HOST}:9/api/v1`;
+
+/**
+ * THE database this suite owns, and the only one it may touch.
+ *
+ * ## Written from the damage this suite did
+ *
+ * These specs place a real order each, through the real checkout, which really
+ * does decrement stock. For several runs there was no teardown at all, and they
+ * left the SHARED development database holding 62 accounts, 35 orders and four
+ * products at zero stock out of thirty-four. The failure surfaced in the
+ * STOREFRONT suite — a stock filter and a purchase journey with nothing to do
+ * with the admin — while this suite stayed green.
+ *
+ * A teardown was added and fixed that instance. It did not fix the class: a
+ * teardown only runs when the process survives to run it, and a killed run, a
+ * dead database container or a crashed editor all skip it. With a database of
+ * its own, a crashed run can damage only this, and the next run drops it.
+ *
+ * ## Why the name is written out rather than imported
+ *
+ * `apps/api/src/database/testing/scratch-databases.ts` is the authority and it
+ * lives in another workspace; importing it would pull NestJS and Mongoose types
+ * into this application's type-check to obtain one string. The API refuses to
+ * drop any database not in its own list, so a drifted value fails the next run
+ * by name, and `apps/api/test/database/scratch-databases.spec.ts` reads THIS
+ * file and asserts the two agree.
+ */
+export const SCRATCH_DATABASE = 'nest_electronics_scratch_admin';
+
+/** The suite's name to `pnpm --filter api test-db`. Paired with the above. */
+export const SCRATCH_SUITE = 'admin-e2e';

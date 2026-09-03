@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { API_BASE_URL, BASE_URL, HOST, PORT } from './e2e/origin';
+import { API_BASE_URL, BASE_URL, HOST, PORT, SCRATCH_DATABASE, SCRATCH_SUITE } from './e2e/origin';
 
 /**
  * Browser end-to-end configuration.
@@ -24,8 +24,10 @@ import { API_BASE_URL, BASE_URL, HOST, PORT } from './e2e/origin';
  * ## They write to a real database
  *
  * The journey registers an account and places an order, so it must be pointed
- * at a DISPOSABLE environment — never at production. `globalTeardown` removes
- * everything it creates; that is a cleanup, not a licence.
+ * at a DISPOSABLE environment — never at production. It writes to a database of
+ * its own (`SCRATCH_DATABASE`), which the API rebuilds before the run if the
+ * last one left it dirty and which `globalTeardown` proves is untouched
+ * afterwards. That is a cleanup, not a licence.
  */
 /*
  * HOST, PORT, BASE_URL and API_BASE_URL all come from `e2e/origin.ts` — one
@@ -87,14 +89,46 @@ export default defineConfig({
    */
   webServer: [
     {
-      command: 'pnpm --filter api build && pnpm --filter api start',
+      /*
+       * Build, then prepare this suite's database, then serve.
+       *
+       * `test-db --ensure-clean` reuses the database when it matches the
+       * baseline preparation recorded, and drops and rebuilds it when it does
+       * not — which is what a crashed previous run leaves behind. It has no
+       * build step of its own precisely because the line before it is one.
+       */
+      command:
+        'pnpm --filter api build && ' +
+        `pnpm --filter api test-db -- --suite ${SCRATCH_SUITE} --ensure-clean && ` +
+        'pnpm --filter api start',
       cwd: '../..',
       url: `${API_BASE_URL}/health`,
       timeout: 180_000,
-      reuseExistingServer: process.env['CI'] === undefined,
+      /**
+       * NEVER reused, locally or in CI.
+       *
+       * This used to reuse an API already listening on the port, which meant a
+       * server a developer started by hand — pointed at the DEVELOPMENT
+       * database, with production rate limits — silently became the system
+       * under test. The rate-limit half of that was caught by `global-setup`;
+       * the database half was not, and it is the half that destroys data.
+       *
+       * The cost is one build and boot per run. The alternative is a suite
+       * that writes real orders into whichever database somebody else's
+       * process happened to open, which is exactly the damage that made all of
+       * this necessary. If the port is busy Playwright says so and stops,
+       * which is the right conversation to have.
+       */
+      reuseExistingServer: false,
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
+        /**
+         * The suite's own database. Overrides the one named in `MONGODB_URI`,
+         * for this process only — see `e2e/origin.ts`.
+         */
+        MONGODB_DB_NAME: SCRATCH_DATABASE,
+
         /**
          * The browser journey covers the PURCHASE path. Email verification is
          * proven end-to-end elsewhere — `apps/api/test/notifications/
@@ -146,6 +180,18 @@ export default defineConfig({
       stderr: 'pipe',
       env: {
         API_BASE_URL,
+        /**
+         * Its OWN build directory, not `.next`.
+         *
+         * A developer's `pnpm dev` and this suite both used `.next`, so they
+         * shared one dev cache and route manifest. A killed run or two servers
+         * racing on it leaves that cache in a state the next server serves
+         * happily and wrongly — on the admin console it produced clean 404s for
+         * every nested route while the index answered 200. Same reasoning as
+         * the per-suite databases: no shared mutable state between a developer
+         * and a run.
+         */
+        NEXT_DIST_DIR: '.next-e2e',
         /**
          * The third use of HOST: the origin `next dev` will serve `/_next/*`
          * to. Passed rather than written out in `next.config.ts`, so there is

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type APIRequestContext, type Page, request } from '@playwright/test';
 import { API_BASE_URL, route } from '../origin';
-import { E2E_EMAIL_PREFIX } from '../global-teardown';
+import {
+  DEV_ADMIN_EMAIL,
+  DEV_ADMIN_NAME,
+  DEV_ADMIN_PASSWORD,
+  E2E_EMAIL_PREFIX,
+} from './accounts';
 
 /**
  * What an admin spec needs: an operator to sign in as, and real orders to work.
@@ -19,17 +24,12 @@ import { E2E_EMAIL_PREFIX } from '../global-teardown';
  * way is visible to, and operable from, this console.
  */
 
-/**
- * The development admin, from `pnpm --filter api dev-admin:seed`.
- *
- * Imported as literals rather than from the API package, because this workspace
- * does not depend on it. `apps/api/test/database/dev-admin-seed.spec.ts` is what
- * keeps these two spellings and the seed's from drifting — it asserts the seed,
- * the docs and the policy all agree.
+/*
+ * Re-exported for the specs, which read them as the expected on-screen values.
+ * Defined in `./accounts.ts` so the teardown can see the same list — see that
+ * file for what keeping them here alone cost.
  */
-export const DEV_ADMIN_EMAIL = 'admin@nest-electronics.test';
-export const DEV_ADMIN_PASSWORD = 'copper oscilloscope probe';
-export const DEV_ADMIN_NAME = 'Development Admin';
+export { DEV_ADMIN_EMAIL, DEV_ADMIN_NAME, DEV_ADMIN_PASSWORD };
 
 /** Long enough for the API's policy, and not a value that appears in the repo twice. */
 const CUSTOMER_PASSWORD = 'lithium polymer harness';

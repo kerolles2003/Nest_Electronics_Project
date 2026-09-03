@@ -37,10 +37,31 @@ module.exports = {
    * and for nothing else. This stops a stray shell export or a leftover `.env`
    * line from relaxing the limits here, where the throttle is actually proven.
    */
+  /**
+   * A database of this suite's own, for EVERY suite.
+   *
+   * Same placement and the same reasoning as the two above: `ConfigModule`
+   * reads the environment the first time a module graph compiles, so the
+   * override has to be in place before any import runs.
+   */
   setupFiles: [
     '<rootDir>/test/setup/email-isolation.ts',
     '<rootDir>/test/setup/production-like-limits.ts',
+    '<rootDir>/test/setup/scratch-database.ts',
   ],
+
+  /**
+   * The two ends of the isolation: prepare the database before the run, and
+   * refuse to finish a run that left anything in it.
+   *
+   * `globalTeardown` is a failing check rather than a report. Every suite here
+   * cleans up in `afterAll`; nothing until now verified that the cleanup was
+   * complete, and an incomplete one is invisible until it breaks a DIFFERENT
+   * suite — which is how a drained catalogue was first noticed in the
+   * storefront browser tests rather than in the admin ones that caused it.
+   */
+  globalSetup: '<rootDir>/test/setup/prepare-scratch-database.ts',
+  globalTeardown: '<rootDir>/test/setup/assert-scratch-database-is-clean.ts',
 
   // ts-jest compiles with the project tsconfig, so `emitDecoratorMetadata` is
   // honoured (Nest DI needs it) and a type error fails the run.

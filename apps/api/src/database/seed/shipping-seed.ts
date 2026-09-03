@@ -33,7 +33,7 @@ import { SEED_SHIPPING_RATES } from './shipping.seed-data';
 
 const logger = new Logger('ShippingSeed');
 
-async function main(): Promise<void> {
+export async function seedShippingRates(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['log', 'warn', 'error'],
   });
@@ -67,12 +67,10 @@ async function main(): Promise<void> {
      * the system will say so until one of them tries.
      */
     if (total !== SEED_SHIPPING_RATES.length) {
-      logger.error(
+      throw new Error(
         `expected ${String(SEED_SHIPPING_RATES.length)} rows, found ${String(total)}. ` +
           'Every governorate must be priced: a missing row raises at checkout.',
       );
-      process.exitCode = 1;
-      return;
     }
 
     for (const rate of await rates.find().sort({ governorate: 1 }).lean().exec()) {
@@ -80,14 +78,23 @@ async function main(): Promise<void> {
     }
 
     logger.log('shipping seed complete');
-  } catch (error) {
-    logger.error(
-      `shipping seed failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    process.exitCode = 1;
   } finally {
     await app.close();
   }
 }
 
-void main();
+/*
+ * The CLI half, kept separate from the operation above.
+ *
+ * The scratch-database harness rebuilds a database by CALLING these functions,
+ * so a failure has to reach the caller as an exception rather than as an exit
+ * code nobody reads. The same split as `staff.provision.ts` and its CLI.
+ */
+if (require.main === module) {
+  void seedShippingRates().catch((error: unknown) => {
+    logger.error(
+      `shipping seed failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  });
+}

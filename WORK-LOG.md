@@ -3828,3 +3828,288 @@ It now refuses those writes up front and reports it once per process, naming the
 reason and Phase 7. **Order lifecycle actions are unaffected and are strictly
 better off** — the API records their actor on the order itself, and this phase
 is the first time any screen could read it.
+
+---
+
+# Phase 7 — one database per suite, and a residue check that can go red
+
+Taken out of order, ahead of anything else in this phase, because the debt it
+clears had just cost real debugging time and destroyed real data.
+
+## What actually happened
+
+The admin browser suite shipped without a teardown. It places a real order per
+spec, through the real checkout, which really does decrement stock. Twelve
+specs and several runs later the shared development database held **62 accounts,
+35 orders and four products at zero stock out of thirty-four**.
+
+The failure appeared in the STOREFRONT suite. `/products › filters by brand and
+by stock` and the purchase journey went red over a catalogue they had not
+touched, while the suite that emptied it stayed green. That is the worst shape
+test residue can take, and it is the reason the rule below is now standing
+practice:
+
+> **Compare failing test names, never counts.** A count hides a swap.
+
+The count in that run went 5 → 6 and read as one new problem. It was three
+failures disappearing and four appearing.
+
+## A teardown fixed the instance and not the class
+
+Adding the missing teardown put the catalogue back. It does not make the suites
+isolated, because **a teardown only runs on the happy path**. This session alone
+has had a Mongo container die mid-run, a dev server run out of memory, and an
+editor crash kill a run outright. In each of those the teardown never executes
+and the residue is back, in a database three suites and one developer share.
+
+So each suite now owns a database:
+
+| Suite | Database |
+|---|---|
+| `apps/api` jest | `nest_electronics_scratch_api` |
+| `apps/storefront` Playwright | `nest_electronics_scratch_storefront` |
+| `apps/admin` Playwright | `nest_electronics_scratch_admin` |
+
+`PLAN.md` §20 item 7 and §25 item 7 recorded this as isolation debt scheduled
+for Phase 10. Both are now closed.
+
+## Rebuilt when dirty, reused when clean
+
+The instruction was to drop the database wholesale rather than reason about what
+the last run left behind. It does — but only when there is something to drop.
+Preparation records a **baseline** in the database it has just built: every
+collection's document count, every product's stock per SKU, and a fingerprint of
+the seed data. A run that ended clean leaves a database matching that exactly,
+and rebuilding it would be twenty seconds of seeding to arrive at the state
+already present.
+
+The property that matters survives: **nothing ever works out WHAT to remove.**
+The judgement is binary — matches or does not — and the remedy for "does not" is
+always the same total drop, index sync, catalogue, shipping rates, development
+admin. There is no surgical cleanup path to get subtly wrong, which was the
+whole failure mode.
+
+The seed fingerprint is in the baseline for the other half of the problem: a
+database that is clean but STALE passes every check and then fails specs for
+reasons that have nothing to do with the code under test.
+
+## "Zero residue" is now an assertion
+
+The teardowns used to print `removed 12 user(s), 11 order(s), reversed 12 stock
+movement(s)`. **A count of what a cleanup found says nothing about what it
+missed**, and what it missed is the entire failure mode.
+
+Every suite now ends by comparing the database against its recorded baseline. A
+run that left anything FAILS and names it, per collection and per SKU:
+
+```
+The api-jest suite left 1 thing(s) behind in nest_electronics_scratch_api:
+  · refreshTokens: 2 document(s), prepared with 0 (+2)
+```
+
+Stock is compared per SKU rather than in total, because a total nets off: one
+product over-restored and another under-restored sum to the right answer and
+read as clean.
+
+### It found two things on its first full run
+
+1. **`media-upload.spec.ts` and `cloudinary-integration.spec.ts` leaked refresh
+   tokens.** Both create accounts, sign them in, and delete the users — and
+   deleting a user does not delete the session row it opened. Two orphaned
+   documents per run, invisible for months. Both teardowns now remove them.
+   *This is the one existing-test edit in this change, and it is a defect fix
+   rather than an accommodation: those suites are stricter afterwards, not
+   looser.*
+
+2. **The admin suite left fifteen operator sessions per run.** Every spec signs
+   the development admin in, and that account is a seeded fixture deliberately
+   outside the `admin-e2e.` namespace the teardown cleans — so it survived, and
+   so did its refresh tokens. The account is still left alone; only its sessions
+   go now. The constants the two halves of that suite disagreed about live in
+   one module, `e2e/fixtures/accounts.ts`, because the split is what hid it.
+
+3. **`orderCounters` is not residue and must not be treated as it.** It holds
+   one document per day carrying that day's order-number sequence, and deleting
+   it would reissue a number already used. It is the ONLY exclusion, written by
+   name rather than as a pattern — an exclusion rule wide enough to be
+   convenient is wide enough to hide what this check exists to find.
+
+## The out-of-stock fixtures are protected explicitly
+
+Three products — `NRF52840-DONGLE`, `SIM800L-GSM`, `BNO055-BREAKOUT` — are
+seeded at zero on purpose, and they are the **only out-of-stock coverage in the
+repository**: the OUT OF STOCK badge, the disabled add-to-cart button and the
+`/products` stock filter have no other fixture.
+
+A teardown that reverses inventory events restores stock. If one ever
+over-restored these, every test involved would go green while covering nothing.
+So the drift message for those three SKUs is different from every other and says
+what restoring them costs; the list is DERIVED from the seed rather than written
+out, so restocking one in the seed data cannot leave a stale list behind; and a
+test asserts the derived list is non-empty, because a list that quietly became
+empty would make every assertion about it vacuously true.
+
+## Two fences before any drop, and both earned it
+
+`dropDatabase` is the operation being guarded, so the guard has to be something
+an accident cannot satisfy. A rule like "any name ending in `_test`" is
+satisfied by a typo; a fixed set of three is satisfied only by one of the three.
+
+The first run proved the point immediately. `AppModule` was imported at the top
+of the harness, and `ConfigModule.forRoot()` executes INSIDE the `@Module`
+decorator argument — so the environment was read, validated and frozen the
+moment that module was imported, which is before any function in it could set
+`MONGODB_DB_NAME`. The connection landed on `nest_electronics_dev`, and the next
+statement would have dropped it. It refused:
+
+```
+Expected to be connected to "nest_electronics_scratch_api"
+but the driver reports "nest_electronics_dev".
+```
+
+Every import that reaches `AppModule` is now deferred to the point of use. The
+fence stays, because it is what will catch the next version of that mistake.
+
+## The override is resolved into the URI, and that was not the first design
+
+`MONGODB_DB_NAME` started as a second option passed to Mongoose alongside the
+URI. The transaction gate found the flaw within one run.
+
+`test/infrastructure/transaction-gate.spec.ts` opens an INDEPENDENT verifier
+connection built from `databaseConfig.uri` — deliberately, because proving a
+transaction committed requires a connection that was never inside it. With two
+mechanisms the writer went to the scratch database and the verifier to the
+development one, and the gate failed with `Expected: 1, Received: 0`.
+
+It was right to. The override is now applied by rewriting the URI inside the
+configuration boundary, so there is ONE string and whatever connects with it is
+on the same database as everything else. Credentials, every host of a replica
+set and the option string are preserved verbatim — the parts that are hard to
+reproduce and easy to corrupt — and each of those is a test.
+
+## A reused API server is a database hazard, not just a throttle one
+
+Both Playwright configs had `reuseExistingServer: true` locally. That means an
+API a developer started by hand — pointed at the DEVELOPMENT database, with
+production rate limits — silently became the system under test. `global-setup`
+caught the rate-limit half of that. Nothing caught the database half, and that
+is the half that destroys data.
+
+Both are now `reuseExistingServer: false`. The cost is one build and boot per
+run; the alternative is a suite writing real orders into whichever database
+somebody else's process happened to leave open.
+
+## The same bug again, one layer up: a shared `.next`
+
+The first admin run on its own database failed 11 of 28 — every spec in
+`admin-orders.spec.ts` — and the symptom was absurd: `/admin` answered 200 while
+`/admin/orders`, `/admin/products`, `/admin/customers` and `/admin/inventory`
+all answered a clean 404. No error, no warning, no stack trace. Half the console
+simply did not exist.
+
+It was not the database and it was not the API. Proof, in order:
+
+1. `GET /api/v1/admin/orders?status=PLACED` against the running API returned the
+   three orders the specs had just placed. The data was there.
+2. `/admin/products` and `/admin/customers` are still Supabase-backed and make
+   no API call at all. They 404'd too.
+3. The suite starts a SECOND `next dev` on the same source for the
+   unreachable-API specs, and that one has its own build directory
+   (`.next-dead-api`). It served `/admin/orders` correctly at the same moment
+   the first server 404'd it.
+
+Same source, same request, same second — the only difference was `distDir`. The
+`.next` directory was poisoned, and Next served the poisoned route manifest
+without a word.
+
+`pnpm dev` and the browser suite both wrote to `.next`. A killed run, or two
+servers racing on it, leaves a cache the next server reads happily and wrongly.
+That is the same defect as the shared database, one layer up: **shared mutable
+state between a developer and a test run, with no fence around it.**
+
+So the fix is the same shape. Each browser suite now passes `NEXT_DIST_DIR` and
+gets its own build directory; `pnpm dev` keeps `.next`. The eleven specs pass on
+the first run afterwards.
+
+Worth stating plainly: **this failure was not caused by the isolation work, and
+it was not visible before it.** The suite's previous green run used whatever
+`.next` happened to hold at the time. Nothing in the harness would have told
+anybody the difference, which is the part worth fixing.
+
+## A recorded hazard this narrows
+
+`HANDOFF.md` notes that `apps/api/.env` once pointed `MONGODB_URI` at a live
+Atlas cluster, and that the 527-test suite was deliberately NOT run against it:
+"a suite that creates and deletes users, carts and orders should not run
+unattended against a shared cloud database."
+
+That is now less dangerous and not yet safe. Whatever cluster the URI names, the
+suites write only to `nest_electronics_scratch_*` on it, and the harness will
+drop nothing else — the development database on that cluster is refused by name.
+What it does NOT do is stop three scratch databases being created on somebody's
+shared cluster. The right answer is still a local Mongo for tests; this makes
+the wrong answer survivable rather than acceptable.
+
+## Found while probing, not fixed: the admin console 500s when an access token expires
+
+Recorded here rather than fixed, because the fix is a change to the
+authentication boundary and belongs in its own unit with its own tests.
+
+Probing the admin dev server with a session cookie the API rejects produces
+this, from a page render:
+
+```
+⨯ Error: Cookies can only be modified in a Server Action or Route Handler.
+    at clearSession (src/lib/api/session.ts:120)
+    at async apiFetch (src/lib/api/client.ts:153)
+    at async readIdentity (src/lib/api/identity.ts:68)
+    at async requireAdmin (src/lib/api/identity.ts:151)
+    at async OrdersPage (src/app/(dashboard)/orders/page.tsx:75)
+```
+
+`apiFetch` refreshes once on an expired access token and then calls
+`writeSession()` to store the rotated pair. Both `writeSession` and
+`clearSession` write cookies, and **Next forbids writing cookies during a page
+render**. `tryApi` only catches `ApiError`, so this one propagates and the page
+500s.
+
+It is reachable in ordinary use, not just under a probe. The access token lives
+fifteen minutes; an operator who leaves the console open for twenty and then
+clicks anything hits it. Worse than the 500 is what follows: the refresh
+succeeded server-side, so the rotation already happened and the NEW refresh
+token was never persisted. The browser still holds the old one, the next attempt
+is `REFRESH_TOKEN_REUSED`, and the API revokes the whole family — the operator
+is silently signed out of a console that just showed them a stack trace.
+
+**Why the browser suite did not catch it.** Every spec signs in and finishes in
+seconds, so no access token in the suite has ever expired. A test IS cheap: sign
+in, replace `nest_admin_at` with a garbage value while keeping a valid
+`nest_admin_rt`, then navigate — `isRenewable` treats `TOKEN_INVALID` the same
+as `TOKEN_EXPIRED`, so that is the same code path.
+
+**The shape of the fix.** Refreshing belongs in `proxy.ts`, which runs in
+middleware where cookies ARE writable and runs once per navigation rather than
+once per parallel request — which also removes the concurrent-rotation hazard
+the dashboard layout comment already worries about. That is a change to the
+boundary, so it wants its own commit, and it should land before Phase 7 adds
+more screens on top of it: every new admin page inherits this.
+
+## Storefront failure set, by name
+
+Confirmed on the repaired catalogue, before this work began:
+
+| Spec | Damaged run | Repaired run |
+|---|---|---|
+| `guest-cart-journey.spec.ts:385` | fail | gone |
+| `purchase-journey.spec.ts:49` | fail | gone |
+| `t1-catalogue.spec.ts:109` brand/stock filter | fail | gone |
+| `qa-layout.spec.ts:253` inert control | fail | fail (pre-existing) |
+| `qa-layout.spec.ts:291` 44px target | fail | fail (pre-existing) |
+| `t1-chrome.spec.ts:82` footer | fail | fail (pre-existing) |
+| `t1-catalogue.spec.ts:177` spec table | — | **fail, unexplained** |
+
+The three I caused are gone and the three pre-existing ones remain. The last row
+is a name that had never failed before. It passes 3/3 in isolation, and
+Playwright had already cleared its artefacts by the time I looked, so it is
+recorded as **unexplained rather than as a flake** — calling it a flake without
+its error text is exactly the reasoning this section argues against.

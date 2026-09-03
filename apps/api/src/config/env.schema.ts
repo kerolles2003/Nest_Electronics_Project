@@ -170,6 +170,32 @@ export const envSchema = z.object({
       message: 'Must be a mongodb:// or mongodb+srv:// connection string',
     }),
 
+  /**
+   * The database to use, overriding whatever `MONGODB_URI` names.
+   *
+   * OPTIONAL and normally unset — the name travels in the URI, and this is the
+   * exception that exists so a test suite can be given a database of its own
+   * without being handed a second connection string to keep in step.
+   *
+   * `apps/api/src/database/testing/` uses it to point each suite at
+   * `nest_electronics_scratch_*`; nothing else in the system sets it. It is
+   * NOT a secret: unlike the URI it carries no host and no credential, which
+   * is why the connection is allowed to log it and the URI never is.
+   *
+   * The character rules are MongoDB's own. They are enforced here rather than
+   * left to the driver because the driver's failure for an illegal name
+   * arrives at first query as an `InvalidNamespace`, several seconds and one
+   * confusing stack trace after the mistake was made.
+   */
+  MONGODB_DB_NAME: z
+    .string()
+    .min(1)
+    .max(63)
+    .refine((value) => !/[/\\. "$*<>:|?]/.test(value), {
+      message: 'A database name may not contain / \\ . " $ * < > : | ? or a space',
+    })
+    .optional(),
+
   // ---- Authentication ----
   /**
    * HS256 signing key for access tokens. REQUIRED, no default: a defaulted
