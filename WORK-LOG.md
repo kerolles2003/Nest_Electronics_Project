@@ -4897,3 +4897,169 @@ seeded products, but that would be inventing a taxonomy and calling it frozen.
 
 So the admin's `attributes` route is **untouched** and still reads Supabase. It
 is listed under Needs owner rather than guessed at.
+
+---
+
+# Phase 7 Part 3c — the catalogue can be written to at last
+
+**Session note, and it is now standing practice: strays were reaped before every
+test run in this section.** Four `node.exe` processes were resident throughout —
+`scripts/run-tests.mjs unit`, a `--test test\admin*.test.mjs` batch and two
+helpers — and every one belongs to `D:\ahmed-adel-project`, not to this
+repository. None was killed. **No orphaned jest runner of this repository's was
+ever found**, checked by matching command lines against `jest` *and*
+`nest-electronics` rather than by process name, because a `node.exe` at 1 GB is
+indistinguishable from any other until you read its arguments.
+
+## What was missing
+
+`POST /admin/catalog/products` did not exist. Neither did any other catalogue
+write. The admin console created products in **Supabase** while the storefront
+and the Flutter client read them from **Mongo** — F-09, and the reason PLAN.md
+§3 has said "DUPLICATED" against products since Phase 0. Every product an
+operator entered was invisible to every customer, and the two catalogues could
+not converge because there was nowhere for the console to write.
+
+This is the write half of closing that.
+
+## The refusals are the feature
+
+A create endpoint that accepts what it is sent is not the hard part. Five of the
+thirty-three tests assert something is stored; the rest assert something is
+refused, and each refusal is a named legacy defect.
+
+**`stock` is rejected — 400 `UNKNOWN_FIELD`.** `CATALOG-MODEL.md` §4 makes
+InventoryModule the sole writer of stock *because every mutation must produce a
+ledger event*. Legacy defect M7 is exactly an admin changing stock through a
+generic product update with nothing written to the ledger. With
+`forbidNonWhitelisted` on globally, the field's ABSENCE from the DTO is the
+enforcement — and the 400 matters more than silence would: an operator who sends
+`stock` and gets a 200 believes their edit landed.
+
+New products therefore start at `onHand: 0` and receive stock through an
+inventory adjustment, which ledgers it. That is Part 5.
+
+**`effectivePrice` is rejected.** It is `salePrice ?? basePrice`, maintained
+server-side (ADR-SEARCH-002). A caller able to set it independently could make
+the indexed, sortable price disagree with the price charged at checkout — the
+catalogue would then be ordered by a number nobody pays.
+
+**`images` is rejected.** Attaching an asset is a reference-counted operation.
+An image descriptor accepted here would point a product at an asset nothing had
+retained, and `refCount: 0` is precisely the state from which `DELETE
+/admin/media` destroys a picture a live page is showing. The attach endpoints
+land in Part 4, with `retain()`.
+
+**`rating` and `salesCount` are rejected** — owned by ReviewsModule and
+OrdersModule respectively.
+
+**`salePrice >= basePrice` is a 400.** Not expressible in class-validator: it is
+a relation between two fields and `@Min` on each cannot see the other. The
+storefront renders a struck-through "was" price beside a sale price, so a sale
+at or above list shows the customer a discount that is not one.
+
+**A malformed slug is a 400, never a silent rewrite** — §2 rule 6, and the same
+rule Part 3b applied to the availability check.
+
+## Created UNPUBLISHED, against the schema default
+
+The schema defaults `isActive` to `true`. This endpoint defaults it to `false`,
+and that disagreement is deliberate: a product created through this route has no
+images and no stock, so publishing it at the instant it is named puts a bare row
+in a customer's search results. Publishing is a separate action with its own
+audit code (`PRODUCT_PUBLISHED`), which is also why `isActive` is absent from
+the update DTO — a general edit that could flip visibility would record the
+wrong thing in the trail.
+
+## The snapshot is built from the parent, never accepted from the caller
+
+§6 stores category and brand as reference **plus** a denormalised snapshot, so a
+product grid is one collection read. That makes the snapshot derived data, and
+derived data a client can write is data that can disagree with its source: a
+caller able to POST `category.name` could label a product with a category name
+no category has.
+
+One detail is load-bearing and is asserted directly. The product's
+`category.path` is `[...ancestors, self]`; `categories.path` is ancestors-ONLY,
+because a breadcrumb wants ancestors. Without the trailing self, a subtree query
+for a leaf category matches none of its own products — the legacy defect where a
+parent-category page omitted every child category's products. The fixture
+therefore builds a root and a child rather than one root, because a root-only
+fixture cannot tell the two shapes apart.
+
+**A soft-deleted category or brand is refused, 404.** Nothing in the schema
+forbids the reference. The result would be a product filed under a category that
+renders nowhere: present in the database, invisible in navigation, and
+indistinguishable from a bug when somebody eventually looks for it.
+
+## Two new error codes, and why not one
+
+`DUPLICATE_SKU` and `DUPLICATE_SLUG`, both 409, both raised by the same write.
+A single `DUPLICATE` would force the form to guess which box to mark, and an
+operator would see one message against a product whose SKU and slug are both
+plausible. `details[0].field` names the collided field.
+
+The **unique index is the authority**, not a pre-flight check: two operators can
+both pass a check and only one can pass the index. `GET
+/admin/catalog/slug-availability` — Part 3b — is advice, and the 409 is what
+happens when the advice was overtaken. A slug held by a **soft-deleted** product
+also collides, asserted directly, because §9 says slugs must not be silently
+reusable: reusing one repoints every bookmark, search result and message
+somebody sent a customer at a different product.
+
+## The audit row
+
+One `PRODUCT_CREATED` per successful create, post-commit, with the actor read
+from the **database profile** rather than the JWT claim — a token minted before
+a demotion still carries the old role, and an audit record is the last place
+that should be believed.
+
+`changes` is `null` on a creation. §4 defines `changes` as a diff of the fields
+that actually changed, "not whole documents", and a diff against nothing IS the
+whole document — the thing §4 forbids storing. The reconstructable facts go in
+`metadata` instead: slug, name, category, both prices, and whether it went live.
+
+A refused create writes **no** audit row, asserted by counting before and after
+a 400 and a 404. Without that assertion, an implementation that audited before
+the write would be indistinguishable from a correct one.
+
+## The admin read surface
+
+`GET /admin/catalog/products` includes drafts and **excludes soft-deleted rows
+by default**, with `?state=deleted` to find them. Both halves matter: a
+recoverable deletion has to be findable, and mixing deleted rows into the
+working list is how somebody edits a product no customer can reach and does not
+notice for a week.
+
+Search matches **mid-token** — an operator typing `esp32` expects
+`ESP32-WROOM-32` — which is why it is an escaped `$regex` and not the text
+index, whose tokenisation would not return it. `?q=.*` returning nothing is
+asserted, because that is what proves the escaping.
+
+`GET /admin/catalog/products/:id` resolves a soft-deleted product on purpose:
+the restore action is reached from its own page, and a 404 there would make it
+unreachable.
+
+`ProductAdminService` is a SEPARATE class from `ProductsService`, not a flag on
+it. The public one has no parameter that can turn the `{isActive, deletedAt}`
+filter off; legacy defect Z6 was seven child tables leaking unreleased products
+through exactly such a gap.
+
+## Verification
+
+33 new tests, 56 in `test/catalog` including Part 3b's, all passing. Zero
+residue — the scratch database ends "exactly as this run found it".
+`type-check`, `lint` clean. The OpenAPI artifact was regenerated and the drift
+gate is green.
+
+**Browser-unverified:** nothing here has a UI yet. The admin console still
+writes products to Supabase; re-pointing it is a later unit in this part.
+
+## NOT in this unit, and each is deliberate
+
+- **Update, delete, publish/unpublish.** Next units. `slugRedirects` lands with
+  the update path, in the same unit as the first rename, so there is never a
+  rename endpoint without the redirect behind it.
+- **`specDefinitions`.** Still absent, still owner data. `label` and `unit`
+  therefore arrive from the form, which is stated in the DTO rather than
+  hidden — and is why the admin's `attributes` route is still on Supabase.

@@ -98,6 +98,24 @@ export enum ErrorCode {
   /** An account already exists for this email address. */
   DUPLICATE_EMAIL = 'DUPLICATE_EMAIL',
 
+  /**
+   * A product with this SKU already exists.
+   *
+   * Additive to the frozen catalogue in API-STANDARDS.md §2, under the additive
+   * rule at the top of that section, and reachable for the first time in this
+   * phase because nothing could create a product until now.
+   *
+   * SEPARATE from `DUPLICATE_SLUG` deliberately. Both are 409s raised by the
+   * same write, and a single code would force the form to guess which field to
+   * mark — the operator would see "duplicate" against a product whose SKU and
+   * slug are both plausible and have to try each in turn. `details[0].field`
+   * names the one that collided.
+   */
+  DUPLICATE_SKU = 'DUPLICATE_SKU',
+
+  /** A product, category or brand of the same type already holds this slug. */
+  DUPLICATE_SLUG = 'DUPLICATE_SLUG',
+
   /** Insufficient stock. `details` names the SKU and the available quantity. */
   OUT_OF_STOCK = 'OUT_OF_STOCK',
 

@@ -416,6 +416,50 @@ export class AppException extends HttpException {
     );
   }
 
+  /**
+   * A SKU that another product already holds.
+   *
+   * 409 rather than 400: the field is perfectly well formed and it is the state
+   * of the catalogue that refuses it. `details` binds to the `sku` field so the
+   * form marks the right box — the whole reason this is not one shared
+   * `DUPLICATE` code with `slug`.
+   *
+   * The colliding product is NOT named. An admin is authorised to see it, but
+   * the message is generated from a caller-supplied value and naming the other
+   * document here would put catalogue content into an error string for no gain:
+   * the operator's next action is to change the SKU either way.
+   */
+  static duplicateSku(sku: string): AppException {
+    return new AppException(ErrorCode.DUPLICATE_SKU, HttpStatus.CONFLICT, 'That SKU is already in use.', [
+      { field: 'sku', message: `Another product already uses the SKU ${sku}.`, code: ErrorCode.DUPLICATE_SKU },
+    ]);
+  }
+
+  /**
+   * A slug another entity of the same type already holds.
+   *
+   * Reached in two ways, and both matter. A create or rename that races another
+   * operator lands here from the unique index; a create whose slug was checked
+   * a minute ago by `GET /admin/catalog/slug-availability` and taken since lands
+   * here too. The availability check is advice, never a reservation — the index
+   * is the authority, and this is what it says.
+   *
+   * A soft-deleted entity still holds its slug (CATALOG-MODEL.md §9), so this
+   * also fires for a slug whose only holder is invisible. That is deliberate:
+   * reusing it would silently repoint every existing link.
+   */
+  static duplicateSlug(slug: string): AppException {
+    return new AppException(ErrorCode.DUPLICATE_SLUG, HttpStatus.CONFLICT, 'That slug is already in use.', [
+      {
+        field: 'slug',
+        message:
+          `The slug ${slug} is already taken — including by a deleted entity, which still holds ` +
+          'its slug so existing links keep pointing at the right thing.',
+        code: ErrorCode.DUPLICATE_SLUG,
+      },
+    ]);
+  }
+
   // --- Media ----------------------------------------------------------------
 
   /**

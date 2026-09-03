@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AuditModule } from '../audit/audit.module';
+import { UsersModule } from '../users/users.module';
 import { BrandsService } from './application/brands.service';
 import { CategoriesService } from './application/categories.service';
+import { ProductAdminService } from './application/product-admin.service';
 import { ProductsService } from './application/products.service';
 import { SlugService } from './application/slug.service';
 import { ProductRepository } from './infrastructure/repositories/product.repository';
@@ -11,6 +14,7 @@ import { Product, ProductSchema } from './infrastructure/schemas/product.schema'
 import { BrandsController } from './presentation/brands.controller';
 import { CategoriesController } from './presentation/categories.controller';
 import { AdminCatalogController } from './presentation/admin-catalog.controller';
+import { AdminProductsController } from './presentation/admin-products.controller';
 import { ProductsController } from './presentation/products.controller';
 
 /**
@@ -24,13 +28,24 @@ import { ProductsController } from './presentation/products.controller';
  * Schemas are registered HERE, not in `database/`: a schema is module-local and
  * owned by exactly one module (§6.1).
  *
+ * ## Two write dependencies, and why each is one-directional
+ *
+ * `AuditModule` — every catalogue write is audited (AUDIT-MODEL.md §3). It
+ * exports a service and nothing that could modify the trail, and it depends on
+ * nothing here, so importing it cannot close a cycle.
+ *
+ * `UsersModule` — the audit actor's role and name are read from the database
+ * profile rather than from the JWT claim, because a token minted before a
+ * demotion still carries the old role. `UsersModule` imports only Mongoose.
+ *
  * Deliberately absent, and why:
- *   admin controllers   — this slice is the public read surface only
- *   slugRedirects       — only ever written by a rename, which requires admin
- *                         writes; an always-empty collection would be dead code
- *   specDefinitions     — facet labels come from the embedded `specs[].label`,
- *                         so the dictionary is not on any read path yet
- *   MediaModule         — no upload path exists, so nothing needs a provider
+ *   slugRedirects       — written only by a rename; it lands with the update
+ *                         path, in the same unit as the first rename
+ *   specDefinitions     — the canonical key dictionary is owner data nobody has
+ *                         supplied; deriving one from seeded products would be
+ *                         inventing a taxonomy and calling it frozen
+ *   MediaModule         — attaching an image is reference-counted and lands
+ *                         with the media UI
  */
 @Module({
   imports: [
@@ -39,9 +54,24 @@ import { ProductsController } from './presentation/products.controller';
       { name: Category.name, schema: CategorySchema },
       { name: Brand.name, schema: BrandSchema },
     ]),
+    AuditModule,
+    UsersModule,
   ],
-  controllers: [ProductsController, CategoriesController, BrandsController, AdminCatalogController],
-  providers: [ProductsService, CategoriesService, BrandsService, ProductRepository, SlugService],
+  controllers: [
+    ProductsController,
+    CategoriesController,
+    BrandsController,
+    AdminCatalogController,
+    AdminProductsController,
+  ],
+  providers: [
+    ProductsService,
+    CategoriesService,
+    BrandsService,
+    ProductAdminService,
+    ProductRepository,
+    SlugService,
+  ],
   exports: [ProductsService, CategoriesService, BrandsService, MongooseModule],
 })
 export class CatalogModule {}

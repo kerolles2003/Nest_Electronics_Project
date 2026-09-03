@@ -1681,6 +1681,326 @@
         ]
       }
     },
+    "/api/v1/admin/catalog/products": {
+      "get": {
+        "description": "Every product including **drafts** — `isActive: false` rows a customer cannot see. Soft-\ndeleted products are EXCLUDED unless `?state=deleted` asks for them: a recoverable\ndeletion has to be findable, but mixing deleted rows into the working list is how\nsomebody edits a product no customer can reach and does not notice for a week.\n\n`?q=` matches SKU, slug and English name anywhere in the value — an operator typing\n\"esp32\" expects \"ESP32-WROOM-32\", which a tokenised text index would not return. The\nterm is escaped before it reaches the database.\n\n`?lowStock=true` lists products at or below their own threshold, which is a per-product\nnumber and not one global constant.",
+        "operationId": "AdminProductsController_list_v1",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "1-based page number.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Items per page, 1–100.",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 24,
+              "example": 24,
+              "type": "number"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Matches SKU, slug and English name, case-insensitively. ESCAPED before it reaches the database — no character in it can mean anything to a query expression.",
+            "schema": {
+              "maxLength": 100,
+              "example": "esp32",
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "published",
+                "draft",
+                "deleted"
+              ]
+            }
+          },
+          {
+            "name": "categoryId",
+            "required": false,
+            "in": "query",
+            "description": "Exact category, not the subtree.",
+            "schema": {
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          },
+          {
+            "name": "brandId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "652f1a9b3c4d5e6f7a8b9c0e",
+              "type": "string"
+            }
+          },
+          {
+            "name": "lowStock",
+            "required": false,
+            "in": "query",
+            "description": "Only products at or below their low-stock threshold.",
+            "schema": {
+              "example": true,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "updated",
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest",
+                "name_asc",
+                "price_asc",
+                "price_desc",
+                "stock_asc",
+                "updated"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductListResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The catalogue, as an operator sees it",
+        "tags": [
+          "admin · catalogue"
+        ]
+      },
+      "post": {
+        "description": "**Created UNPUBLISHED by default.** `isActive` defaults to `false` here, against the\nschema default of `true`, because a product created through this endpoint has no images\nand no stock yet — publishing it at the instant it is named puts a bare row in a\ncustomer’s search results. Publish is a separate, separately audited action.\n\n**`stock` is not accepted, and sending it is a 400.** InventoryModule is the sole writer\nof stock (CATALOG-MODEL.md §4) because every movement must produce a ledger event. A\ngeneric product write that could set `stock.onHand` is legacy defect M7 exactly. New\nproducts start at zero and receive stock through an inventory adjustment, which ledgers it.\n\nAlso rejected, each for its own reason: `effectivePrice` (maintained — `salePrice ??\nbasePrice`; a caller that could set it independently could make the sortable price\ndisagree with the charged one), `rating` and `salesCount` (owned by other modules), and\n`images` (attaching an asset is reference-counted and has its own endpoint — a descriptor\naccepted here would point a product at an asset nothing had retained, which is exactly\nthe state that lets a live image be deleted).\n\nThe category and brand SNAPSHOTS are built server-side from the referenced documents.\nThey are not accepted from the caller: a snapshot a client could write is one that can\ndisagree with its source.",
+        "operationId": "AdminProductsController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProductDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a malformed field, or `salePrice` at or above `basePrice`. UNKNOWN_FIELD — a field this endpoint does not accept, including `stock`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND / BRAND_NOT_FOUND — including a soft-deleted one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DUPLICATE_SKU or DUPLICATE_SLUG. `details[0].field` names which, so the form marks the right box. A soft-deleted product still holds both.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a product",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/products/{id}": {
+      "get": {
+        "description": "The editor’s view: both language fields unresolved, `costPrice` present, `deletedAt`\npresent. This is `ProductAdminDto` in CATALOG-MODEL.md §5 — a SEPARATE type from the\npublic one, which is what guarantees a margin can never reach a customer. No runtime\nfield-stripping is involved, so there is no option anyone can get wrong.\n\nA soft-deleted product resolves normally here. It must: the restore action is reached\nfrom its own page.",
+        "operationId": "AdminProductsController_detail_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminProductResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — `id` is not a 24-character hex id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One product, in any state",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
     "/api/v1/cart": {
       "get": {
         "description": "Returns the cart, **re-priced and re-checked against live catalogue data on every**\n**request**. Stored numbers are never returned.\n\nA customer who has never added anything gets an empty cart, not a 404 — the underlying\ndocument is created lazily on the first add.\n\nLines whose product went out of stock or was delisted are KEPT and flagged rather than\ndeleted, so the customer can see why the total changed. They are excluded from\n`itemsSubtotal` and set `hasBlockingIssues`.",
@@ -3989,6 +4309,8 @@
               "ORDER_NOT_FOUND",
               "ADDRESS_NOT_FOUND",
               "DUPLICATE_EMAIL",
+              "DUPLICATE_SKU",
+              "DUPLICATE_SLUG",
               "OUT_OF_STOCK",
               "PRODUCT_UNAVAILABLE",
               "CONCURRENT_MODIFICATION",
@@ -5694,6 +6016,609 @@
         },
         "required": [
           "data"
+        ]
+      },
+      "AdminLocalizedTextDto": {
+        "type": "object",
+        "properties": {
+          "en": {
+            "type": "string",
+            "example": "ESP32 DevKit V1"
+          },
+          "ar": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          }
+        },
+        "required": [
+          "en",
+          "ar"
+        ]
+      },
+      "AdminSnapshotRefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "slug": {
+            "type": "string",
+            "example": "microcontrollers"
+          },
+          "name": {
+            "$ref": "#/components/schemas/AdminLocalizedTextDto"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ]
+      },
+      "AdminProductPricingDto": {
+        "type": "object",
+        "properties": {
+          "basePrice": {
+            "type": "number",
+            "example": 15000,
+            "description": "Minor units (piastres)."
+          },
+          "salePrice": {
+            "type": "number",
+            "example": 12900,
+            "nullable": true
+          },
+          "effectivePrice": {
+            "type": "number",
+            "example": 12900,
+            "description": "MAINTAINED: `salePrice ?? basePrice`. Read-only — the write endpoints reject it."
+          },
+          "costPrice": {
+            "type": "number",
+            "example": 9800,
+            "nullable": true,
+            "description": "ADMIN ONLY. Absent from every public DTO by construction."
+          }
+        },
+        "required": [
+          "basePrice",
+          "salePrice",
+          "effectivePrice",
+          "costPrice"
+        ]
+      },
+      "AdminProductStockDto": {
+        "type": "object",
+        "properties": {
+          "onHand": {
+            "type": "number",
+            "example": 42,
+            "description": "Read-only here. Stock moves only through the inventory endpoints, which ledger it."
+          },
+          "lowStockThreshold": {
+            "type": "number",
+            "example": 5
+          }
+        },
+        "required": [
+          "onHand",
+          "lowStockThreshold"
+        ]
+      },
+      "AdminProductImageDto": {
+        "type": "object",
+        "properties": {
+          "publicId": {
+            "type": "string",
+            "example": "nest/products/652f1a9b3c4d5e6f7a8b9c0d/a1b2c3"
+          },
+          "version": {
+            "type": "number",
+            "example": 1
+          },
+          "format": {
+            "type": "string",
+            "example": "webp"
+          },
+          "width": {
+            "type": "number",
+            "example": 1200
+          },
+          "height": {
+            "type": "number",
+            "example": 1200
+          },
+          "bytes": {
+            "type": "number",
+            "example": 184320
+          },
+          "alt": {
+            "type": "string",
+            "example": "Front view",
+            "nullable": true
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "publicId",
+          "version",
+          "format",
+          "width",
+          "height",
+          "bytes",
+          "alt",
+          "sortOrder",
+          "isPrimary"
+        ]
+      },
+      "AdminProductSpecDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "operating-voltage"
+          },
+          "label": {
+            "type": "string",
+            "example": "Operating voltage"
+          },
+          "value": {
+            "type": "string",
+            "example": "3.3"
+          },
+          "unit": {
+            "type": "string",
+            "example": "V",
+            "nullable": true
+          },
+          "filterable": {
+            "type": "boolean",
+            "example": true
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value",
+          "unit",
+          "filterable",
+          "sortOrder"
+        ]
+      },
+      "AdminProductDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "sku": {
+            "type": "string",
+            "example": "ESP32-WROOM-32"
+          },
+          "slug": {
+            "type": "string",
+            "example": "esp32-devkit-v1"
+          },
+          "name": {
+            "$ref": "#/components/schemas/AdminLocalizedTextDto"
+          },
+          "shortDescription": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminLocalizedTextDto"
+              }
+            ]
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminLocalizedTextDto"
+              }
+            ]
+          },
+          "category": {
+            "$ref": "#/components/schemas/AdminSnapshotRefDto"
+          },
+          "brand": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AdminSnapshotRefDto"
+              }
+            ]
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/AdminProductPricingDto"
+          },
+          "currency": {
+            "type": "string",
+            "example": "EGP"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/AdminProductStockDto"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProductImageDto"
+            }
+          },
+          "specs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProductSpecDto"
+            }
+          },
+          "ratingAverage": {
+            "type": "number",
+            "example": 4.3,
+            "description": "Read-only. Written by ReviewsModule."
+          },
+          "ratingCount": {
+            "type": "number",
+            "example": 12
+          },
+          "salesCount": {
+            "type": "number",
+            "example": 71,
+            "description": "Read-only. Written by OrdersModule."
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true,
+            "description": "Publicly visible. Changed only by publish/unpublish."
+          },
+          "isFeatured": {
+            "type": "boolean",
+            "example": false
+          },
+          "deletedAt": {
+            "type": "string",
+            "example": null,
+            "nullable": true,
+            "description": "Soft-delete timestamp, ISO-8601. Non-null means hidden everywhere public."
+          },
+          "seoTitle": {
+            "type": "string",
+            "example": "Optimised for search",
+            "nullable": true
+          },
+          "seoDescription": {
+            "type": "string",
+            "nullable": true
+          },
+          "weight": {
+            "type": "number",
+            "example": 12,
+            "nullable": true,
+            "description": "Grams."
+          },
+          "dimensions": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Millimetres.",
+            "example": {
+              "length": 55,
+              "width": 28,
+              "height": 13
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "sku",
+          "slug",
+          "name",
+          "shortDescription",
+          "description",
+          "category",
+          "brand",
+          "pricing",
+          "currency",
+          "stock",
+          "images",
+          "specs",
+          "ratingAverage",
+          "ratingCount",
+          "salesCount",
+          "isActive",
+          "isFeatured",
+          "deletedAt",
+          "weight",
+          "dimensions",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "AdminProductListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminProductDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PaginationMetaDto"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdminProductResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminProductDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "LocalizedTextInputDto": {
+        "type": "object",
+        "properties": {
+          "en": {
+            "type": "string",
+            "example": "ESP32 DevKit V1",
+            "maxLength": 200
+          },
+          "ar": {
+            "type": "string",
+            "example": null,
+            "nullable": true,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "en"
+        ]
+      },
+      "LocalizedProseInputDto": {
+        "type": "object",
+        "properties": {
+          "en": {
+            "type": "string",
+            "example": "A 38-pin ESP32 development board.",
+            "maxLength": 5000
+          },
+          "ar": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 5000
+          }
+        },
+        "required": [
+          "en"
+        ]
+      },
+      "ProductSpecInputDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "operating-voltage",
+            "description": "Stable machine key. Facet filters group on this, so it must not drift.",
+            "maxLength": 60
+          },
+          "label": {
+            "type": "string",
+            "example": "Operating voltage",
+            "maxLength": 80
+          },
+          "value": {
+            "type": "string",
+            "example": "3.3",
+            "maxLength": 200,
+            "description": "A STRING, always. Component specs are heterogeneous — \"3.3\", \"Wi-Fi + Bluetooth\", \"-40 to 85\" — and numeric range filtering is not in MVP."
+          },
+          "unit": {
+            "type": "string",
+            "example": "V",
+            "nullable": true,
+            "maxLength": 20
+          },
+          "filterable": {
+            "type": "boolean",
+            "example": true,
+            "default": false,
+            "description": "Only filterable specs become facets."
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0,
+            "default": 0
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value"
+        ]
+      },
+      "ProductSeoInputDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 70
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200
+          }
+        }
+      },
+      "ProductDimensionsInputDto": {
+        "type": "object",
+        "properties": {
+          "length": {
+            "type": "number",
+            "example": 55
+          },
+          "width": {
+            "type": "number",
+            "example": 28
+          },
+          "height": {
+            "type": "number",
+            "example": 13
+          }
+        },
+        "required": [
+          "length",
+          "width",
+          "height"
+        ]
+      },
+      "CreateProductDto": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "example": "ESP32-WROOM-32",
+            "maxLength": 60,
+            "description": "The warehouse identifier. Unique, uppercased on write, and IMMUTABLE afterwards — there is no `sku` on the update DTO."
+          },
+          "slug": {
+            "type": "string",
+            "example": "esp32-devkit-v1",
+            "description": "The PUBLIC URL identifier. Ask `GET /admin/catalog/slug-availability` first; that answer is advice, and the unique index is the authority — a race answers 409 DUPLICATE_SLUG."
+          },
+          "name": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "shortDescription": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "description": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedProseInputDto"
+              }
+            ]
+          },
+          "categoryId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d",
+            "description": "REQUIRED. A product with no category cannot be browsed to — it exists only via search and a direct link, which is how legacy accumulated products nobody could find."
+          },
+          "brandId": {
+            "type": "object",
+            "example": "652f1a9b3c4d5e6f7a8b9c0e",
+            "nullable": true,
+            "description": "Optional. 53 of 85 live products have no brand."
+          },
+          "basePrice": {
+            "type": "number",
+            "example": 15000,
+            "description": "List price. must be a whole number of piastres — 15000 means 150.00 EGP"
+          },
+          "salePrice": {
+            "type": "object",
+            "example": 12900,
+            "nullable": true,
+            "description": "The sale price, or null for no sale. must be a whole number of piastres — 15000 means 150.00 EGP. Must be strictly less than `basePrice` (§5) — a \"sale\" at or above list is a pricing error the customer sees as a lie."
+          },
+          "costPrice": {
+            "type": "object",
+            "example": 9800,
+            "nullable": true,
+            "description": "ADMIN ONLY — never appears in a public DTO. must be a whole number of piastres — 15000 means 150.00 EGP"
+          },
+          "specs": {
+            "description": "Replaces the whole array when supplied. Bounded at 40.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductSpecInputDto"
+            }
+          },
+          "seo": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProductSeoInputDto"
+              }
+            ]
+          },
+          "weight": {
+            "type": "object",
+            "example": 12,
+            "nullable": true,
+            "description": "Grams."
+          },
+          "dimensions": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProductDimensionsInputDto"
+              }
+            ]
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": false,
+            "default": false,
+            "description": "Whether the product is publicly visible. **Defaults to FALSE on create**, unlike the schema default: a product created through this endpoint has no images and no stock yet, and publishing it the instant it is named puts a bare row in front of customers. Publishing is a separate, audited action."
+          },
+          "isFeatured": {
+            "type": "boolean",
+            "example": false,
+            "default": false
+          }
+        },
+        "required": [
+          "sku",
+          "slug",
+          "name",
+          "categoryId",
+          "basePrice"
         ]
       },
       "CartLineDto": {
