@@ -20,7 +20,7 @@ const couponSchema = z.object({
 })
 
 export async function createCouponAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = {
@@ -53,7 +53,7 @@ export async function createCouponAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'coupon:create',
       entityType: 'coupon',
       entityId: data.id,
@@ -61,7 +61,7 @@ export async function createCouponAction(formData: FormData) {
     })
 
     revalidatePath('/admin/coupons')
-    logger.info(`Coupon created: id=${data.id} code=${parsed.data.code} by=${user.id}`)
+    logger.info(`Coupon created: id=${data.id} code=${parsed.data.code} by=${admin.id}`)
     return { success: true, couponId: data.id }
   } catch (e) {
     logger.error('createCouponAction failed', e)
@@ -70,7 +70,7 @@ export async function createCouponAction(formData: FormData) {
 }
 
 export async function updateCouponAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -105,7 +105,7 @@ export async function updateCouponAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'coupon:update',
       entityType: 'coupon',
       entityId: id,
@@ -113,7 +113,7 @@ export async function updateCouponAction(formData: FormData) {
     })
 
     revalidatePath('/admin/coupons')
-    logger.info(`Coupon updated: id=${id} by=${user.id}`)
+    logger.info(`Coupon updated: id=${id} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('updateCouponAction failed', e)
@@ -122,7 +122,7 @@ export async function updateCouponAction(formData: FormData) {
 }
 
 export async function toggleCouponActiveAction(id: string, isActive: boolean) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -136,14 +136,14 @@ export async function toggleCouponActiveAction(id: string, isActive: boolean) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: isActive ? 'coupon:activate' : 'coupon:deactivate',
       entityType: 'coupon',
       entityId: id,
     })
 
     revalidatePath('/admin/coupons')
-    logger.info(`Coupon ${isActive ? 'activated' : 'deactivated'}: id=${id} by=${user.id}`)
+    logger.info(`Coupon ${isActive ? 'activated' : 'deactivated'}: id=${id} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('toggleCouponActiveAction failed', e)
@@ -152,7 +152,7 @@ export async function toggleCouponActiveAction(id: string, isActive: boolean) {
 }
 
 export async function deleteCouponAction(id: string) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -166,14 +166,14 @@ export async function deleteCouponAction(id: string) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'coupon:delete',
       entityType: 'coupon',
       entityId: id,
     })
 
     revalidatePath('/admin/coupons')
-    logger.info(`Coupon deleted: id=${id} by=${user.id}`)
+    logger.info(`Coupon deleted: id=${id} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('deleteCouponAction failed', e)

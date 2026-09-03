@@ -34,7 +34,7 @@ const brandSchema = z.object({
 /* ------------------------------------------------------------------ */
 
 export async function createCategoryAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = {
@@ -65,7 +65,7 @@ export async function createCategoryAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'category:create',
       entityType: 'category',
       entityId: data.id,
@@ -73,7 +73,7 @@ export async function createCategoryAction(formData: FormData) {
     })
 
     revalidatePath('/admin/categories')
-    logger.info(`Category created: id=${data.id} name=${parsed.data.name_en} by=${user.id}`)
+    logger.info(`Category created: id=${data.id} name=${parsed.data.name_en} by=${admin.id}`)
     return { success: true, categoryId: data.id }
   } catch (e) {
     logger.error('createCategoryAction failed', e)
@@ -82,7 +82,7 @@ export async function createCategoryAction(formData: FormData) {
 }
 
 export async function updateCategoryAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -118,7 +118,7 @@ export async function updateCategoryAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'category:update',
       entityType: 'category',
       entityId: id,
@@ -126,7 +126,7 @@ export async function updateCategoryAction(formData: FormData) {
     })
 
     revalidatePath('/admin/categories')
-    logger.info(`Category updated: id=${id} name=${parsed.data.name_en} by=${user.id}`)
+    logger.info(`Category updated: id=${id} name=${parsed.data.name_en} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('updateCategoryAction failed', e)
@@ -135,7 +135,7 @@ export async function updateCategoryAction(formData: FormData) {
 }
 
 export async function softDeleteCategoryAction(id: string) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -149,14 +149,14 @@ export async function softDeleteCategoryAction(id: string) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'category:delete',
       entityType: 'category',
       entityId: id,
     })
 
     revalidatePath('/admin/categories')
-    logger.info(`Category soft-deleted: id=${id} by=${user.id}`)
+    logger.info(`Category soft-deleted: id=${id} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('softDeleteCategoryAction failed', e)
@@ -169,7 +169,7 @@ export async function softDeleteCategoryAction(id: string) {
 /* ------------------------------------------------------------------ */
 
 export async function createBrandAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = {
@@ -198,7 +198,7 @@ export async function createBrandAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'brand:create',
       entityType: 'brand',
       entityId: data.id,
@@ -206,7 +206,7 @@ export async function createBrandAction(formData: FormData) {
     })
 
     revalidatePath('/admin/brands')
-    logger.info(`Brand created: id=${data.id} name=${parsed.data.name_en} by=${user.id}`)
+    logger.info(`Brand created: id=${data.id} name=${parsed.data.name_en} by=${admin.id}`)
     return { success: true, brandId: data.id }
   } catch (e) {
     logger.error('createBrandAction failed', e)
@@ -215,7 +215,7 @@ export async function createBrandAction(formData: FormData) {
 }
 
 export async function updateBrandAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const id = formData.get('id') as string
@@ -249,7 +249,7 @@ export async function updateBrandAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'brand:update',
       entityType: 'brand',
       entityId: id,
@@ -257,7 +257,7 @@ export async function updateBrandAction(formData: FormData) {
     })
 
     revalidatePath('/admin/brands')
-    logger.info(`Brand updated: id=${id} name=${parsed.data.name_en} by=${user.id}`)
+    logger.info(`Brand updated: id=${id} name=${parsed.data.name_en} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('updateBrandAction failed', e)
@@ -266,7 +266,7 @@ export async function updateBrandAction(formData: FormData) {
 }
 
 export async function softDeleteBrandAction(id: string) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -280,14 +280,14 @@ export async function softDeleteBrandAction(id: string) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'brand:delete',
       entityType: 'brand',
       entityId: id,
     })
 
     revalidatePath('/admin/brands')
-    logger.info(`Brand soft-deleted: id=${id} by=${user.id}`)
+    logger.info(`Brand soft-deleted: id=${id} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('softDeleteBrandAction failed', e)

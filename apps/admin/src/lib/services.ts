@@ -1,37 +1,48 @@
-import { createClient, createAdminClient } from '@/lib/supabase'
-import { SupabaseCategoryProvider, SupabaseBrandProvider, SupabaseProductProvider, SupabaseOrderProvider } from '@nest/providers'
-import { ProductService, OrderService } from '@nest/services'
-import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase'
+import { SupabaseCategoryProvider, SupabaseBrandProvider, SupabaseProductProvider } from '@nest/providers'
+import { ProductService } from '@nest/services'
 import { cache } from 'react'
+
+/**
+ * ## Authentication moved to the API. Data has not.
+ *
+ * `requireAdmin` is re-exported from `@/lib/api/identity` and is `GET /auth/me`
+ * against the NestJS API — nothing in this file authenticates anybody any more.
+ *
+ * What it REPLACED is worth naming, because it was two separate problems:
+ *
+ *   1. `supabase.auth.getUser()` — a network call to Supabase Auth to identify
+ *      the operator, on every guarded page.
+ *   2. A `profiles` lookup made with `createAdminClient()`, which used
+ *      **`SUPABASE_SERVICE_ROLE_KEY`** — a credential that bypasses row-level
+ *      security completely and is effectively an unrestricted database login.
+ *      The admin app held it, in its own environment, to read one column.
+ *
+ * Both are gone, and so is `createAdminClient` itself: it had no other caller,
+ * so the service-role key is no longer read, needed, or present in
+ * `.env.example`.
+ *
+ * ## Everything below is still Supabase, deliberately
+ *
+ * Products, categories, brands, coupons, inventory, reviews, customers and the
+ * dashboard statistics all still read from Supabase. That is Phase 7, and
+ * migrating them here would have meant moving eight screens in the change that
+ * moves authentication — the scope is drawn at the seam, not through the
+ * middle of it.
+ *
+ * ORDERS are gone from this file entirely — the provider, the service and
+ * `getOrderStats` were all deleted rather than left dormant. Supabase order
+ * rows are discarded (D-6) and nothing in this console reads them any more.
+ * See `lib/api/endpoints.ts` and `lib/api/order-stats.ts`.
+ */
+
+export { requireAdmin } from '@/lib/api/identity'
 
 /* ------------------------------------------------------------------ */
 /*  Cached Supabase Client (same request dedup)                       */
 /* ------------------------------------------------------------------ */
 
 const getCachedClient = cache(async () => createClient())
-
-/* ------------------------------------------------------------------ */
-/*  Fast Admin Auth – single round trip via RPC                       */
-/* ------------------------------------------------------------------ */
-
-export async function requireAdmin() {
-  const supabase = await getCachedClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const adminClient = await createAdminClient()
-  const { data: profile, error } = await adminClient
-    .from('profiles')
-    .select('id, role, full_name, avatar_url, phone')
-    .eq('id', user.id)
-    .single()
-
-  if (error || !profile || (profile.role !== 'admin' && profile.role !== 'super_admin')) {
-    redirect('/unauthorized')
-  }
-
-  return { user, profile }
-}
 
 /* ------------------------------------------------------------------ */
 /*  Cached Service Factory                                            */
@@ -42,10 +53,14 @@ const buildServices = cache(async () => {
   const categoryRepo = new SupabaseCategoryProvider(supabase as any)
   const brandRepo = new SupabaseBrandProvider(supabase as any)
   const productRepo = new SupabaseProductProvider(supabase as any)
-  const orderRepo = new SupabaseOrderProvider(supabase as any)
   const productService = new ProductService(productRepo, categoryRepo, brandRepo)
-  const orderService = new OrderService(orderRepo)
-  return { supabase, categoryRepo, brandRepo, productRepo, productService, orderService }
+  /*
+   * NO `orderService`. `SupabaseOrderProvider` and `OrderService` were
+   * constructed here and are gone: orders are the API's now, and a service
+   * still wired to the legacy tables is exactly the dormant duplicate this
+   * phase was told not to leave behind.
+   */
+  return { supabase, categoryRepo, brandRepo, productRepo, productService }
 })
 
 export async function getAdminServices() {
@@ -70,20 +85,43 @@ export const getCachedBrands = cache(async () => {
 /*  Combined Stats Queries (single round trip per table)              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The dashboard's PRODUCT and CUSTOMER numbers.
+ *
+ * ## Every order query that was here is gone
+ *
+ * It used to run eight queries, five of which read `orders` or `order_items`:
+ * a total order count, a pending count, the eight most recent orders, a revenue
+ * sum over every paid row, a top-products join through `order_items`, and a
+ * status breakdown. All five read the LEGACY tables.
+ *
+ * Those rows are discarded (D-6) — the storefront has placed orders through the
+ * API since T2 — so every one of those numbers was either stale or zero, and
+ * the "Recent Orders" table linked to `/orders/<supabase-uuid>`, which the
+ * API-backed detail page answers with a 400 because it is not a 24-character
+ * hex id. A dashboard confidently reporting revenue from a discarded table is
+ * the clearest possible case of the legacy view this phase was told not to
+ * keep.
+ *
+ * The order half of the dashboard now comes from `lib/api/order-stats.ts` and
+ * `GET /admin/orders`. What is left here is products, customers and stock,
+ * which are still Supabase until Phase 7.
+ *
+ * ## Revenue is not reported at all
+ *
+ * No API endpoint exposes a revenue aggregate. Summing a page gives a figure
+ * that changes when you paginate, and fetching every order to add them up is a
+ * table scan on every dashboard load. A wrong money figure is worse than none,
+ * so there is none until an aggregate endpoint exists.
+ */
 export async function getDashboardStats() {
   const { supabase } = await getAdminServices()
 
   const [
     { count: activeProductCount, data: productsForStock },
-    { count: totalOrderCount },
     { count: customerCount },
-    { count: pendingOrderCount },
-    { data: recentOrders },
-    { data: revenueData },
-    { data: topProductsData },
-    { data: orderStatusBreakdown },
   ] = await Promise.all([
-    /* 1. Products for stock analysis */
+    /* Products for stock analysis */
     supabase
       .from('products')
       .select('name_en, stock_quantity, reserved_quantity, low_stock_threshold, sku', { count: 'exact' })
@@ -92,56 +130,12 @@ export async function getDashboardStats() {
       .order('stock_quantity', { ascending: true })
       .limit(100),
 
-    /* 2. Total orders count */
-    supabase
-      .from('orders')
-      .select('*', { count: 'exact', head: true }),
-
-    /* 3. Customer count */
+    /* Customer count */
     supabase
       .from('profiles')
       .select('*', { count: 'exact', head: true })
       .eq('role', 'customer'),
-
-    /* 4. Pending / processing orders */
-    supabase
-      .from('orders')
-      .select('*', { count: 'exact', head: true })
-      .in('order_status', ['pending_payment', 'processing']),
-
-    /* 5. Recent orders */
-    supabase
-      .from('orders')
-      .select('id, order_number, total, order_status, payment_status, fulfillment_status, created_at, shipping_address')
-      .order('created_at', { ascending: false })
-      .limit(8),
-
-    /* 6. Total revenue (paid orders only) */
-    supabase
-      .from('orders')
-      .select('total')
-      .eq('payment_status', 'paid')
-      .not('order_status', 'in', '(cancelled,failed)'),
-
-    /* 7. Top products by units sold */
-    (supabase as any)
-      .from('order_items')
-      .select('quantity, product:products!inner(name_en), order:orders!inner(order_status, payment_status)')
-      .not('order.order_status', 'in', '(cancelled,failed)')
-      .not('order.payment_status', 'in', '(refunded,partially_refunded)')
-      .limit(500),
-
-    /* 8. Order status breakdown */
-    (supabase as any)
-      .from('orders')
-      .select('order_status'),
   ])
-
-  /* ------------------------------------------------------------------ */
-  /*  Compute derived values                                            */
-  /* ------------------------------------------------------------------ */
-
-  const totalRevenue = (revenueData ?? []).reduce((sum: number, o: any) => sum + (o.total ?? 0), 0)
 
   const lowStock = (productsForStock ?? [])
     .filter((p: any) => {
@@ -155,31 +149,9 @@ export async function getDashboardStats() {
     })
     .slice(0, 8)
 
-  /* Top products: aggregate in JS */
-  const productSales: Record<string, { name: string; units: number }> = {}
-  for (const row of topProductsData ?? []) {
-    const name = row.product?.name_en
-    if (!name) continue
-    if (!productSales[name]) productSales[name] = { name, units: 0 }
-    productSales[name].units += row.quantity ?? 0
-  }
-  const topProducts = Object.values(productSales)
-    .sort((a, b) => b.units - a.units)
-    .slice(0, 5)
-
-  /* Order status breakdown */
-  const statusCounts: Record<string, number> = {}
-  for (const row of orderStatusBreakdown ?? []) {
-    const status = row.order_status as string
-    statusCounts[status] = (statusCounts[status] ?? 0) + 1
-  }
-
   return {
     productCount: activeProductCount ?? 0,
-    orderCount: totalOrderCount ?? 0,
     customerCount: customerCount ?? 0,
-    pendingOrderCount: pendingOrderCount ?? 0,
-    totalRevenue,
     lowStock: lowStock as Array<{
       name_en: string
       stock_quantity: number
@@ -187,18 +159,6 @@ export async function getDashboardStats() {
       low_stock_threshold: number | null
       sku: string
     }>,
-    recentOrders: (recentOrders ?? []) as Array<{
-      id: string
-      order_number: string
-      total: number
-      order_status: string
-      payment_status: string
-      fulfillment_status: string
-      created_at: string
-      shipping_address: { full_name?: string } | null
-    }>,
-    topProducts,
-    orderStatusBreakdown: statusCounts,
   }
 }
 
@@ -267,78 +227,43 @@ export async function getInventoryStats() {
   return { total: rows.length, inStock, lowStock, outOfStock, totalReserved }
 }
 
-export async function getOrderStats() {
-  const { supabase } = await getAdminServices()
-
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-  const startOfWeek = new Date(now.getTime() - 7 * 86400000).toISOString()
-
-  const [
-    { count: total },
-    { count: pendingPayment },
-    { count: paid },
-    { count: processing },
-    { count: shipped },
-    { count: delivered },
-    { count: cancelled },
-    { data: todayRows },
-    { data: weekRows },
-  ] = await Promise.all([
-    supabase.from('orders').select('*', { count: 'exact', head: true }),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'pending_payment'),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'paid'),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'processing'),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'shipped'),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'delivered'),
-    supabase.from('orders').select('*', { count: 'exact', head: true }).eq('order_status', 'cancelled'),
-    supabase.from('orders').select('total').gte('created_at', startOfToday),
-    supabase.from('orders').select('total').gte('created_at', startOfWeek),
-  ])
-
-  const todayRevenue = (todayRows ?? []).reduce((sum: number, r: any) => sum + (r.total ?? 0), 0)
-  const weekRevenue = (weekRows ?? []).reduce((sum: number, r: any) => sum + (r.total ?? 0), 0)
-
-  return {
-    total: total ?? 0,
-    pendingPayment: pendingPayment ?? 0,
-    paid: paid ?? 0,
-    processing: processing ?? 0,
-    shipped: shipped ?? 0,
-    delivered: delivered ?? 0,
-    cancelled: cancelled ?? 0,
-    todayRevenue,
-    weekRevenue,
-  }
-}
-
+/**
+ * Recent ADMIN actions.
+ *
+ * ## Its order source was removed, and its remaining source is broken
+ *
+ * This used to merge two feeds: `order_status_history` and `admin_audit_logs`.
+ * The first is a legacy-orders view — those rows are discarded (D-6) and
+ * nothing writes them any more, because order transitions go through the API,
+ * which records its own history ON THE ORDER and exposes it at
+ * `GET /admin/orders/{id}` as `statusHistory[]`. So it is gone.
+ *
+ * `admin_audit_logs` remains the only source, and it will be EMPTY going
+ * forward: its `admin_id` column has a foreign key to Supabase `profiles.id`,
+ * and the acting admin is now an API account. `lib/audit/log-action.ts` refuses
+ * those writes and says so once per process rather than letting the constraint
+ * swallow them silently.
+ *
+ * An empty panel is the honest state. Filling it from the discarded table would
+ * show activity that did not happen, and inventing an API-wide activity feed is
+ * Phase 7's job — `AUDIT-MODEL.md` is where it belongs.
+ */
 export async function getRecentActivity(limit = 8) {
   const { supabase } = await getAdminServices()
-  const [{ data: recentOrderHistory }, { data: recentAuditLogs }] = await Promise.all([
-    supabase.from('order_status_history').select('id, order_id, field, from_value, to_value, created_at').order('created_at', { ascending: false }).limit(limit),
-    supabase.from('admin_audit_logs').select('id, action, entity_type, entity_id, created_at').order('created_at', { ascending: false }).limit(limit),
-  ])
 
-  const activities = [
-    ...(recentOrderHistory ?? []).map((h: any) => ({
-      id: h.id as string,
-      type: 'order' as const,
-      title: `Order ${(h.field as string)?.replace(/_/g, ' ') ?? 'status'} updated`,
-      description: `From "${(h.from_value as string) ?? 'N/A'}" to "${h.to_value as string}"`,
-      time: h.created_at as string,
-    })),
-    ...(recentAuditLogs ?? []).map((a: any) => ({
-      id: a.id as string,
-      type: 'audit' as const,
-      title: `${(a.entity_type as string)?.replace(/_/g, ' ') ?? 'Item'} ${a.action as string}`,
-      description: a.entity_id ? `Ref: ${(a.entity_id as string).slice(0, 8)}…` : 'System action',
-      time: a.created_at as string,
-    })),
-  ]
-    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    .slice(0, limit)
+  const { data: recentAuditLogs } = await supabase
+    .from('admin_audit_logs')
+    .select('id, action, entity_type, entity_id, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
 
-  return activities
+  return (recentAuditLogs ?? []).map((a: any) => ({
+    id: a.id as string,
+    type: 'audit' as const,
+    title: `${(a.entity_type as string)?.replace(/_/g, ' ') ?? 'Item'} ${a.action as string}`,
+    description: a.entity_id ? `Ref: ${(a.entity_id as string).slice(0, 8)}…` : 'System action',
+    time: a.created_at as string,
+  }))
 }
 
 export async function getInventoryTransactions(limit = 8) {

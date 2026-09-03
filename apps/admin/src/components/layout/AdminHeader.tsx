@@ -4,6 +4,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { Bell, Search, ChevronRight, Home, Command, ShoppingBag, PackageOpen, UserPlus, Check, Settings, Shield, LogOut } from 'lucide-react';
 import Link from 'next/link';
+import { logoutAction } from '@/actions/admin-auth.actions';
+import type { AdminIdentity } from '@/lib/api/identity';
 import {
   Avatar,
   DropdownMenu,
@@ -29,7 +31,27 @@ const mockNotifications: Notification[] = [
   { id: 3, title: 'New customer registered', time: '3 hours ago', icon: <UserPlus className="h-3.5 w-3.5" />, read: true },
 ];
 
-export function AdminHeader() {
+/**
+ * ## The identity is the server's, or it is nothing
+ *
+ * This header rendered the literal strings "Admin User", "admin@nest.com" and
+ * the initials "AD" on every page of the console. Not as a loading state — as
+ * the answer. An operator confirming orders and marking cash collected saw a
+ * name that was never fetched from anywhere and belonged to nobody.
+ *
+ * That is worse than an empty header. It tells somebody they are signed in as
+ * an account that does not exist, so if they are on a colleague's machine, or
+ * on a session that expired an hour ago, nothing on screen contradicts them —
+ * while every action they take is attributed to whoever the token actually
+ * belongs to.
+ *
+ * `identity` comes from `readAdminIdentity()`, which is `GET /auth/me` and
+ * nothing else. When it is `null` — the API is unreachable, the session is
+ * gone, the account is not staff — this says so and **names nobody**.
+ * `e2e/admin-identity.spec.ts` proves it by failing the request and asserting
+ * no fabricated name appears.
+ */
+export function AdminHeader({ identity }: { identity: AdminIdentity | null }) {
   const pathname = usePathname();
   const segments = pathname.split('/').filter(Boolean);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -174,16 +196,38 @@ export function AdminHeader() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 h-10 px-2 rounded-xl transition-all duration-300 hover:bg-surface-high/50 active:scale-95 group">
-              <Avatar size="sm" fallback="AD" className="border border-border/50 shadow-sm" />
-              <span className="hidden sm:block text-sm font-medium text-foreground group-hover:text-primary transition-colors">Admin User</span>
+              <Avatar
+                size="sm"
+                fallback={identity?.initials ?? '?'}
+                className="border border-border/50 shadow-sm"
+              />
+              <span className="hidden sm:block text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                {identity?.fullName ?? 'Not identified'}
+              </span>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 bg-card/80 rounded-2xl border border-border/50 shadow-elevated backdrop-blur-xl z-40 transition-all duration-300 origin-top-right p-1.5">
             <DropdownMenuLabel className="font-normal px-2.5 py-2">
-              <div className="flex flex-col space-y-1">
-                <p className="text-sm font-semibold text-foreground">Admin User</p>
-                <p className="text-[11px] text-muted-foreground font-medium">admin@nest.com</p>
-              </div>
+              {identity === null ? (
+                /*
+                 * NOT a name. The console could not establish who is operating
+                 * it, and inventing somebody here is the failure this replaced.
+                 */
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-semibold text-warning">Identity unavailable</p>
+                  <p className="text-[11px] text-muted-foreground font-medium">
+                    The API did not confirm who is signed in. Reload, or sign in again.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-semibold text-foreground">{identity.fullName}</p>
+                  <p className="text-[11px] text-muted-foreground font-medium">{identity.email}</p>
+                  <p className="text-[10px] text-muted-foreground/80 font-medium uppercase tracking-wider">
+                    {identity.role.replace('_', ' ')}
+                  </p>
+                </div>
+              )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="border-border/50 my-1" />
             <DropdownMenuItem asChild>
@@ -199,17 +243,29 @@ export function AdminHeader() {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator className="border-border/50 my-1" />
-            <DropdownMenuItem
-              onClick={async () => {
-                const { getSupabaseBrowserClient } = await import('@nest/providers');
-                const supabase = getSupabaseBrowserClient();
-                await supabase.auth.signOut();
-                window.location.href = '/login';
-              }}
-              className="flex items-center gap-2.5 px-2.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors duration-200 rounded-xl cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign Out
+            <DropdownMenuItem asChild>
+              {/*
+                A FORM, not an onClick.
+
+                The old handler called `supabase.auth.signOut()` in the browser
+                and set `window.location`. Against this API that revoked
+                nothing — it cleared a Supabase session this console no longer
+                has, and left the API refresh token valid for another thirty
+                days. Clearing a cookie ends the tab, not the session.
+
+                `logoutAction` revokes the refresh token server-side FIRST and
+                then clears the cookies, so the credential is dead even if a
+                copy of the cookie survives somewhere.
+              */}
+              <form action={logoutAction} className="w-full">
+                <button
+                  type="submit"
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors duration-200 rounded-xl cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
+              </form>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

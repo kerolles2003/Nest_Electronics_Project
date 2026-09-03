@@ -13,7 +13,7 @@ const reviewStatusSchema = z.object({
 })
 
 export async function updateReviewStatusAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = {
@@ -38,7 +38,7 @@ export async function updateReviewStatusAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: `review:${parsed.data.status}`,
       entityType: 'review',
       entityId: parsed.data.reviewId,
@@ -46,7 +46,7 @@ export async function updateReviewStatusAction(formData: FormData) {
     })
 
     revalidatePath('/admin/reviews')
-    logger.info(`Review ${parsed.data.status}: id=${parsed.data.reviewId} by=${user.id}`)
+    logger.info(`Review ${parsed.data.status}: id=${parsed.data.reviewId} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('updateReviewStatusAction failed', e)
@@ -55,7 +55,7 @@ export async function updateReviewStatusAction(formData: FormData) {
 }
 
 export async function deleteReviewAction(reviewId: string) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -69,14 +69,14 @@ export async function deleteReviewAction(reviewId: string) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'review:delete',
       entityType: 'review',
       entityId: reviewId,
     })
 
     revalidatePath('/admin/reviews')
-    logger.info(`Review deleted: id=${reviewId} by=${user.id}`)
+    logger.info(`Review deleted: id=${reviewId} by=${admin.id}`)
     return { success: true }
   } catch (e) {
     logger.error('deleteReviewAction failed', e)

@@ -14,7 +14,7 @@ const adjustStockSchema = z.object({
 })
 
 export async function adjustStockAction(formData: FormData) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = {
@@ -47,7 +47,7 @@ export async function adjustStockAction(formData: FormData) {
       p_product_id: parsed.data.productId,
       p_quantity: parsed.data.quantity,
       p_reason: parsed.data.reason,
-      p_admin_id: user.id,
+      p_admin_id: admin.id,
       p_reference_type: 'manual',
     } as any)
 
@@ -62,14 +62,14 @@ export async function adjustStockAction(formData: FormData) {
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:stock_adjust',
       entityType: 'product',
       entityId: parsed.data.productId,
       changes: { delta: parsed.data.quantity, reason: parsed.data.reason },
     })
 
-    logger.info(`Stock adjusted: product=${parsed.data.productId} delta=${parsed.data.quantity} by=${user.id}`)
+    logger.info(`Stock adjusted: product=${parsed.data.productId} delta=${parsed.data.quantity} by=${admin.id}`)
 
     revalidatePath('/admin/inventory')
     revalidatePath('/admin/products')

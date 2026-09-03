@@ -35,7 +35,7 @@ function parseProductFormData(formData: FormData) {
 }
 
 export async function createProductAction(formData: FormData): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const raw = parseProductFormData(formData)
@@ -118,7 +118,7 @@ export async function createProductAction(formData: FormData): Promise<CreatePro
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:create',
       entityType: 'product',
       entityId: product.id,
@@ -126,7 +126,7 @@ export async function createProductAction(formData: FormData): Promise<CreatePro
     })
 
     revalidatePath('/admin/products')
-    logger.info(`Product created: id=${product.id} by=${user.id}`)
+    logger.info(`Product created: id=${product.id} by=${admin.id}`)
     return { success: true, productId: product.id }
   } catch (e: any) {
     logger.error('createProductAction failed', e)
@@ -135,7 +135,7 @@ export async function createProductAction(formData: FormData): Promise<CreatePro
 }
 
 export async function updateProductAction(formData: FormData): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   const productId = formData.get('id') as string
@@ -237,7 +237,7 @@ export async function updateProductAction(formData: FormData): Promise<CreatePro
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:update',
       entityType: 'product',
       entityId: productId,
@@ -246,7 +246,7 @@ export async function updateProductAction(formData: FormData): Promise<CreatePro
 
     revalidatePath('/admin/products')
     revalidatePath(`/admin/products/${productId}`)
-    logger.info(`Product updated: id=${productId} by=${user.id}`)
+    logger.info(`Product updated: id=${productId} by=${admin.id}`)
     return { success: true, productId }
   } catch (e: any) {
     logger.error('updateProductAction failed', e)
@@ -255,7 +255,7 @@ export async function updateProductAction(formData: FormData): Promise<CreatePro
 }
 
 export async function deleteProductImageAction(imageId: string, productPath: string) {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -275,7 +275,7 @@ export async function deleteProductImageAction(imageId: string, productPath: str
     await (supabase as any).from('product_images').delete().eq('id', imageId)
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:image_delete',
       entityType: 'product',
       entityId: image.product_id,
@@ -290,7 +290,7 @@ export async function deleteProductImageAction(imageId: string, productPath: str
 }
 
 export async function softDeleteProductAction(productId: string): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -302,7 +302,7 @@ export async function softDeleteProductAction(productId: string): Promise<Create
     if (error) return { success: false, error: error.message }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:delete',
       entityType: 'product',
       entityId: productId,
@@ -316,7 +316,7 @@ export async function softDeleteProductAction(productId: string): Promise<Create
 }
 
 export async function toggleProductStatusAction(productId: string, isActive: boolean): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -328,7 +328,7 @@ export async function toggleProductStatusAction(productId: string, isActive: boo
     if (error) return { success: false, error: error.message }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:status_toggle',
       entityType: 'product',
       entityId: productId,
@@ -346,7 +346,7 @@ export async function reorderProductImagesAction(
   productId: string,
   imageOrders: { imageId: string; sortOrder: number }[]
 ): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -359,7 +359,7 @@ export async function reorderProductImagesAction(
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:image_reorder',
       entityType: 'product',
       entityId: productId,
@@ -377,7 +377,7 @@ export async function setPrimaryImageAction(
   productId: string,
   imageId: string
 ): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -395,7 +395,7 @@ export async function setPrimaryImageAction(
       .eq('product_id', productId)
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:image_primary',
       entityType: 'product',
       entityId: productId,
@@ -410,7 +410,7 @@ export async function setPrimaryImageAction(
 }
 
 export async function duplicateProductAction(productId: string): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -494,7 +494,7 @@ export async function duplicateProductAction(productId: string): Promise<CreateP
     }
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'product:duplicate',
       entityType: 'product',
       entityId: newProduct.id,
@@ -514,7 +514,7 @@ export async function createSlugRedirectAction(
   newSlug: string,
   entityType: string = 'product'
 ): Promise<CreateProductResponse> {
-  const { user } = await requireAdmin()
+  const admin = await requireAdmin()
   const supabase = await createClient()
 
   try {
@@ -529,7 +529,7 @@ export async function createSlugRedirectAction(
     })
 
     await logAdminAction({
-      adminId: user.id,
+      adminId: admin.id,
       action: 'slug_redirect:create',
       entityType,
       entityId: oldSlug,

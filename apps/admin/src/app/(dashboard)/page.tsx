@@ -1,10 +1,39 @@
 import { requireAdmin, getDashboardStats, getRecentActivity } from '@/lib/services';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { orderStatusCounts } from '@/lib/api/order-stats';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import {
   Package, ShoppingBag, AlertTriangle, Users, Clock,
-  ArrowUpRight, Eye, Activity, Box, TrendingUp,
+  ArrowUpRight, Eye, Activity, CheckCircle2,
 } from 'lucide-react';
+
+/**
+ * The dashboard.
+ *
+ * ## Its order numbers come from the API. All of them.
+ *
+ * Every order figure here used to be a Supabase query over the LEGACY tables —
+ * total orders, pending orders, revenue, top products by units sold, the eight
+ * most recent orders, and a status breakdown. The storefront has placed orders
+ * through the API since T2, so those rows are discarded (D-6): the numbers were
+ * stale or zero, and every row in "Recent Orders" linked to
+ * `/orders/<supabase-uuid>`, which the API-backed detail page refuses because
+ * it is not a 24-character hex id. It was a legacy-orders view in the most
+ * literal sense — a table of orders nobody can act on.
+ *
+ * ## Two panels were removed rather than repointed
+ *
+ * **Total Revenue.** No API endpoint aggregates it, and the alternatives print
+ * a number that is wrong. Replaced by "Awaiting confirmation", which is a real
+ * count and is also the thing an operator opening this page actually needs.
+ *
+ * **Top Products by units sold.** Its only source was a join through
+ * `order_items`, which is discarded, and the API has no sales-ranking endpoint.
+ * A panel that can only be filled from a table nobody trusts is better absent
+ * than plausible.
+ */
 import { StatusBadge, Card, CardHeader, CardTitle, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@nest/ui';
 
 /* ------------------------------------------------------------------ */
@@ -33,12 +62,15 @@ function formatRelativeTime(dateString: string) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function formatCurrency(value: number) {
-  if (value >= 1_000_000) return `EGP ${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `EGP ${(value / 1_000).toFixed(1)}K`;
-  return `EGP ${value.toLocaleString('en-EG')}`;
-}
-
+/*
+ * `formatCurrency` was here. It abbreviated a summed revenue figure to "EGP
+ * 1.2M" — and nothing computes revenue any more, because no API endpoint
+ * aggregates it and the Supabase sum was over discarded rows.
+ *
+ * It is deleted rather than left for later. Every money value this console
+ * shows now comes pre-formatted from the server (`Money.formatted`), which is
+ * the only way the console and the invoice cannot disagree about rounding.
+ */
 function formatNumber(value: number) {
   return value.toLocaleString('en-EG');
 }
@@ -63,12 +95,8 @@ async function ActivityFeed() {
           <div className="divide-y divide-border">
             {activities.map((activity) => (
               <div key={activity.id} className="flex items-start gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
-                <div className={`mt-0.5 rounded-full p-1.5 shrink-0 ${activity.type === 'order' ? 'bg-primary/10' : 'bg-purple/10'}`}>
-                  {activity.type === 'order' ? (
-                    <Box className="h-3 w-3 text-primary" />
-                  ) : (
-                    <Activity className="h-3 w-3 text-purple" />
-                  )}
+                <div className="mt-0.5 rounded-full p-1.5 shrink-0 bg-purple/10">
+                  <Activity className="h-3 w-3 text-purple" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-foreground truncate">{activity.title}</p>
@@ -116,61 +144,66 @@ function ActivitySkeleton() {
 
 export default async function AdminPage() {
   await requireAdmin();
-  const stats = await getDashboardStats();
+
+  const [stats, orderCounts, recentOrders] = await Promise.all([
+    getDashboardStats(),
+    orderStatusCounts(),
+    tryApi(() => api.listOrders({ limit: 8 })),
+  ]);
 
   const now = new Date();
   const currentDate = now.toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
+  /*
+   * `null` renders as an em dash, never as 0. A dashboard that says "0 orders"
+   * because a request failed is worse than one that admits it does not know.
+   */
+  const show = (value: number | null) => (value === null ? '—' : formatNumber(value));
+
   const statItems = [
     {
-      label: 'Total Revenue',
-      value: stats.totalRevenue,
-      format: 'currency' as const,
-      icon: TrendingUp,
-      color: 'success' as const,
-      sub: 'Paid orders',
-    },
-    {
       label: 'Total Orders',
-      value: stats.orderCount,
-      format: 'number' as const,
+      display: show(orderCounts.total),
       icon: ShoppingBag,
       color: 'primary' as const,
-      sub: `${stats.orderStatusBreakdown['pending_payment'] ?? 0} pending · ${stats.orderStatusBreakdown['processing'] ?? 0} processing · ${stats.orderStatusBreakdown['shipped'] ?? 0} shipped`,
+      sub: 'Across every status',
+    },
+    {
+      label: 'Awaiting confirmation',
+      display: show(orderCounts.counts['PLACED'] ?? null),
+      icon: Clock,
+      color: 'warning' as const,
+      sub: 'Call the customer to confirm',
+    },
+    {
+      label: 'Ready to ship',
+      display: show(orderCounts.counts['CONFIRMED'] ?? null),
+      icon: CheckCircle2,
+      color: 'success' as const,
+      sub: 'Confirmed, not yet dispatched',
+    },
+    {
+      label: 'Delivery failed',
+      display: show(orderCounts.counts['DELIVERY_FAILED'] ?? null),
+      icon: AlertTriangle,
+      color: 'destructive' as const,
+      sub: 'Re-dispatch or return',
     },
     {
       label: 'Products',
-      value: stats.productCount,
-      format: 'number' as const,
+      display: formatNumber(stats.productCount),
       icon: Package,
       color: 'purple' as const,
       sub: stats.lowStock.length > 0 ? `${stats.lowStock.length} low stock` : 'All stocked',
     },
     {
       label: 'Customers',
-      value: stats.customerCount,
-      format: 'number' as const,
+      display: formatNumber(stats.customerCount),
       icon: Users,
       color: 'warning' as const,
       sub: 'Registered accounts',
-    },
-    {
-      label: 'Pending',
-      value: stats.pendingOrderCount,
-      format: 'number' as const,
-      icon: Clock,
-      color: 'warning' as const,
-      sub: 'Need attention',
-    },
-    {
-      label: 'Low Stock',
-      value: stats.lowStock.length,
-      format: 'number' as const,
-      icon: AlertTriangle,
-      color: 'destructive' as const,
-      sub: 'Items to reorder',
     },
   ];
 
@@ -202,7 +235,7 @@ export default async function AdminPage() {
         {statItems.map((stat) => {
           const Icon = stat.icon;
           const colors = colorMap[stat.color];
-          const displayValue = stat.format === 'currency' ? formatCurrency(stat.value) : formatNumber(stat.value);
+          const displayValue = stat.display;
           return (
             <div key={stat.label} className={`group relative overflow-hidden rounded-xl border ${colors.border} bg-card/40 backdrop-blur-md p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevated ${colors.hoverBorder}`}>
               {/* Glow effect */}
@@ -245,53 +278,73 @@ export default async function AdminPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Order</TableHead>
-                    <TableHead>Customer</TableHead>
+                    <TableHead>Items</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {stats.recentOrders.map((order) => (
-                    <TableRow key={order.id}>
-                      <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-mono text-[11px] font-bold text-primary">#{order.order_number}</span>
-                          <span className="text-[10px] text-muted-foreground">{formatRelativeTime(order.created_at)}</span>
+                  {recentOrders.ok &&
+                    recentOrders.data.data.map((order) => (
+                      <TableRow key={order.id}>
+                        <TableCell>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-[11px] font-bold text-primary">
+                              {order.orderNumber}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatRelativeTime(order.placedAt)}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs text-foreground">
+                            {order.itemCount} line{order.itemCount === 1 ? '' : 's'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {/* The SERVER's formatted string. Never re-derived here. */}
+                          <span className="font-bold text-foreground text-xs tabular-nums font-mono">
+                            {order.pricing.grandTotal.formatted}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            <StatusBadge status={order.status} />
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Link href={`/orders/${order.id}`} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold bg-surface-high text-foreground hover:bg-primary hover:text-primary-foreground transition-colors">
+                            <Eye className="h-3 w-3" /> View
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  {!recentOrders.ok && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-12 text-center">
+                        {/*
+                          NOT "no orders". The queue could not be read, and
+                          saying the shop has no orders because a request failed
+                          is the most expensive lie this console could tell.
+                        */}
+                        <div className="flex flex-col items-center gap-2">
+                          <AlertTriangle className="h-8 w-8 text-destructive/60" />
+                          <p className="text-sm font-medium text-foreground">
+                            Recent orders could not be loaded
+                          </p>
+                          <p className="text-xs text-muted-foreground">{recentOrders.error.message}</p>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xs text-foreground">
-                          {(() => {
-                            const addr = order.shipping_address as { full_name?: string } | null;
-                            return addr?.full_name ?? '—';
-                          })()}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-bold text-foreground text-xs tabular-nums font-mono">
-                          {order.total.toLocaleString('en-EG')}
-                          <span className="text-[10px] font-normal text-muted-foreground ml-1">EGP</span>
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          <StatusBadge status={order.order_status} />
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Link href={`/orders/${order.id}`} className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold bg-surface-high text-foreground hover:bg-primary hover:text-primary-foreground transition-colors">
-                          <Eye className="h-3 w-3" /> View
-                        </Link>
                       </TableCell>
                     </TableRow>
-                  ))}
-                  {stats.recentOrders.length === 0 && (
+                  )}
+                  {recentOrders.ok && recentOrders.data.data.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} className="py-12 text-center">
                         <div className="flex flex-col items-center gap-2">
                           <Package className="h-8 w-8 text-muted-foreground/40" />
-                          <p className="text-sm font-medium text-muted-foreground">No orders found yet</p>
+                          <p className="text-sm font-medium text-muted-foreground">No orders yet</p>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -355,36 +408,15 @@ export default async function AdminPage() {
             )}
           </Card>
 
-          {/* Top Products */}
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary" />
-                Top Products
-              </CardTitle>
-            </CardHeader>
-            <div>
-              {stats.topProducts.length > 0 ? (
-                <div className="divide-y divide-border">
-                  {stats.topProducts.map((product, index) => (
-                    <div key={product.name} className="flex items-center gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
-                      <span className="text-[10px] font-bold text-foreground-subtle w-4 text-center">{index + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-foreground truncate">{product.name}</p>
-                      </div>
-                      <span className="text-xs font-bold text-foreground tabular-nums font-mono">{product.units}</span>
-                      <span className="text-[10px] text-muted-foreground">sold</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-center px-5">
-                  <ShoppingBag className="h-6 w-6 text-muted-foreground/40 mb-2" />
-                  <p className="text-xs font-medium text-muted-foreground">No sales data yet</p>
-                </div>
-              )}
-            </div>
-          </Card>
+          {/*
+            "Top Products" was HERE and is deliberately gone.
+
+            Its only source was a join through `order_items` — legacy order
+            rows, discarded by D-6 — and the API has no sales-ranking endpoint.
+            The choice was between a panel filled from a table nobody trusts and
+            no panel; a plausible ranking of products by sales that never
+            happened is worse than an absence somebody notices.
+          */}
 
           {/* Recent Activity — streamed via Suspense */}
           <Suspense fallback={<ActivitySkeleton />}>

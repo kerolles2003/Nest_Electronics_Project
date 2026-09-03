@@ -28,25 +28,19 @@ export async function createClient() {
     }
   );
 }
-// Singleton — created once per process, reused on every request.
-let _adminClient: ReturnType<typeof createServerClient<Database>> | null = null;
-
-export function createAdminClient() {
-  if (_adminClient) return _adminClient;
-
-  const url = process.env['NEXT_PUBLIC_SUPABASE_URL'];
-  const key = process.env['SUPABASE_SERVICE_ROLE_KEY'];
-
-  if (!url) throw new Error('Missing env var: NEXT_PUBLIC_SUPABASE_URL');
-  if (!key) throw new Error('Missing env var: SUPABASE_SERVICE_ROLE_KEY');
-
-  _adminClient = createServerClient<Database>(url, key, {
-    cookies: {
-      // Admin client authenticates via the service-role key — no cookies needed.
-      getAll() { return []; },
-      setAll() {},
-    },
-  });
-
-  return _adminClient;
-}
+/*
+ * `createAdminClient` USED TO BE HERE, and its removal is the point.
+ *
+ * It built a Supabase client with `SUPABASE_SERVICE_ROLE_KEY` — a credential
+ * that bypasses row-level security completely, which is to say an unrestricted
+ * database login — and its only caller was `requireAdmin`, which used it to
+ * read one column (`profiles.role`) on every guarded navigation.
+ *
+ * Authentication is the API's now. Nothing in this application reads that key,
+ * so it has been removed from `.env.example` and from the classification table
+ * there. A secret an application does not need is a second place it can leak
+ * from, and this one had the largest possible blast radius.
+ *
+ * The client below is the ANON one, constrained by row-level security, and is
+ * what the remaining Supabase-backed screens use until Phase 7 moves them.
+ */
