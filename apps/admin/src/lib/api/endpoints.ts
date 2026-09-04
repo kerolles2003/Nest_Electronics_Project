@@ -2,10 +2,13 @@ import 'server-only';
 
 import { apiFetch } from './client';
 import type {
-  OrderQueueStats,
+  AdminCustomerSummary,
+  AdminDashboardStats,
   AdminOrder,
+  AdminShippingRate,
   AuthUser,
   Envelope,
+  OrderQueueStats,
   OrderStatus,
   OrderSummary,
   PagedEnvelope,
@@ -217,3 +220,61 @@ export function checkSlugAvailability(params: {
 
   return apiFetch(`/admin/catalog/slug-availability?${query.toString()}`);
 }
+
+// --- dashboard aggregates ---------------------------------------------------
+
+/**
+ * Single aggregated statistics endpoint for the admin dashboard.
+ *
+ * Revenue is recognized at DELIVERY (where payment.status = PAID),
+ * and pipeline value is tracked alongside.
+ */
+export function dashboardStats(): Promise<Envelope<AdminDashboardStats>> {
+  return apiFetch('/admin/dashboard/stats');
+}
+
+// --- customers --------------------------------------------------------------
+
+export interface CustomerListParams {
+  page?: number;
+  limit?: number;
+  q?: string;
+}
+
+export function listCustomers(
+  params: CustomerListParams = {},
+): Promise<PagedEnvelope<AdminCustomerSummary>> {
+  const query = new URLSearchParams();
+
+  if (params.page !== undefined) query.set('page', String(params.page));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.q !== undefined && params.q.trim() !== '') query.set('q', params.q.trim());
+
+  const suffix = query.toString();
+  return apiFetch(`/admin/customers${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+export function getCustomer(id: string): Promise<Envelope<AdminCustomerSummary>> {
+  return apiFetch(`/admin/customers/${id}`);
+}
+
+// --- shipping rates ---------------------------------------------------------
+
+export function listShippingRates(): Promise<Envelope<AdminShippingRate[]>> {
+  return apiFetch('/admin/shipping-rates');
+}
+
+export function getShippingRate(governorate: string): Promise<Envelope<AdminShippingRate>> {
+  return apiFetch(`/admin/shipping-rates/${governorate}`);
+}
+
+export function updateShippingRate(
+  governorate: string,
+  fee: number,
+): Promise<Envelope<AdminShippingRate>> {
+  return apiFetch(`/admin/shipping-rates/${governorate}`, {
+    method: 'PATCH',
+    body: { fee },
+  });
+}
+

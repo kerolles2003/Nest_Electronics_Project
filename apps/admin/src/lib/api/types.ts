@@ -212,3 +212,72 @@ export interface OrderQueueStats {
   readonly byStatus: readonly { readonly status: OrderStatus; readonly count: number }[];
   readonly total: number;
 }
+
+// --- dashboard aggregates ---------------------------------------------------
+
+export interface DashboardRevenue {
+  delivered: Money;
+  deliveredCount: number;
+  pipeline: Money;
+  pipelineCount: number;
+}
+
+export interface DashboardOrders {
+  total: number;
+  byStatus: readonly { readonly status: OrderStatus; readonly count: number }[];
+}
+
+export interface DashboardLowStockItem {
+  id: string;
+  name: string;
+  slug: string;
+  sku: string;
+  onHand: number;
+  lowStockThreshold: number;
+}
+
+export interface DashboardProducts {
+  total: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  lowStock: DashboardLowStockItem[];
+}
+
+export interface DashboardCustomers {
+  total: number;
+  newThisWeek: number;
+  withOrdersCount: number;
+}
+
+export interface AdminDashboardStats {
+  revenue: DashboardRevenue;
+  orders: DashboardOrders;
+  products: DashboardProducts;
+  customers: DashboardCustomers;
+}
+
+// --- customers --------------------------------------------------------------
+
+export interface AdminCustomerSummary {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  role: Role;
+  emailVerifiedAt: string | null;
+  createdAt: string;
+  orderCount: number;
+  totalSpent: number;
+  formattedTotalSpent: string;
+  lastOrderAt: string | null;
+}
+
+// --- shipping rates ---------------------------------------------------------
+
+export interface AdminShippingRate {
+  governorate: string;
+  fee: number;
+  formattedFee: string;
+  updatedAt: string;
+}
+

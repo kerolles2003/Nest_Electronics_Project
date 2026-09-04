@@ -5974,3 +5974,63 @@ Ratified in D-8 and codified in `MONEY-MODEL.md` §6:
 - `openapi:export` and `openapi:check` passed cleanly.
 - `pnpm.cmd --filter api lint` and `pnpm.cmd --filter api type-check` passed with 0 errors.
 - **Browser-unverified:** The admin console shipping rates UI is not yet wired to this endpoint.
+
+---
+
+# Part 6c — Aggregates with revenue counted at DELIVERY and Admin Console Wiring
+
+**Strays reaped before every run.** Checked before each test execution; 0 orphaned runners found.
+
+## Revenue counted at DELIVERY (ADR-ORDER-002)
+
+Under Cash on Delivery, delivery IS the payment event. `orders/domain/revenue.ts` defines the invariant:
+- **Delivered revenue (`revenue.delivered`):** Strictly orders with `payment.status = PAID` (transition to `DELIVERED` updates payment to `PAID`).
+- **Pipeline (`revenue.pipeline`):** In-flight orders across `PLACED`, `CONFIRMED`, `SHIPPED`, and `DELIVERY_FAILED` where `payment.status = PENDING`.
+- **Cancelled orders:** When an order is cancelled, it leaves `pipeline` and never contributes to `deliveredRevenue`.
+- **Refunded/Returned orders:** Transitioning from `DELIVERED` to `RETURNED` sets `payment.status = REFUNDED`, which immediately excludes the order from `deliveredRevenue`.
+
+## Aggregates Endpoint (`GET /admin/dashboard/stats`)
+
+Guarded by `@Roles(Role.ADMIN, Role.SUPER_ADMIN)` with `@Header('Cache-Control', 'no-store')`. Concurrently aggregates metrics across MongoDB collections:
+1. **Orders facet aggregation:**
+   - Delivered revenue (`amount` and `deliveredCount`).
+   - Pipeline revenue (`amount` and `pipelineCount`).
+   - Status distribution with guaranteed presence for all 7 order statuses (`ORDER_STATUSES`).
+2. **Products aggregation:**
+   - Active products total (`isActive: true, deletedAt: null`).
+   - Low-stock count (`stock.onHand <= lowStockThreshold`).
+   - Out-of-stock count (`stock.onHand == 0`).
+   - Top 8 low-stock items for dashboard alerts.
+3. **Users aggregation:**
+   - Total registered customers (`role: 'customer'`).
+   - New customers registered in the last 7 days (`newThisWeek`).
+   - Customers with at least one order (`withOrdersCount`).
+
+## Admin Console Wiring
+
+1. **Dashboard Overview (`apps/admin/src/app/(dashboard)/page.tsx`):**
+   - Replaced 8 direct Supabase queries in `getDashboardStats()` with a single `api.dashboardStats()` call.
+   - Added Delivered Revenue metric card displaying collected revenue alongside live pipeline value.
+2. **Customers Directory (`apps/admin/src/app/(dashboard)/customers/page.tsx`):**
+   - Replaced direct Supabase queries with `api.listCustomers()` and `api.dashboardStats()`.
+   - Wired server pagination and customer summary metrics.
+3. **Shipping Rates Editor (`apps/admin/src/app/(dashboard)/settings/page.tsx`):**
+   - Built `ShippingRatesTable` and `updateShippingRateAction` connected to `GET /admin/shipping-rates` and `PATCH /admin/shipping-rates/:governorate`.
+   - Admin operators can edit rates inline in major units (EGP), which are converted to piastres minor units for the API.
+   - Preserves D-8 invariants: 27 rows immutable, deletion forbidden, instant quote propagation, and audit logging.
+
+## Verification
+
+- Stray process check executed before all test runs: 0 orphaned runners found.
+- 9 integration tests in `test/orders/admin-dashboard-stats.spec.ts`:
+  - 401 unauthenticated, 403 CUSTOMER, 200 ADMIN/SUPER_ADMIN.
+  - All 7 order statuses present in `byStatus`.
+  - Money values formatted as `MoneyDto` with EGP currency.
+  - Revenue recognized strictly at delivery; in-flight tracked as pipeline; cancelled orders leave pipeline.
+  - Product low-stock and out-of-stock counts verified.
+  - Customer counts and active ordering counts verified.
+- Full regression suites (`test/orders/`, `test/fulfilment/`): 11 suites, 259 tests passed, 0 failed, zero database residue (`nest_electronics_scratch_api is exactly as this run found it`).
+- Drift gate checked and verified (`openapi:check` passed, 0 drift).
+- Turbopack production build of `apps/admin` succeeded (19/19 routes compiled).
+- TypeScript and ESLint 100% clean across API and Admin.
+

@@ -37,6 +37,10 @@ export enum OrderStatus {
   RETURNED = 'RETURNED',
 }
 
+/** All lifecycle statuses in official order. */
+export const ORDER_STATUSES: readonly OrderStatus[] = Object.values(OrderStatus);
+
+
 /**
  * Payment, on its own axis.
  *

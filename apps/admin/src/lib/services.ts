@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase'
 import { SupabaseCategoryProvider, SupabaseBrandProvider, SupabaseProductProvider } from '@nest/providers'
 import { ProductService } from '@nest/services'
 import { cache } from 'react'
+import { tryApi } from '@/lib/api/client'
+import * as api from '@/lib/api/endpoints'
 
 /**
  * ## Authentication moved to the API. Data has not.
@@ -107,59 +109,43 @@ export const getCachedBrands = cache(async () => {
  * `GET /admin/orders`. What is left here is products, customers and stock,
  * which are still Supabase until Phase 7.
  *
- * ## Revenue is not reported at all
+ * ## Revenue is counted at DELIVERY (ADR-ORDER-002)
  *
- * No API endpoint exposes a revenue aggregate. Summing a page gives a figure
- * that changes when you paginate, and fetching every order to add them up is a
- * table scan on every dashboard load. A wrong money figure is worse than none,
- * so there is none until an aggregate endpoint exists.
+ * The dashboard aggregate endpoint provides delivered revenue, pipeline value,
+ * complete order breakdown, active product counts, low stock items, and customer
+ * statistics in a single server-side aggregation.
  */
 export async function getDashboardStats() {
-  const { supabase } = await getAdminServices()
+  const result = await tryApi(() => api.dashboardStats());
 
-  const [
-    { count: activeProductCount, data: productsForStock },
-    { count: customerCount },
-  ] = await Promise.all([
-    /* Products for stock analysis */
-    supabase
-      .from('products')
-      .select('name_en, stock_quantity, reserved_quantity, low_stock_threshold, sku', { count: 'exact' })
-      .is('deleted_at', null)
-      .eq('is_active', true)
-      .order('stock_quantity', { ascending: true })
-      .limit(100),
-
-    /* Customer count */
-    supabase
-      .from('profiles')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'customer'),
-  ])
-
-  const lowStock = (productsForStock ?? [])
-    .filter((p: any) => {
-      const available = (p.stock_quantity ?? 0) - (p.reserved_quantity ?? 0)
-      return available <= (p.low_stock_threshold ?? 5)
-    })
-    .sort((a: any, b: any) => {
-      const availA = (a.stock_quantity ?? 0) - (a.reserved_quantity ?? 0)
-      const availB = (b.stock_quantity ?? 0) - (b.reserved_quantity ?? 0)
-      return availA - availB
-    })
-    .slice(0, 8)
+  if (result.ok) {
+    const d = result.data.data;
+    return {
+      productCount: d.products.total,
+      customerCount: d.customers.total,
+      lowStock: d.products.lowStock.map((p) => ({
+        name_en: p.name,
+        stock_quantity: p.onHand,
+        reserved_quantity: 0,
+        low_stock_threshold: p.lowStockThreshold,
+        sku: p.sku,
+      })),
+      revenue: d.revenue,
+      orders: d.orders,
+      products: d.products,
+      customers: d.customers,
+    };
+  }
 
   return {
-    productCount: activeProductCount ?? 0,
-    customerCount: customerCount ?? 0,
-    lowStock: lowStock as Array<{
-      name_en: string
-      stock_quantity: number
-      reserved_quantity: number
-      low_stock_threshold: number | null
-      sku: string
-    }>,
-  }
+    productCount: 0,
+    customerCount: 0,
+    lowStock: [],
+    revenue: null,
+    orders: null,
+    products: null,
+    customers: null,
+  };
 }
 
 export async function getProductStats() {

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 import {
   Package, ShoppingBag, AlertTriangle, Users, Clock,
-  ArrowUpRight, Eye, Activity, CheckCircle2,
+  ArrowUpRight, Eye, Activity, CheckCircle2, Banknote,
 } from 'lucide-react';
 
 /**
@@ -164,6 +164,15 @@ export default async function AdminPage() {
 
   const statItems = [
     {
+      label: 'Delivered Revenue',
+      display: stats.revenue ? stats.revenue.delivered.formatted : '—',
+      icon: Banknote,
+      color: 'success' as const,
+      sub: stats.revenue
+        ? `${stats.revenue.deliveredCount} paid · ${stats.revenue.pipeline.formatted} pipeline`
+        : 'Counted at delivery',
+    },
+    {
       label: 'Total Orders',
       display: show(orderCounts.total),
       icon: ShoppingBag,
@@ -231,7 +240,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-7">
         {statItems.map((stat) => {
           const Icon = stat.icon;
           const colors = colorMap[stat.color];

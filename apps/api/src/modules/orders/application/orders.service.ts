@@ -2,12 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { DEFAULT_LIMIT, DEFAULT_PAGE } from '../../../common/dto/pagination-query.dto';
 import { AppException } from '../../../common/errors/app.exception';
-import { OrderStatus } from '../domain/order-status';
+import { ORDER_STATUSES, OrderStatus } from '../domain/order-status';
 import type { OrderSearchTerm } from '../domain/order-search';
 import type { OrderQueueSort } from '../infrastructure/repositories/order.repository';
 
-/** Every status, in declaration order, so a count map is always complete. */
-const ORDER_STATUSES = Object.values(OrderStatus);
 import {
   OrderRepository,
   type OrderSummaryRow,

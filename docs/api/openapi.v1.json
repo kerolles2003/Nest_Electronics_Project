@@ -6640,6 +6640,54 @@
           "admin · orders"
         ]
       }
+    },
+    "/api/v1/admin/dashboard/stats": {
+      "get": {
+        "description": "Returns consolidated system metrics for the admin console dashboard:\n- Revenue recognised at DELIVERY (where payment.status = PAID).\n- Pipeline value for orders in-flight (PLACED, CONFIRMED, SHIPPED, DELIVERY_FAILED).\n- Orders count breakdown across all 7 lifecycle statuses.\n- Products summary: active total, low-stock count, and top low-stock items.\n- Customers summary: total registered, new accounts this week, and count with orders.",
+        "operationId": "AdminDashboardController_stats_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminDashboardStatsResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Administrative dashboard aggregate statistics",
+        "tags": [
+          "admin · dashboard"
+        ]
+      }
     }
   },
   "info": {
@@ -11976,6 +12024,206 @@
         },
         "required": [
           "reason"
+        ]
+      },
+      "DashboardRevenueDto": {
+        "type": "object",
+        "properties": {
+          "delivered": {
+            "description": "Revenue recognised at DELIVERY where payment.status = PAID.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MoneyDto"
+              }
+            ]
+          },
+          "deliveredCount": {
+            "type": "number",
+            "example": 42,
+            "minimum": 0,
+            "description": "Count of orders delivered and paid."
+          },
+          "pipeline": {
+            "description": "Pipeline value: in-flight orders with payment.status = PENDING and status in [PLACED, CONFIRMED, SHIPPED, DELIVERY_FAILED].",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MoneyDto"
+              }
+            ]
+          },
+          "pipelineCount": {
+            "type": "number",
+            "example": 15,
+            "minimum": 0,
+            "description": "Count of orders currently in the delivery pipeline."
+          }
+        },
+        "required": [
+          "delivered",
+          "deliveredCount",
+          "pipeline",
+          "pipelineCount"
+        ]
+      },
+      "DashboardOrdersDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 60,
+            "minimum": 0,
+            "description": "Total orders placed across all statuses."
+          },
+          "byStatus": {
+            "description": "Complete breakdown by lifecycle status (all 7 statuses present, 0 if empty).",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderStatusCountDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "byStatus"
+        ]
+      },
+      "DashboardLowStockItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "name": {
+            "type": "string",
+            "example": "ESP32 DevKit V1"
+          },
+          "slug": {
+            "type": "string",
+            "example": "esp32-devkit-v1"
+          },
+          "sku": {
+            "type": "string",
+            "example": "ESP32-DEV-V1"
+          },
+          "onHand": {
+            "type": "number",
+            "example": 2,
+            "minimum": 0,
+            "description": "Current units on hand."
+          },
+          "lowStockThreshold": {
+            "type": "number",
+            "example": 5,
+            "minimum": 0,
+            "description": "Threshold below which item is flagged low-stock."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "sku",
+          "onHand",
+          "lowStockThreshold"
+        ]
+      },
+      "DashboardProductsDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 34,
+            "minimum": 0,
+            "description": "Total active, non-deleted products."
+          },
+          "lowStockCount": {
+            "type": "number",
+            "example": 4,
+            "minimum": 0,
+            "description": "Count of active products with onHand <= lowStockThreshold."
+          },
+          "outOfStockCount": {
+            "type": "number",
+            "example": 1,
+            "minimum": 0,
+            "description": "Count of active products with onHand = 0."
+          },
+          "lowStock": {
+            "description": "Lowest-stock active products (up to 8 items).",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardLowStockItemDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "lowStockCount",
+          "outOfStockCount",
+          "lowStock"
+        ]
+      },
+      "DashboardCustomersDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "example": 120,
+            "minimum": 0,
+            "description": "Total registered customer accounts (excluding soft-deleted and staff)."
+          },
+          "newThisWeek": {
+            "type": "number",
+            "example": 8,
+            "minimum": 0,
+            "description": "Customer accounts registered in the last 7 days."
+          },
+          "withOrdersCount": {
+            "type": "number",
+            "example": 45,
+            "minimum": 0,
+            "description": "Unique customers who have placed at least one order."
+          }
+        },
+        "required": [
+          "total",
+          "newThisWeek",
+          "withOrdersCount"
+        ]
+      },
+      "AdminDashboardStatsDto": {
+        "type": "object",
+        "properties": {
+          "revenue": {
+            "$ref": "#/components/schemas/DashboardRevenueDto"
+          },
+          "orders": {
+            "$ref": "#/components/schemas/DashboardOrdersDto"
+          },
+          "products": {
+            "$ref": "#/components/schemas/DashboardProductsDto"
+          },
+          "customers": {
+            "$ref": "#/components/schemas/DashboardCustomersDto"
+          }
+        },
+        "required": [
+          "revenue",
+          "orders",
+          "products",
+          "customers"
+        ]
+      },
+      "AdminDashboardStatsResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminDashboardStatsDto"
+          }
+        },
+        "required": [
+          "data"
         ]
       }
     }

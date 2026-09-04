@@ -1,6 +1,8 @@
-import { requireAdmin, getAdminServices } from '@/lib/services';
+import { requireAdmin } from '@/lib/services';
 import { Suspense } from 'react';
 import { CustomersTable } from '@/components/customers/CustomersTable';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
 
 function CustomersSkeleton() {
   return (
@@ -20,74 +22,40 @@ export default async function CustomersPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await requireAdmin();
-  const { supabase } = await getAdminServices();
   const sp = await props.searchParams;
 
   const page = Number(sp.page) || 1;
   const search = (sp.search as string) || '';
   const limit = 25;
 
-  let query = supabase
-    .from('profiles')
-    .select('id, full_name, phone, avatar_url, created_at', { count: 'exact' })
-    .eq('role', 'customer');
+  const [customerRes, dashboardRes] = await Promise.all([
+    tryApi(() => api.listCustomers({ page, limit, q: search })),
+    tryApi(() => api.dashboardStats()),
+  ]);
 
-  if (search) {
-    query = query.or(`full_name.ilike.%${search}%,phone.ilike.%${search}%`);
-  }
+  const customerItems = customerRes.ok ? customerRes.data.data : [];
+  const meta = customerRes.ok ? customerRes.data.meta : { total: 0, totalPages: 1 };
 
-  const { data, count } = await query
-    .range((page - 1) * limit, page * limit - 1)
-    .order('created_at', { ascending: false });
+  const customers = customerItems.map((c) => ({
+    id: c.id,
+    full_name: c.fullName,
+    phone: c.phone,
+    avatar_url: null,
+    created_at: c.createdAt,
+  }));
 
-  const customers = (data ?? []) as Array<{ id: string; full_name: string; phone: string | null; avatar_url: string | null; created_at: string }>;
-  const total = count ?? 0;
-  const totalPages = Math.ceil(total / limit);
-
-  /* Order stats for current page customers */
-  const userIds = customers.map(c => c.id);
   const orderMap: Record<string, { count: number; total: number }> = {};
-  if (userIds.length > 0) {
-    const { data: orders } = await supabase
-      .from('orders')
-      .select('user_id, total')
-      .in('user_id', userIds)
-      .not('order_status', 'in', '(cancelled,failed)');
-
-    for (const o of (orders ?? []) as Array<{ user_id: string; total: number }>) {
-      if (!orderMap[o.user_id]) orderMap[o.user_id] = { count: 0, total: 0 };
-      orderMap[o.user_id].count++;
-      orderMap[o.user_id].total += o.total ?? 0;
-    }
+  for (const c of customerItems) {
+    orderMap[c.id] = { count: c.orderCount, total: c.totalSpent };
   }
 
-  /* Stats */
-  const { count: totalCustomers } = await supabase
-    .from('profiles')
-    .select('*', { count: 'exact', head: true })
-    .eq('role', 'customer');
-
-  const now = new Date();
-  const startOfWeek = new Date(now.getTime() - 7 * 86400000).toISOString();
-  const { count: newThisWeek } = await supabase
-    .from('profiles')
-    .select('*', { count: 'exact', head: true })
-    .eq('role', 'customer')
-    .gte('created_at', startOfWeek);
-
-  const { data: orderUsers } = await supabase
-    .from('orders')
-    .select('user_id')
-    .not('order_status', 'in', '(cancelled,failed)');
-  const uniqueUserIds = new Set(((orderUsers ?? []) as Array<{ user_id: string }>).map(o => o.user_id));
-  const withOrders = uniqueUserIds.size;
-
-  const { data: revenueRows } = await supabase
-    .from('orders')
-    .select('total')
-    .eq('payment_status', 'paid')
-    .not('order_status', 'in', '(cancelled,failed)');
-  const totalRevenue = (revenueRows ?? []).reduce((sum: number, r: any) => sum + (r.total ?? 0), 0);
+  const dStats = dashboardRes.ok ? dashboardRes.data.data : null;
+  const stats = {
+    total: dStats?.customers.total ?? meta.total,
+    newThisWeek: dStats?.customers.newThisWeek ?? 0,
+    withOrders: dStats?.customers.withOrdersCount ?? 0,
+    totalRevenue: dStats?.revenue.delivered.amount ?? 0,
+  };
 
   return (
     <div className="space-y-5">
@@ -101,14 +69,9 @@ export default async function CustomersPage(props: {
           initialCustomers={customers}
           orderMap={orderMap}
           currentPage={page}
-          totalPages={totalPages}
-          total={total}
-          stats={{
-            total: totalCustomers ?? 0,
-            newThisWeek: newThisWeek ?? 0,
-            withOrders,
-            totalRevenue,
-          }}
+          totalPages={meta.totalPages}
+          total={meta.total}
+          stats={stats}
         />
       </Suspense>
     </div>

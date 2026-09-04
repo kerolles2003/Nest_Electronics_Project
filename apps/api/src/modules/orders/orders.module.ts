@@ -6,7 +6,10 @@ import { CartModule } from '../cart/cart.module';
 import { FulfilmentModule } from '../fulfilment/fulfilment.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { UsersModule } from '../users/users.module';
+import { Product, ProductSchema } from '../catalog/infrastructure/schemas/product.schema';
+import { User, UserSchema } from '../users/infrastructure/schemas/user.schema';
 import { CheckoutService } from './application/checkout.service';
+import { DashboardAdminService } from './application/dashboard-admin.service';
 import { OrderLifecycleService } from './application/order-lifecycle.service';
 import { OrdersService } from './application/orders.service';
 import { IdempotencyRepository } from './infrastructure/repositories/idempotency.repository';
@@ -19,6 +22,7 @@ import {
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderCounter, OrderCounterSchema } from './infrastructure/schemas/order-counter.schema';
 import { Order, OrderSchema } from './infrastructure/schemas/order.schema';
+import { AdminDashboardController } from './presentation/admin-dashboard.controller';
 import { AdminOrdersController } from './presentation/admin-orders.controller';
 import { CheckoutController } from './presentation/checkout.controller';
 import { OrdersController } from './presentation/orders.controller';
@@ -73,6 +77,8 @@ import { OrdersController } from './presentation/orders.controller';
       { name: Order.name, schema: OrderSchema },
       { name: OrderCounter.name, schema: OrderCounterSchema },
       { name: IdempotencyKeyRecord.name, schema: IdempotencyKeySchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     DatabaseModule,
     /*
@@ -92,7 +98,12 @@ import { OrdersController } from './presentation/orders.controller';
     // (PROVIDER-ARCHITECTURE.md §2).
     NotificationsModule,
   ],
-  controllers: [CheckoutController, OrdersController, AdminOrdersController],
+  controllers: [
+    CheckoutController,
+    OrdersController,
+    AdminOrdersController,
+    AdminDashboardController,
+  ],
   providers: [
     CheckoutService,
     OrdersService,
@@ -100,6 +111,8 @@ import { OrdersController } from './presentation/orders.controller';
     OrderRepository,
     OrderCounterRepository,
     IdempotencyRepository,
+    DashboardAdminService,
   ],
+  exports: [DashboardAdminService],
 })
 export class OrdersModule {}
