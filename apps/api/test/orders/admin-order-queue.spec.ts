@@ -432,6 +432,65 @@ describe('searching the queue', () => {
     expect(numbersOf(response.body)).toEqual([(hunted as { orderNumber: string }).orderNumber]);
   });
 
+  it('finds an order by the DELIVERY-NOTE phone when the account phone differs', async () => {
+    /*
+     * The distinction this test exists to make explicit.
+     *
+     * An order carries TWO phone numbers and they are not the same field:
+     *
+     *   `customer.phone`          the account profile. Nullable, and null on
+     *                             almost every account, because registration
+     *                             never asks for one.
+     *   `shippingAddress.phone`   required at checkout, snapshotted at
+     *                             placement, and the number PRINTED ON THE
+     *                             DELIVERY NOTE — so it is the number an
+     *                             operator is holding when they search.
+     *
+     * Searching only the first found nothing for anybody who had not separately
+     * filled in their profile, which is nearly everybody. The other tests in
+     * this file pass through the delivery number by accident, because
+     * `createAccount` sets no profile phone — so they would keep passing if the
+     * delivery branch were removed. This one sets the two to DIFFERENT values
+     * and asserts each finds the order, which no accident can satisfy.
+     *
+     * The decision recorded here is SEARCH BOTH, not snapshot-and-replace. No
+     * new field is needed — the delivery phone is already on the order and
+     * already a snapshot, so a later edit to the address book cannot change what
+     * the order says. And the account phone is not useless: an operator holding
+     * a delivery note has one number, an operator answering a call has the
+     * other. Replacing either with the other trades one blind spot for a
+     * different one.
+     */
+    const twoPhones = await createAccount('twophones', { fullName: 'Dual Contact', phone: '01055556666' });
+
+    // The account profile gets a DIFFERENT number from the delivery address.
+    await http()
+      .patch('/api/v1/users/me')
+      .set('Authorization', `Bearer ${twoPhones.token}`)
+      .send({ phone: '01077778888' })
+      .expect(200);
+
+    const orderId = await placeOrder(twoPhones, 1);
+    const placed = await orders.findById(new Types.ObjectId(orderId)).lean().exec();
+    const orderNumber = (placed as { orderNumber: string }).orderNumber;
+
+    const stored = placed as unknown as {
+      customer: { phone: string | null };
+      shippingAddress: { phone: string };
+    };
+
+    // The two really are different on the stored document, or the assertions
+    // below would prove nothing about which branch matched.
+    expect(stored.customer.phone).toBe('01077778888');
+    expect(stored.shippingAddress.phone).toBe('01055556666');
+
+    // The delivery-note number. This is the branch that was missing.
+    expect(numbersOf((await queue('?q=01055556666').expect(200)).body)).toEqual([orderNumber]);
+
+    // And the account number still works — search both, not replace.
+    expect(numbersOf((await queue('?q=01077778888').expect(200)).body)).toEqual([orderNumber]);
+  });
+
   it('treats regular-expression syntax as text, so a wildcard finds nothing', async () => {
     /*
      * `Q....` would match "Queue" and "Quinteros" if `.` were a wildcard. It is

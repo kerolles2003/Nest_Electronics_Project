@@ -5811,3 +5811,69 @@ green.
 
 **Browser-unverified:** the console's inventory screen still calls Supabase.
 Re-pointing it lands with the console migration unit.
+
+---
+
+# Carried finding — the delivery-note phone. Answered, and the answer was already in the code
+
+**Strays reaped before every run.** None found.
+
+## The question, and the correction to it
+
+The brief asks me to decide "whether the fix is snapshotting the delivery phone
+onto the order or searching both, and say why."
+
+**Neither is needed as new work, because the decision was already taken and
+shipped in Part 2.** `order.repository.ts` already searches both
+`customer.phone` and `shippingAddress.phone`, with a comment giving the same
+reasoning I would have given. The handoff listed it under "two bugs the tests
+found", which reads as an open finding but describes one that was found *and
+fixed* in the same commit.
+
+So the honest report is: no code change was required. What WAS missing is
+below.
+
+## The answer, stated properly
+
+**Search both. No snapshot is needed, because the delivery phone is already
+snapshotted.**
+
+`shippingAddress.phone` is on the order, is **required** at checkout, and is
+copied at placement — so a later edit to the customer's address book cannot
+change what the order says. It is the number printed on the delivery note, and
+therefore the number an operator is holding when they search. Adding a second
+denormalised phone field, or a `searchText` blob, would duplicate data that is
+already there; the handoff's "Needs owner" item 4 already declined a `searchText`
+field at this scale, and this needs it even less.
+
+Searching **both** rather than replacing, because the two numbers answer
+different questions and neither is redundant:
+
+- an operator holding a delivery note has `shippingAddress.phone`;
+- an operator answering a call has whatever the caller ID shows, which may be
+  the account's `customer.phone`.
+
+Replacing either with the other trades one blind spot for a different one. The
+account phone is nullable and usually null — registration never asks for one —
+which is why searching *only* it found nothing for anybody, but "usually null"
+is not "never useful".
+
+## What was actually missing: a test that can fail
+
+The existing phone test passed **by accident**. `createAccount` in that suite
+never sets a profile phone, so `customer.phone` is null on every order it
+creates and the search matches through the delivery branch — meaning the test
+would have gone on passing if that branch were deleted. A test that cannot
+distinguish the two branches is not evidence about either.
+
+Added: an account whose profile phone and delivery phone are **different**
+numbers, asserting the stored document really does carry both, and that each
+number finds the order.
+
+**Verified by a control.** The delivery branch was removed, the new test was run
+alone and FAILED; the branch was restored and it passed. The repository file is
+byte-identical to `HEAD` afterwards — checked with `git diff --quiet`, not by
+eye. Without that control the new test would be one more assertion that passes
+for reasons nobody has established.
+
+42 tests in `test/orders/admin-order-queue.spec.ts`, all passing.
