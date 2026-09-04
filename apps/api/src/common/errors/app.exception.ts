@@ -714,4 +714,12 @@ export class AppException extends HttpException {
       ],
     );
   }
+
+  static cannotDeleteShippingRate(): AppException {
+    return new AppException(
+      ErrorCode.CANNOT_DELETE_SHIPPING_RATE,
+      HttpStatus.CONFLICT,
+      'Shipping rates cannot be deleted; every Egyptian governorate must remain resolvable. Set fee to 0 for free delivery.',
+    );
+  }
 }

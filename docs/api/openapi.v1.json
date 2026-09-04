@@ -4914,6 +4914,364 @@
         ]
       }
     },
+    "/api/v1/admin/shipping-rates": {
+      "get": {
+        "description": "Returns all 27 Egyptian governorates and their current delivery fees, sorted by governorate name.",
+        "operationId": "AdminShippingRatesController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminShippingRateListResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all shipping rates",
+        "tags": [
+          "admin · shipping-rates"
+        ]
+      }
+    },
+    "/api/v1/admin/shipping-rates/{governorate}": {
+      "get": {
+        "description": "Returns the delivery fee for a specific governorate.",
+        "operationId": "AdminShippingRatesController_findByGovernorate_v1",
+        "parameters": [
+          {
+            "name": "governorate",
+            "required": true,
+            "in": "path",
+            "description": "Egyptian governorate name (must be one of the 27 official governorates)",
+            "schema": {
+              "example": "Cairo",
+              "type": "string",
+              "enum": [
+                "Cairo",
+                "Giza",
+                "Alexandria",
+                "Dakahlia",
+                "Red Sea",
+                "Beheira",
+                "Fayoum",
+                "Gharbia",
+                "Ismailia",
+                "Menofia",
+                "Minya",
+                "Qaliubiya",
+                "New Valley",
+                "Suez",
+                "Aswan",
+                "Assiut",
+                "Beni Suef",
+                "Port Said",
+                "Damietta",
+                "Sharkia",
+                "South Sinai",
+                "Kafr El Sheikh",
+                "Matrouh",
+                "Luxor",
+                "Qena",
+                "North Sinai",
+                "Sohag"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminShippingRateResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown governorate.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get shipping rate for one governorate",
+        "tags": [
+          "admin · shipping-rates"
+        ]
+      },
+      "patch": {
+        "description": "Updates the delivery fee for the specified governorate.\nThe fee must be an integer >= 0 in minor units (piastres).\nEmits a `SHIPPING_RATE_CHANGED` audit record.\nSubsequent quotes during customer checkout will immediately use the new fee.",
+        "operationId": "AdminShippingRatesController_update_v1",
+        "parameters": [
+          {
+            "name": "governorate",
+            "required": true,
+            "in": "path",
+            "description": "Egyptian governorate name (must be one of the 27 official governorates)",
+            "schema": {
+              "example": "Cairo",
+              "type": "string",
+              "enum": [
+                "Cairo",
+                "Giza",
+                "Alexandria",
+                "Dakahlia",
+                "Red Sea",
+                "Beheira",
+                "Fayoum",
+                "Gharbia",
+                "Ismailia",
+                "Menofia",
+                "Minya",
+                "Qaliubiya",
+                "New Valley",
+                "Suez",
+                "Aswan",
+                "Assiut",
+                "Beni Suef",
+                "Port Said",
+                "Damietta",
+                "Sharkia",
+                "South Sinai",
+                "Kafr El Sheikh",
+                "Matrouh",
+                "Luxor",
+                "Qena",
+                "North Sinai",
+                "Sohag"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateShippingRateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminShippingRateResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update delivery fee for a governorate",
+        "tags": [
+          "admin · shipping-rates"
+        ]
+      },
+      "delete": {
+        "description": "Always refused with 409 CANNOT_DELETE_SHIPPING_RATE. Every Egyptian governorate must have an explicit rate configured because checkout misses raise. To offer free shipping, set fee to 0.",
+        "operationId": "AdminShippingRatesController_delete_v1",
+        "parameters": [
+          {
+            "name": "governorate",
+            "required": true,
+            "in": "path",
+            "description": "Egyptian governorate name (must be one of the 27 official governorates)",
+            "schema": {
+              "example": "Cairo",
+              "type": "string",
+              "enum": [
+                "Cairo",
+                "Giza",
+                "Alexandria",
+                "Dakahlia",
+                "Red Sea",
+                "Beheira",
+                "Fayoum",
+                "Gharbia",
+                "Ismailia",
+                "Menofia",
+                "Minya",
+                "Qaliubiya",
+                "New Valley",
+                "Suez",
+                "Aswan",
+                "Assiut",
+                "Beni Suef",
+                "Port Said",
+                "Damietta",
+                "Sharkia",
+                "South Sinai",
+                "Kafr El Sheikh",
+                "Matrouh",
+                "Luxor",
+                "Qena",
+                "North Sinai",
+                "Sohag"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CANNOT_DELETE_SHIPPING_RATE — deletion is refused by invariant D-8.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a shipping rate (refused)",
+        "tags": [
+          "admin · shipping-rates"
+        ]
+      }
+    },
     "/api/v1/checkout/quote": {
       "post": {
         "description": "Returns the **authoritative** money breakdown for the signed-in customer’s cart, with\nper-line status flags. Every figure is recomputed from live catalogue data on this\nrequest; nothing stored is returned, and the client never adds anything up itself.\n\n### What this is NOT\n\n- **Not a reservation.** No stock is held. Another customer may buy the last unit one\n  millisecond later.\n- **Not a lock, and not a payment authorisation.**\n- **Not a promise that `POST /orders` will succeed.** Placement independently revalidates\n  everything inside a transaction and may still return `409 OUT_OF_STOCK`.\n- **Not persisted.** There is no quote id and nothing to send back. Placement ignores any\n  totals a client might have kept.\n\n### Reading the result\n\n- `canPlaceOrder` — whether placement would be accepted right now. Use it for the button.\n- `pricing.grandTotal` — the cash amount due on delivery. **Never compute this locally.**\n- `pricing.shippingFee` is computed by the server. Pass `addressId` and it is quoted\n  against that address governorate — the same calculation `POST /orders` applies, so the\n  two agree. Omit it before the customer has chosen an address. `discountTotal` is always\n  `0` in this release: no coupon domain exists yet.\n- A `PRICE_CHANGED` line is included at the NEW price — compare `unitPrice` with\n  `previousUnitPrice` to tell the customer before they commit.\n\nPOST rather than GET because the frozen contract shapes this as a body-carrying request.\nIt has **no side effects** and writes nothing.\n\nThe body accepts `addressId` and nothing else. Sending `couponCode` returns\n`400 UNKNOWN_FIELD` rather than being silently ignored, so a client is never left believing\nit applied a discount that was never validated; a raw `governorate` is refused for a second\nreason — the saved address is the authority for it, and accepting free text would let a\nclient shop for a cheaper delivery fee.",
@@ -6625,6 +6983,7 @@
               "INSUFFICIENT_STOCK_FOR_ADJUSTMENT",
               "CANNOT_MODIFY_OWN_ACCOUNT",
               "LAST_SUPER_ADMIN",
+              "CANNOT_DELETE_SHIPPING_RATE",
               "CONCURRENT_MODIFICATION",
               "ORDER_NOT_CANCELLABLE",
               "INVALID_STATE_TRANSITION",
@@ -10387,6 +10746,105 @@
         },
         "required": [
           "data"
+        ]
+      },
+      "AdminShippingRateDto": {
+        "type": "object",
+        "properties": {
+          "governorate": {
+            "type": "string",
+            "description": "Governorate name",
+            "enum": [
+              "Cairo",
+              "Giza",
+              "Alexandria",
+              "Dakahlia",
+              "Red Sea",
+              "Beheira",
+              "Fayoum",
+              "Gharbia",
+              "Ismailia",
+              "Menofia",
+              "Minya",
+              "Qaliubiya",
+              "New Valley",
+              "Suez",
+              "Aswan",
+              "Assiut",
+              "Beni Suef",
+              "Port Said",
+              "Damietta",
+              "Sharkia",
+              "South Sinai",
+              "Kafr El Sheikh",
+              "Matrouh",
+              "Luxor",
+              "Qena",
+              "North Sinai",
+              "Sohag"
+            ],
+            "example": "Cairo"
+          },
+          "fee": {
+            "type": "number",
+            "description": "Fee in integer minor units (piastres). 5000 = 50.00 EGP.",
+            "example": 5000
+          },
+          "formattedFee": {
+            "type": "string",
+            "description": "Human-readable formatted fee string",
+            "example": "50.00 EGP"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string",
+            "description": "Timestamp when this rate was last updated"
+          }
+        },
+        "required": [
+          "governorate",
+          "fee",
+          "formattedFee",
+          "updatedAt"
+        ]
+      },
+      "AdminShippingRateListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminShippingRateDto"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "AdminShippingRateResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminShippingRateDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "UpdateShippingRateDto": {
+        "type": "object",
+        "properties": {
+          "fee": {
+            "type": "number",
+            "description": "Delivery fee in integer minor units (piastres). 0 is permitted and represents free shipping. Negative values are rejected.",
+            "minimum": 0,
+            "example": 5000
+          }
+        },
+        "required": [
+          "fee"
         ]
       },
       "CheckoutQuoteDto": {

@@ -230,6 +230,15 @@ export enum ErrorCode {
    */
   LAST_SUPER_ADMIN = 'LAST_SUPER_ADMIN',
 
+  /**
+   * 409. Deleting a shipping rate is refused.
+   *
+   * D-8 ratified: 27 rows, one per governorate, no fallback row, and a lookup
+   * miss during checkout raises. Every Egyptian governorate must have a
+   * configured rate. To offer free delivery, set fee to 0.
+   */
+  CANNOT_DELETE_SHIPPING_RATE = 'CANNOT_DELETE_SHIPPING_RATE',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

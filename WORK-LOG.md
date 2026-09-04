@@ -5937,3 +5937,40 @@ controller handlers.
   0 failed, zero residue).
 - `openapi:export` updated contract, drift gate green. `type-check` and `lint` clean.
 - **Browser-unverified:** The admin console customers page still reads Supabase.
+
+# Part 6b — Shipping-rates admin editor with D-8 invariants & audit logging
+
+## The D-8 Invariants on the shipping rate table
+
+Ratified in D-8 and codified in `MONEY-MODEL.md` §6:
+1. **27 official Egyptian governorates:** The rate table contains exactly 27 rows, one per governorate. There is no default row and no fallback sentinel.
+2. **Checkout miss raises 500:** Because missing rows crash checkout for that region, deleting a shipping rate row is strictly forbidden.
+3. **Refusal to delete (`DELETE /admin/shipping-rates/:governorate`):** Always returns 409 `CANNOT_DELETE_SHIPPING_RATE`. The document remains untouched in the database. Free delivery is represented cleanly by setting `fee: 0`.
+4. **Fees in integer minor units (piastres):** 0 is permitted (free shipping), negative and fractional fees are rejected with 400.
+5. **Audited fee mutations (`PATCH /admin/shipping-rates/:governorate`):** Emits `AuditAction.SHIPPING_RATE_CHANGED` with `before` and `after` fees, actor ID, and forensic context (IP, user agent). No-op updates emit no audit row.
+6. **Immediate propagation:** Updating a fee updates the database synchronously. Subsequent checkout quotes via `FulfilmentService.quote()` immediately reflect the new rate without server restart.
+
+## Endpoints
+
+- `GET /admin/shipping-rates` — Lists all 27 governorates sorted alphabetically with `fee`, `formattedFee` (`XX.XX EGP`), and `updatedAt`. Guarded by `@Roles(Role.ADMIN, Role.SUPER_ADMIN)`.
+- `GET /admin/shipping-rates/:governorate` — Single governorate rate details. Rejects non-governorate param with 400.
+- `PATCH /admin/shipping-rates/:governorate` — Updates fee, emits audit log, reflects immediately in quoting.
+- `DELETE /admin/shipping-rates/:governorate` — Refused with 409 `CANNOT_DELETE_SHIPPING_RATE`.
+
+## Verification
+
+- Stray process check executed before test runs: 0 orphaned runners found.
+- 13 integration tests in `test/fulfilment/admin-shipping-rates.spec.ts`:
+  - 27-row listing alphabetical order and field presence.
+  - Auth guards (401 for unauthenticated, 403 for CUSTOMER).
+  - Single governorate fetch and 400 validation on unknown governorate.
+  - Fee updates: reflects immediately in `FulfilmentService.quote()`, emits audit log with forensics.
+  - Fee = 0 accepted and quotes 0.
+  - No-op updates do not write audit log.
+  - Negative and fractional fees rejected (400).
+  - Unknown fields rejected (400 `UNKNOWN_FIELD`).
+  - Row deletion refused with 409 `CANNOT_DELETE_SHIPPING_RATE` and document preserved.
+- Full fulfilment regression (`test/fulfilment/`): 3 suites, 51 tests passed, 0 failed, zero residue in scratch database.
+- `openapi:export` and `openapi:check` passed cleanly.
+- `pnpm.cmd --filter api lint` and `pnpm.cmd --filter api type-check` passed with 0 errors.
+- **Browser-unverified:** The admin console shipping rates UI is not yet wired to this endpoint.
