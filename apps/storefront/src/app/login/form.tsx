@@ -48,6 +48,28 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
 
       <AuthError message={state.error} />
 
+      {/*
+        The one sign-in failure with a next step.
+
+        A wrong password and an unverified address are both "you cannot sign
+        in", but only this one is fixable from here, and the customer's most
+        likely problem is that the email is sitting unopened or was never
+        delivered.
+
+        Keyed on the CODE. This was written as
+        `state.error.includes('not verified')` against a message the API words
+        as "Verify your email address before signing in." — it matched nothing,
+        so the offer never rendered, and nothing anywhere said so.
+      */}
+      {state.code === 'EMAIL_NOT_VERIFIED' && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs flex items-center justify-between gap-3">
+          <span className="text-foreground-muted">Need a new verification link?</span>
+          <Link href="/verify-email" className="shrink-0 font-bold text-primary hover:underline">
+            Resend email
+          </Link>
+        </div>
+      )}
+
       <AuthField
         label="Email Address"
         name="email"

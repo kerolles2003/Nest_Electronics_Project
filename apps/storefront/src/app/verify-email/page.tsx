@@ -51,6 +51,26 @@ export default async function VerifyEmailPage({
     );
   }
 
+  /*
+   * ONE call, and a second click on the same link fails. That is correct.
+   *
+   * `EmailVerificationService.verify` clears the challenge as it sets the
+   * timestamp, so the token is strictly single-use by design. Reloading a
+   * consumed link therefore lands on the failure branch below, which is why
+   * that branch now offers a route onwards instead of only apologising.
+   *
+   * REVERTED, deliberately: an in-memory `Map` keyed by token, holding
+   * successful outcomes for two minutes, was added here to hide that. It was
+   * the wrong answer three times over. It is per-process, so it does nothing
+   * behind more than one instance; it is never pruned, so it grows for the life
+   * of the process; and the symptom it was written for is a DEV-mode double
+   * render, which is not a reason to carry a cache in production.
+   *
+   * The real fix is on the API: make verification idempotent, so presenting the
+   * token of an already-verified address succeeds instead of failing. That is a
+   * change to `apps/api`, which this line of work does not own, and it is
+   * raised rather than reached for.
+   */
   const result = await tryApi(() => api.verifyEmail(token));
 
   if (!result.ok) {
@@ -93,13 +113,20 @@ function Outcome({
         {body}
       </p>
 
-      {tone === 'success' && (
+      {tone === 'success' ? (
         <Link
           href={ROUTES.login}
           className="mt-2 block w-full rounded-xl bg-primary py-4 text-center text-[13px] font-bold uppercase tracking-widest text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary-hover"
         >
           Sign in
         </Link>
+      ) : (
+        <div className="pt-2 text-sm text-foreground-muted">
+          Already confirmed your email?{' '}
+          <Link href={ROUTES.login} className="font-bold text-primary hover:underline">
+            Sign in to your account
+          </Link>
+        </div>
       )}
 
       {showResend && <ResendVerificationForm />}

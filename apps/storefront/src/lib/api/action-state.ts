@@ -25,6 +25,24 @@ export interface ActionState {
    * saying that a successful action normally has nothing to add.
    */
   message?: string;
+  /**
+   * The API's stable error code, when a form needs to BRANCH on the failure
+   * rather than only show it.
+   *
+   * Optional, and set by the few actions that have a reader for it. The one
+   * that does is sign-in: a refused password and an unverified address are both
+   * "you cannot sign in", but only the second has a next step the customer can
+   * take, and offering "resend the verification email" after a wrong password
+   * would be telling them the wrong thing about their own account.
+   *
+   * A code and not the message. The first version of that branch tested
+   * `error.includes('not verified')` against a message the API words as
+   * *"Verify your email address before signing in."* — so it matched nothing,
+   * and the resend offer it guarded could never appear. Nothing failed: the
+   * types were satisfied, the build was clean, and the feature was simply
+   * absent. Rewording a sentence must not silently remove a control.
+   */
+  code?: string;
 }
 
 export const emptyActionState: ActionState = { error: null, fieldErrors: {} };

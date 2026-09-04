@@ -7210,3 +7210,33 @@ D-8, the shipping rate table is seeded one row per governorate with no fallback,
 so an unrecognised value reaches a rate lookup with nothing to find. The `select`
 survived the redesign; the paragraph saying why it must stay a `select` did not.
 That is the more fragile half.
+
+## A verification link, clicked twice — and a resend offer that could never appear
+
+`EmailVerificationService.verify` clears the challenge as it sets the timestamp,
+so a verification token is **strictly single-use by design**. A reload, a
+back-button, or an email scanner that fetched the link first therefore lands on
+the failure screen, which said only that it could not verify. It now offers the
+sign-in page, because for most people arriving there the address is already
+verified and the only thing they need is the way in.
+
+**Reverted from this pass**: an in-memory `Map`, keyed by token, holding
+successful outcomes for two minutes, added to hide the double-verify. It was
+wrong three times over — per-process, so it does nothing behind more than one
+instance; never pruned, so it grows for the life of the process; and written for
+a **dev-mode** double render, which is not a reason to carry a cache in
+production. The real fix is to make verification idempotent on the API side, so
+presenting the token of an already-verified address succeeds. That is an
+`apps/api` change, which this line of work does not own, and it is raised rather
+than reached for.
+
+Beside it, on the sign-in form, the same pass added a **resend offer that could
+never render**. It was guarded by `state.error.includes('not verified')`, and
+the API words that message *"Verify your email address before signing in."* —
+the substring is not in it. Nothing failed: the types were satisfied, the build
+was clean, the control was simply absent. `ActionState` now carries the API's
+stable `code` and the branch tests `code === 'EMAIL_NOT_VERIFIED'`, so rewording
+a sentence can no longer delete a control.
+
+This is the fifth defect in this engagement whose whole signature was *"compiles,
+builds, does nothing"*.

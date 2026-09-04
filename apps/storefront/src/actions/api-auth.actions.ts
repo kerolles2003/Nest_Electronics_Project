@@ -71,7 +71,13 @@ export async function loginAction(
   );
 
   if (!result.ok) {
-    return { error: customerMessage(result.error), fieldErrors: fieldErrorsOf(result.error) };
+    return {
+      error: customerMessage(result.error),
+      fieldErrors: fieldErrorsOf(result.error),
+      // So the form can offer a resend on EMAIL_NOT_VERIFIED without reading
+      // the prose. See the note on `ActionState.code`.
+      code: result.error.code,
+    };
   }
 
   // Tokens sit at the TOP of `data`, alongside `user`.
