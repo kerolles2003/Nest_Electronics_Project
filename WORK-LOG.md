@@ -6235,3 +6235,98 @@ statements:
 
 Two descriptors on the product, both pointing at assets the ledger never
 counted. Restored: **75 passed, 75 total**, zero residue.
+
+---
+
+# Part 6f — The dashboard aggregates are a trailing window, 30 days by default
+
+**Strays reaped before every run.** Checked before each test execution and each
+build; 0 orphaned runners found.
+
+## Why now, and why it is not only a performance fix
+
+Part 6c's own analysis said the revenue facet is a collection scan of every
+order on every dashboard load — roughly 250 MB through the cache at 500k
+orders — and filed it under "at scale". It is also the wrong product.
+
+**"Delivered revenue, last 30 days" is a question an operator has. "Since the
+shop opened" is a number that only goes up, cannot be compared to anything, and
+never tells anybody whether this month was good.** The dashboard is a screen
+somebody opens daily; an all-time total is a fact for an annual report.
+
+So the window is the default, not a filter somebody remembers to apply — and the
+scan is bounded as a consequence rather than as the goal.
+
+**The compound index is deliberately NOT taken.** A
+`{status, payment.status, pricing.grandTotal}` index costs a write on every
+order placement, forever, to serve a screen the window has already made cheap.
+It becomes worth revisiting when the trailing window itself is large enough to
+hurt — a fact about real volume rather than a guess about it.
+
+## The bound is on `placedAt`, and the label says so
+
+One `$match` at the head of the pipeline bounds all four facet branches with one
+index seek on `order_admin_queue` (`{placedAt: -1, _id: -1}`). `placedAt` is
+what that index leads on and the only order date indexed at all.
+
+The consequence, stated rather than buried: **revenue is recognised at DELIVERY,
+but the window is on PLACEMENT.** An order placed 32 days ago and delivered
+yesterday is outside the 30-day figure. Under COD the two dates are usually days
+apart, so the divergence is small — but it is real, so the label the server
+hands the console reads *"Orders placed in the last 30 days"*, never just "last
+30 days". A number with a wrong caption is worse than one with a long caption.
+
+Windowing on `shipment.deliveredAt` instead would need its own index and would
+give the revenue tile a different population from the status breakdown beside
+it. Worse trade.
+
+## What is windowed and what deliberately is not
+
+| Figure | Windowed | Why |
+|---|---|---|
+| `revenue.delivered`, `revenue.pipeline` | **yes** | the question is "recently" |
+| `orders.total`, `orders.byStatus` | **yes** | same population as the revenue facet |
+| `customers.withOrdersCount` | **yes** | becomes "ordered recently", which is the better question — the DTO and the card both say so |
+| `products.*`, `customers.total` | no | "how many active products are there" has no trailing-30-day version |
+| `customers.newThisWeek` | no | already its own period, named in the field |
+| **the admin console's queue tiles** | **no** | an order placed forty days ago and still awaiting confirmation is exactly the one an operator must not stop seeing |
+
+That last row is why the picker on screen carries the sentence *"Applies to
+revenue only. The queue counts are live and unbounded."* — the queue counts come
+from `GET /admin/orders/stats`, not from this endpoint, and they must stay
+unbounded.
+
+## The window comes back in the response
+
+`data.window` is `{ key, days, label, since }`, and **the console prints `label`
+verbatim**. The caption and the number come from one place; a screen that
+formats its own "last 30 days" beside a figure the server computed over 90 is a
+lie no test catches.
+
+A window the endpoint does not offer is a `400`, not a silent fall back to the
+default — a quietly-corrected parameter is a number with the wrong caption,
+which is the failure this whole change exists to avoid. The console drops an
+unrecognised `?window=` from a hand-edited URL before sending it, so the page
+still renders.
+
+## Money bug found and fixed on the way
+
+`/admin/customers` printed `` `EGP ${revenue.delivered.amount.toLocaleString()}` ``.
+`amount` is in **piastres**, so the card read "EGP 5,000" for fifty pounds. It
+now prints the server's `formatted`, which is the rule the dashboard page's own
+docstring already states: every money value crosses this boundary formatted, or
+the console and the invoice disagree about rounding.
+
+## Verification
+
+- 6 new tests in `test/orders/admin-dashboard-stats.spec.ts`; suite **15 passed,
+  15 total** (was 9). The behavioural one delivers an order, backdates its
+  `placedAt` by 60 days, and asserts it leaves the 30-day revenue, count and
+  status breakdown while all-time does not move.
+- Drift gate: detected the additive change, `openapi:export` re-run, artifact
+  committed, `openapi:check` now **OK**.
+- `tsc --noEmit` and ESLint clean on API and admin (pre-existing `any` warnings
+  only).
+- Turbopack production build of `apps/admin`: 19/19 routes.
+- **Browser-unverified**: the window picker, the revenue caption and the
+  customers cards have not been seen rendered in a browser.

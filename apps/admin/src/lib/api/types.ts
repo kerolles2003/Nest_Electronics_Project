@@ -246,10 +246,32 @@ export interface DashboardProducts {
 export interface DashboardCustomers {
   total: number;
   newThisWeek: number;
+  /** Customers who ordered INSIDE the window — not "have ever ordered". */
   withOrdersCount: number;
 }
 
+/** The windows the dashboard endpoint offers. A closed set, not a date range. */
+export const DASHBOARD_WINDOWS = ['30d', '90d', 'all'] as const;
+
+export type DashboardWindowKey = (typeof DASHBOARD_WINDOWS)[number];
+
+/**
+ * The period the order figures cover, as the SERVER reports it.
+ *
+ * `label` is printed verbatim and never re-derived here. A console that formats
+ * its own "last 30 days" beside a figure the server computed over 90 is a lie
+ * no test catches, and the caption is the only thing that makes a windowed
+ * number honest.
+ */
+export interface DashboardWindow {
+  key: DashboardWindowKey;
+  days: number | null;
+  label: string;
+  since: string | null;
+}
+
 export interface AdminDashboardStats {
+  window: DashboardWindow;
   revenue: DashboardRevenue;
   orders: DashboardOrders;
   products: DashboardProducts;

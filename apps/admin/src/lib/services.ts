@@ -4,6 +4,7 @@ import { ProductService } from '@nest/services'
 import { cache } from 'react'
 import { tryApi } from '@/lib/api/client'
 import * as api from '@/lib/api/endpoints'
+import type { DashboardWindowKey } from '@/lib/api/types'
 
 /**
  * ## Authentication moved to the API. Data has not.
@@ -115,8 +116,8 @@ export const getCachedBrands = cache(async () => {
  * complete order breakdown, active product counts, low stock items, and customer
  * statistics in a single server-side aggregation.
  */
-export async function getDashboardStats() {
-  const result = await tryApi(() => api.dashboardStats());
+export async function getDashboardStats(window?: DashboardWindowKey) {
+  const result = await tryApi(() => api.dashboardStats(window === undefined ? {} : { window }));
 
   if (result.ok) {
     const d = result.data.data;
@@ -130,6 +131,13 @@ export async function getDashboardStats() {
         low_stock_threshold: p.lowStockThreshold,
         sku: p.sku,
       })),
+      /*
+       * The window the SERVER applied, not the one that was asked for. They are
+       * the same today; they would stop being the same the moment a default
+       * moves, and the caption has to follow the numbers rather than the
+       * request.
+       */
+      window: d.window,
       revenue: d.revenue,
       orders: d.orders,
       products: d.products,
@@ -141,6 +149,9 @@ export async function getDashboardStats() {
     productCount: 0,
     customerCount: 0,
     lowStock: [],
+    // No window either: a caption for figures that could not be read would be
+    // a period label over a row of em dashes.
+    window: null,
     revenue: null,
     orders: null,
     products: null,

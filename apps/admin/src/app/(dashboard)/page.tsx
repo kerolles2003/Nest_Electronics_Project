@@ -2,6 +2,7 @@ import { requireAdmin, getDashboardStats, getRecentActivity } from '@/lib/servic
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { orderStatusCounts } from '@/lib/api/order-stats';
+import { DASHBOARD_WINDOWS, type DashboardWindowKey } from '@/lib/api/types';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import {
@@ -33,6 +34,23 @@ import {
  * `order_items`, which is discarded, and the API has no sales-ranking endpoint.
  * A panel that can only be filled from a table nobody trusts is better absent
  * than plausible.
+ *
+ * ## Revenue is a trailing window, 30 days by default
+ *
+ * "Delivered revenue, last 30 days" is a question an operator has. "Since the
+ * shop opened" is a number that only goes up and cannot be compared to
+ * anything. All-time is still one click away — and it is also the query that
+ * reads every order in the collection, so it is the right thing to ask for
+ * deliberately rather than the right default.
+ *
+ * The picker governs the REVENUE tile and nothing else, and says so. The queue
+ * counts beside it are deliberately unbounded: an order placed forty days ago
+ * and still awaiting confirmation is precisely the one an operator must not
+ * stop seeing because a period rolled over.
+ *
+ * The caption under the figure is the SERVER's `window.label`, printed
+ * verbatim. A screen that formats its own period label is a screen that can
+ * print "last 30 days" over a 90-day number.
  */
 import { StatusBadge, Card, CardHeader, CardTitle, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@nest/ui';
 
@@ -73,6 +91,77 @@ function formatRelativeTime(dateString: string) {
  */
 function formatNumber(value: number) {
   return value.toLocaleString('en-EG');
+}
+
+/* ------------------------------------------------------------------ */
+/*  The trailing window                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the operator picks between.
+ *
+ * The captions on the tiles are NOT written here — they come back from the
+ * server in `data.window.label`. These are only the names on the buttons, and
+ * they are short because a button is not a sentence.
+ */
+const WINDOW_LABELS: Record<DashboardWindowKey, string> = {
+  '30d': '30 days',
+  '90d': '90 days',
+  all: 'All time',
+};
+
+/**
+ * The window asked for, or `undefined` to take the server's default.
+ *
+ * An unrecognised `?window=` is dropped rather than passed on. The API would
+ * answer it with a 400, which is right for a client and wrong for a person who
+ * edited a URL: the dashboard should render.
+ */
+function requestedWindow(raw: string | string[] | undefined): DashboardWindowKey | undefined {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return DASHBOARD_WINDOWS.includes(value as DashboardWindowKey)
+    ? (value as DashboardWindowKey)
+    : undefined;
+}
+
+/**
+ * The picker, and the sentence that says what it governs.
+ *
+ * That sentence matters as much as the buttons. The queue tiles beside it —
+ * awaiting confirmation, ready to ship, delivery failed — are deliberately NOT
+ * windowed: an order placed forty days ago and still unconfirmed is exactly the
+ * one an operator must not stop seeing. So the picker names its own scope
+ * rather than letting the reader assume it covers the row.
+ */
+function WindowPicker({ active }: { active: DashboardWindowKey | null }) {
+  return (
+    <div className="flex flex-col items-start gap-1 md:items-end">
+      <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+        {DASHBOARD_WINDOWS.map((key) => {
+          const selected = key === active;
+
+          return (
+            <Link
+              key={key}
+              href={`/?window=${key}`}
+              aria-current={selected ? 'true' : undefined}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                selected
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-surface-high'
+              }`}
+            >
+              {WINDOW_LABELS[key]}
+            </Link>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-foreground-subtle">
+        Applies to revenue only. The queue counts are live and unbounded.
+      </p>
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -142,11 +231,16 @@ function ActivitySkeleton() {
 /*  Page                                                              */
 /* ------------------------------------------------------------------ */
 
-export default async function AdminPage() {
+export default async function AdminPage(props: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireAdmin();
 
+  const sp = await props.searchParams;
+  const window = requestedWindow(sp['window']);
+
   const [stats, orderCounts, recentOrders] = await Promise.all([
-    getDashboardStats(),
+    getDashboardStats(window),
     orderStatusCounts(),
     tryApi(() => api.listOrders({ limit: 8 })),
   ]);
@@ -171,14 +265,26 @@ export default async function AdminPage() {
       sub: stats.revenue
         ? `${stats.revenue.deliveredCount} paid · ${stats.revenue.pipeline.formatted} pipeline`
         : 'Counted at delivery',
-      caption: 'Net of returns: recognised at delivery, removed retroactively if returned.',
+      /*
+       * Two facts, and both are the server's rather than this file's.
+       *
+       * The window label says "orders placed in…" because the bound is on
+       * `placedAt` while revenue is recognised at delivery — an order placed 32
+       * days ago and delivered yesterday is outside a 30-day figure. Printing
+       * the server's string is what stops this caption drifting from the query
+       * that produced the number above it.
+       */
+      caption: stats.window
+        ? `${stats.window.label}. Net of returns — recognised at delivery, removed retroactively if returned.`
+        : 'Net of returns: recognised at delivery, removed retroactively if returned.',
     },
     {
       label: 'Total Orders',
       display: show(orderCounts.total),
       icon: ShoppingBag,
       color: 'primary' as const,
-      sub: 'Across every status',
+      // Explicitly all-time, so the picker above cannot be read as governing it.
+      sub: 'Across every status · all time',
     },
     {
       label: 'Awaiting confirmation',
@@ -234,10 +340,13 @@ export default async function AdminPage() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground font-heading">{getGreeting()}, Admin</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Here&apos;s what&apos;s happening with Nest Electronics today.</p>
         </div>
-        <Link href="/orders" className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-hover transition-colors shrink-0">
-          <ShoppingBag className="h-4 w-4" />
-          Manage Orders
-        </Link>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start shrink-0">
+          <WindowPicker active={stats.window?.key ?? null} />
+          <Link href="/orders" className="inline-flex h-fit items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-hover transition-colors shrink-0">
+            <ShoppingBag className="h-4 w-4" />
+            Manage Orders
+          </Link>
+        </div>
       </div>
 
       {/* Stats Grid */}

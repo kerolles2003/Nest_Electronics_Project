@@ -5,6 +5,12 @@ import { MoneyDto } from '../../../common/dto/money.dto';
 import { DEFAULT_LOCALE, type Locale, resolveText } from '../../../common/localization/locale';
 import { Product } from '../../catalog/infrastructure/schemas/product.schema';
 import { Role, User } from '../../users/infrastructure/schemas/user.schema';
+import {
+  DEFAULT_DASHBOARD_WINDOW,
+  dashboardWindowMatch,
+  resolveDashboardWindow,
+  type DashboardWindowKey,
+} from '../domain/dashboard-window';
 import { ORDER_STATUSES, OrderStatus, PaymentStatus } from '../domain/order-status';
 import { PIPELINE_STATUSES, revenueMatch } from '../domain/revenue';
 import { Order } from '../infrastructure/schemas/order.schema';
@@ -15,6 +21,7 @@ import {
   DashboardOrdersDto,
   DashboardProductsDto,
   DashboardRevenueDto,
+  DashboardWindowDto,
 } from '../presentation/dto/admin-dashboard-stats.dto';
 
 interface OrderFacetResult {
@@ -48,6 +55,25 @@ interface LowStockProductDoc {
  *
  * Orders in transit or awaiting confirmation are tracked BESIDE revenue as `pipeline`,
  * allowing operators to see cash collected vs. cash in courier pipeline.
+ *
+ * ## Every order figure is bounded by a trailing window, 30 days by default
+ *
+ * See `orders/domain/dashboard-window.ts` for the argument. In short: it is the
+ * better answer to the question an operator actually has, and it is what keeps
+ * this endpoint from reading the whole `orders` collection on every load —
+ * there is no `status` index for the facet to seek on, by deliberate design, so
+ * an unbounded facet is a collection scan.
+ *
+ * The window bounds the ORDERS aggregation and nothing else. Product and
+ * customer totals are statements about the world right now — "how many active
+ * products are there" does not have a trailing-30-day version — and the one
+ * customer figure that IS time-bounded, `newThisWeek`, carries its own period
+ * in its name.
+ *
+ * `customers.withOrdersCount` moves with the window, and that is intended: over
+ * 30 days it answers "how many customers ordered recently", which is a better
+ * question than "how many have ever ordered". The DTO says so, and the console
+ * prints the window beside it.
  */
 @Injectable()
 export class DashboardAdminService {
@@ -57,13 +83,25 @@ export class DashboardAdminService {
     @InjectModel(User.name) private readonly users: Model<User>,
   ) {}
 
-  async getStats(locale: Locale = DEFAULT_LOCALE): Promise<AdminDashboardStatsDto> {
+  async getStats(
+    locale: Locale = DEFAULT_LOCALE,
+    windowKey: DashboardWindowKey = DEFAULT_DASHBOARD_WINDOW,
+  ): Promise<AdminDashboardStatsDto> {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const window = resolveDashboardWindow(windowKey);
+    const windowMatch = dashboardWindowMatch(window);
 
     const [orderAggregation, productCounts, lowStockDocs, customerCounts] =
       await Promise.all([
         this.orders
           .aggregate<OrderFacetResult>([
+            /*
+             * ONE match, at the head, so all four branches share one index seek
+             * on `order_admin_queue` ({placedAt: -1, _id: -1}) instead of four
+             * scans of the collection. Empty for all-time, which the planner
+             * drops.
+             */
+            { $match: windowMatch },
             {
               $facet: {
                 delivered: [
@@ -212,7 +250,17 @@ export class DashboardAdminService {
       withOrdersCount,
     };
 
+    // 5. The window itself, so the console's caption and the numbers under it
+    //    come from the same place and cannot drift apart.
+    const windowDto: DashboardWindowDto = {
+      key: window.key,
+      days: window.days,
+      label: window.label,
+      since: window.since === null ? null : window.since.toISOString(),
+    };
+
     return {
+      window: windowDto,
       revenue,
       orders,
       products,

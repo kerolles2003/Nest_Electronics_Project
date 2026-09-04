@@ -7,6 +7,7 @@ import type {
   AdminOrder,
   AdminShippingRate,
   AuthUser,
+  DashboardWindowKey,
   Envelope,
   OrderQueueStats,
   OrderStatus,
@@ -228,9 +229,19 @@ export function checkSlugAvailability(params: {
  *
  * Revenue is recognized at DELIVERY (where payment.status = PAID),
  * and pipeline value is tracked alongside.
+ *
+ * The order figures are bounded by a trailing window — 30 days unless one is
+ * asked for. Omitting the parameter takes the server's default rather than
+ * restating it here: a default written in two places is a default that drifts.
+ * The window that was actually applied comes back in `data.window`, and its
+ * `label` is what the screen prints.
  */
-export function dashboardStats(): Promise<Envelope<AdminDashboardStats>> {
-  return apiFetch('/admin/dashboard/stats');
+export function dashboardStats(
+  params: { window?: DashboardWindowKey } = {},
+): Promise<Envelope<AdminDashboardStats>> {
+  const suffix = params.window === undefined ? '' : `?window=${params.window}`;
+
+  return apiFetch(`/admin/dashboard/stats${suffix}`);
 }
 
 // --- customers --------------------------------------------------------------

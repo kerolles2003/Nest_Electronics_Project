@@ -31,8 +31,19 @@ interface CustomersTableProps {
   stats: {
     total: number;
     newThisWeek: number;
+    /** Customers who ordered INSIDE the window — not "have ever ordered". */
     withOrders: number;
-    totalRevenue: number;
+    /**
+     * The SERVER's formatted money string, never an amount to format here.
+     *
+     * It used to be `revenue.delivered.amount` printed as
+     * `EGP ${amount.toLocaleString()}` — and `amount` is in PIASTRES, so a card
+     * reading "EGP 5,000" was 50 EGP. Money crosses this boundary formatted or
+     * it disagrees with the invoice.
+     */
+    revenueFormatted: string;
+    /** The period the two windowed figures cover, as the server labelled it. */
+    windowLabel: string | null;
   };
 }
 
@@ -81,11 +92,18 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
     });
   };
 
+  /*
+   * Two of these four are bounded by the dashboard's trailing window and two
+   * are not, so the two that are say so under the number. An unlabelled "With
+   * Orders" beside an unlabelled "Total Customers" invites the reader to divide
+   * one by the other, and over a 30-day window that ratio means something quite
+   * different from what it looks like.
+   */
   const statItems = [
-    { label: 'Total Customers', value: stats.total, icon: Users, color: 'primary' as const },
-    { label: 'New This Week', value: stats.newThisWeek, icon: UserPlus, color: 'success' as const },
-    { label: 'With Orders', value: stats.withOrders, icon: ShoppingBag, color: 'warning' as const },
-    { label: 'Total Revenue', value: `EGP ${stats.totalRevenue.toLocaleString('en-EG')}`, icon: CreditCard, color: 'primary' as const },
+    { label: 'Total Customers', value: stats.total, icon: Users, color: 'primary' as const, caption: 'All registered accounts' },
+    { label: 'New This Week', value: stats.newThisWeek, icon: UserPlus, color: 'success' as const, caption: 'Registered in the last 7 days' },
+    { label: 'Ordered', value: stats.withOrders, icon: ShoppingBag, color: 'warning' as const, caption: stats.windowLabel },
+    { label: 'Delivered Revenue', value: stats.revenueFormatted, icon: CreditCard, color: 'primary' as const, caption: stats.windowLabel },
   ];
 
   return (
@@ -103,6 +121,9 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
               </div>
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{item.label}</p>
               <p className="text-lg font-bold tracking-tight text-foreground mt-0.5">{item.value}</p>
+              {item.caption && (
+                <p className="text-[10px] text-foreground-subtle mt-0.5 leading-tight">{item.caption}</p>
+              )}
             </div>
           );
         })}

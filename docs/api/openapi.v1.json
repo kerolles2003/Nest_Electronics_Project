@@ -6643,9 +6643,25 @@
     },
     "/api/v1/admin/dashboard/stats": {
       "get": {
-        "description": "Returns consolidated system metrics for the admin console dashboard:\n- Revenue recognised at DELIVERY (where payment.status = PAID).\n- Pipeline value for orders in-flight (PLACED, CONFIRMED, SHIPPED, DELIVERY_FAILED).\n- Orders count breakdown across all 7 lifecycle statuses.\n- Products summary: active total, low-stock count, and top low-stock items.\n- Customers summary: total registered, new accounts this week, and count with orders.",
+        "description": "Returns consolidated system metrics for the admin console dashboard:\n- Revenue recognised at DELIVERY (where payment.status = PAID).\n- Pipeline value for orders in-flight (PLACED, CONFIRMED, SHIPPED, DELIVERY_FAILED).\n- Orders count breakdown across all 7 lifecycle statuses.\n- Products summary: active total, low-stock count, and top low-stock items.\n- Customers summary: total registered, new accounts this week, and count with orders.\n\nEvery ORDER figure is bounded by a trailing window — **30 days by default**, with\n`?window=90d` and `?window=all` available. The window comes back in `data.window`,\nwhose `label` is what a console should print: the bound is on `placedAt`, so it\nreads \"orders placed in the last 30 days\" rather than implying the delivery date\nit is not.\n\nProduct and customer TOTALS are current-state and are NOT windowed — a trailing\n30-day version of \"how many active products are there\" is not a question.\n`customers.withOrdersCount` does move with the window.",
         "operationId": "AdminDashboardController_stats_v1",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "window",
+            "required": false,
+            "in": "query",
+            "description": "Trailing period for the order figures. Defaults to 30 days — all-time is available and is deliberately not the default: it is both the less useful answer and the expensive query.",
+            "schema": {
+              "default": "30d",
+              "type": "string",
+              "enum": [
+                "30d",
+                "90d",
+                "all"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -12026,6 +12042,43 @@
           "reason"
         ]
       },
+      "DashboardWindowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "30d",
+              "90d",
+              "all"
+            ],
+            "example": "30d"
+          },
+          "days": {
+            "type": "object",
+            "example": 30,
+            "nullable": true,
+            "description": "Trailing days, or null for all-time."
+          },
+          "label": {
+            "type": "string",
+            "example": "Orders placed in the last 30 days",
+            "description": "Print this verbatim. It says \"orders placed\" because the bound is on placedAt while revenue is recognised at delivery — an order placed 32 days ago and delivered yesterday is outside a 30-day figure."
+          },
+          "since": {
+            "type": "object",
+            "example": "2026-08-05T00:00:00.000Z",
+            "nullable": true,
+            "description": "Lower bound on placedAt, or null for all-time."
+          }
+        },
+        "required": [
+          "key",
+          "days",
+          "label",
+          "since"
+        ]
+      },
       "DashboardRevenueDto": {
         "type": "object",
         "properties": {
@@ -12072,7 +12125,7 @@
             "type": "number",
             "example": 60,
             "minimum": 0,
-            "description": "Total orders placed across all statuses."
+            "description": "Orders placed inside the window, across all statuses."
           },
           "byStatus": {
             "description": "Complete breakdown by lifecycle status (all 7 statuses present, 0 if empty).",
@@ -12183,7 +12236,7 @@
             "type": "number",
             "example": 45,
             "minimum": 0,
-            "description": "Unique customers who have placed at least one order."
+            "description": "Unique customers who placed an order INSIDE the window. Over the default 30 days this is \"customers who ordered recently\", not \"customers who have ever ordered\" — ask for window=all if that is the question."
           }
         },
         "required": [
@@ -12195,6 +12248,14 @@
       "AdminDashboardStatsDto": {
         "type": "object",
         "properties": {
+          "window": {
+            "description": "The period the revenue, orders and withOrdersCount figures cover. Product and customer totals are current-state and are not windowed.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DashboardWindowDto"
+              }
+            ]
+          },
           "revenue": {
             "$ref": "#/components/schemas/DashboardRevenueDto"
           },
@@ -12209,6 +12270,7 @@
           }
         },
         "required": [
+          "window",
           "revenue",
           "orders",
           "products",

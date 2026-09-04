@@ -50,11 +50,24 @@ export default async function CustomersPage(props: {
   }
 
   const dStats = dashboardRes.ok ? dashboardRes.data.data : null;
+
+  /*
+   * Two of these come from the dashboard aggregate and are therefore bounded by
+   * its trailing window — 30 days by default. `withOrdersCount` becomes
+   * "customers who ordered recently" rather than "who have ever ordered", and
+   * the revenue figure is the same window's. Both carry the server's own label
+   * into the card rather than being presented as lifetime totals.
+   *
+   * The revenue string is the server's `formatted`, not its `amount`. `amount`
+   * is in piastres, and this screen used to print it with an "EGP" in front —
+   * a card reading "EGP 5,000" for fifty pounds.
+   */
   const stats = {
     total: dStats?.customers.total ?? meta.total,
     newThisWeek: dStats?.customers.newThisWeek ?? 0,
     withOrders: dStats?.customers.withOrdersCount ?? 0,
-    totalRevenue: dStats?.revenue.delivered.amount ?? 0,
+    revenueFormatted: dStats?.revenue.delivered.formatted ?? '—',
+    windowLabel: dStats?.window.label ?? null,
   };
 
   return (

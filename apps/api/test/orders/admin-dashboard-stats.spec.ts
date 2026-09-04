@@ -310,6 +310,152 @@ describe('GET /admin/dashboard/stats structural contracts', () => {
   });
 });
 
+describe('the trailing window', () => {
+  /*
+   * Why the default is 30 days and not all-time.
+   *
+   * The product reason first: "delivered revenue, last 30 days" is a question
+   * an operator has, and "since the shop opened" is a number that only goes up
+   * and cannot be compared to anything. The cost reason second: the revenue
+   * facet has no `status` index to seek on — `orders` deliberately carries
+   * {placedAt, _id} rather than {status, placedAt}, so the unfiltered work
+   * queue needs no in-memory sort — which means an unbounded facet reads every
+   * order in the collection on every dashboard load.
+   *
+   * The bound is on `placedAt`, which is the field the index leads on and the
+   * only order date indexed at all. Revenue is recognised at DELIVERY, so the
+   * two differ for an order placed outside the window and delivered inside it.
+   * That is why the label the server hands the console says "orders placed".
+   */
+
+  function statsFor(window?: string): request.Test {
+    const call = http()
+      .get('/api/v1/admin/dashboard/stats')
+      .set(...bearer(staff));
+
+    return window === undefined ? call : call.query({ window });
+  }
+
+  it('defaults to 30 days and says so, rather than leaving the console to guess', async () => {
+    const response = await statsFor().expect(200);
+
+    expect(response.body.data.window).toMatchObject({ key: '30d', days: 30 });
+    expect(response.body.data.window.label).toBe('Orders placed in the last 30 days');
+
+    // A real bound, roughly 30 days back — the console prints the label, but
+    // the caption and the filter have to be the same fact.
+    const since = new Date(response.body.data.window.since as string).getTime();
+    const expected = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(since - expected)).toBeLessThan(60_000);
+  });
+
+  it('reports all-time as unbounded rather than as a very large number of days', async () => {
+    const response = await statsFor('all').expect(200);
+
+    expect(response.body.data.window).toMatchObject({
+      key: 'all',
+      days: null,
+      since: null,
+      label: 'All time',
+    });
+  });
+
+  it('refuses a window it does not offer, instead of quietly using the default', async () => {
+    /*
+     * A silently-corrected parameter is a number with the wrong caption, which
+     * is the failure this whole change exists to avoid.
+     */
+    await statsFor('7d').expect(400);
+    await statsFor('30').expect(400);
+  });
+
+  it('EXCLUDES an order older than the window and includes it in all-time', async () => {
+    /*
+     * The behaviour, not the label. An order delivered and paid, then backdated
+     * past the bound: gone from the 30-day figures, still in all-time.
+     *
+     * Backdating in the database rather than waiting 31 days is the only way to
+     * test a trailing window, and `placedAt` is exactly the field the aggregation
+     * filters on.
+     */
+    const { id: orderId, grandTotal } = await placeOrder(customer, testProduct, 1);
+
+    await http()
+      .post(`/api/v1/admin/orders/${orderId}/confirm`)
+      .set(...bearer(staff))
+      .expect(200);
+    await http()
+      .post(`/api/v1/admin/orders/${orderId}/ship`)
+      .set(...bearer(staff))
+      .send({ carrier: 'Bosta', trackingNumber: `BOS-${RUN_ID}` })
+      .expect(200);
+    await http()
+      .post(`/api/v1/admin/orders/${orderId}/deliver`)
+      .set(...bearer(staff))
+      .expect(200);
+
+    const insideWindow = (await statsFor().expect(200)).body.data;
+    const allTimeBefore = (await statsFor('all').expect(200)).body.data;
+
+    await orders
+      .updateOne(
+        { _id: new Types.ObjectId(orderId) },
+        { $set: { placedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000) } },
+      )
+      .exec();
+
+    const afterBackdating = (await statsFor().expect(200)).body.data;
+    const allTimeAfter = (await statsFor('all').expect(200)).body.data;
+
+    // Out of the 30-day figures entirely: the money, the count, and the row in
+    // the status breakdown.
+    expect(afterBackdating.revenue.delivered.amount).toBe(
+      insideWindow.revenue.delivered.amount - grandTotal,
+    );
+    expect(afterBackdating.revenue.deliveredCount).toBe(insideWindow.revenue.deliveredCount - 1);
+    expect(afterBackdating.orders.total).toBe(insideWindow.orders.total - 1);
+
+    // All-time did not move, because nothing about the order changed except a
+    // date the all-time query does not look at.
+    expect(allTimeAfter.revenue.delivered.amount).toBe(allTimeBefore.revenue.delivered.amount);
+    expect(allTimeAfter.orders.total).toBe(allTimeBefore.orders.total);
+
+    // And all-time still holds it, which is what makes the default safe to be a
+    // window: nothing is hidden, it is one click away.
+    expect(allTimeAfter.revenue.delivered.amount).toBeGreaterThanOrEqual(
+      afterBackdating.revenue.delivered.amount + grandTotal,
+    );
+  });
+
+  it('leaves product and customer TOTALS alone — they are not time-bounded questions', async () => {
+    const thirty = (await statsFor().expect(200)).body.data;
+    const all = (await statsFor('all').expect(200)).body.data;
+
+    // "How many active products are there" has no trailing-30-day version, and
+    // neither does "how many registered customers". `withOrdersCount` is the
+    // one customer figure that DOES move, which is why it is not asserted here.
+    expect(thirty.products.total).toBe(all.products.total);
+    expect(thirty.products.lowStockCount).toBe(all.products.lowStockCount);
+    expect(thirty.products.outOfStockCount).toBe(all.products.outOfStockCount);
+    expect(thirty.customers.total).toBe(all.customers.total);
+    expect(thirty.customers.newThisWeek).toBe(all.customers.newThisWeek);
+  });
+
+  it('still returns all 7 statuses inside a window, including the ones with nothing in them', async () => {
+    /*
+     * A window narrows the population, not the shape. A breakdown that dropped
+     * empty statuses would make a quiet month look like a broken endpoint.
+     */
+    const response = await statsFor('90d').expect(200);
+
+    expect(response.body.data.window).toMatchObject({ key: '90d', days: 90 });
+    expect(response.body.data.orders.byStatus).toHaveLength(7);
+
+    const returned = response.body.data.orders.byStatus.map((row: { status: string }) => row.status);
+    for (const status of ORDER_STATUSES) expect(returned).toContain(status);
+  });
+});
+
 describe('Revenue counted at DELIVERY (ADR-ORDER-002)', () => {
   it('recognises revenue only after transition to DELIVERED, tracking in-flight orders as pipeline', async () => {
     // 1. Capture baseline metrics
