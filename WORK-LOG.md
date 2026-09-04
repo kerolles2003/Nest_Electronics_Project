@@ -7184,3 +7184,29 @@ and nothing else. Browsing the catalogue no longer enters middleware at all.
 Both journey specs asserted the old destination. They were first widened to
 accept `/` **or** `/account/orders`, which asserts nothing about the change that
 moved it; they now assert the one real destination.
+
+## Checkout sent you away and gave you no way back
+
+With an empty address book, checkout showed "Add a delivery address" and a link
+into the account area. That link was the end of the flow: the order being placed
+was nowhere on screen, nothing said what it had been for, and getting back meant
+knowing to press Back twice.
+
+The link now carries `?redirect=/checkout`; the addresses page passes it into
+`AddressBook`, which shows what it is for, offers "Back to checkout" once an
+address exists, puts "Deliver here" on each saved card (`/checkout?address=<id>`
+is a parameter checkout already reads), and labels the submit button "Save
+address & proceed to checkout". `createAddressAction` follows the field after
+revalidating, through `isSafeRedirect`.
+
+The form was also rewritten — a two-column grid, icons, placeholders, a real
+empty state, per-field labels bound with `htmlFor`, and the first address
+defaulting to the default. This is the polish half of the pass and is committed
+as it stands rather than picked apart.
+
+**One thing was lost in that rewrite and is restored here**: `GovernorateField`
+carried a docstring explaining why it is a closed list rather than a text box —
+D-8, the shipping rate table is seeded one row per governorate with no fallback,
+so an unrecognised value reaches a rate lookup with nothing to find. The `select`
+survived the redesign; the paragraph saying why it must stay a `select` did not.
+That is the more fragile half.

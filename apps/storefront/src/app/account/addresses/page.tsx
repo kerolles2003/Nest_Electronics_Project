@@ -30,16 +30,27 @@ import { AddressBook } from '@/components/account/AddressBook';
  */
 export const dynamic = 'force-dynamic';
 
-export default async function AddressesPage() {
+export default async function AddressesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ redirect?: string }>;
+}) {
+  const params = await searchParams;
+  const redirectTarget = params?.redirect;
+
+  const currentPath = redirectTarget
+    ? `${ROUTES.account.addresses}?redirect=${encodeURIComponent(redirectTarget)}`
+    : ROUTES.account.addresses;
+
   if ((await readSession()) === null) {
-    redirect(`${ROUTES.login}?redirect=${encodeURIComponent(ROUTES.account.addresses)}`);
+    redirect(`${ROUTES.login}?redirect=${encodeURIComponent(currentPath)}`);
   }
 
   const result = await tryApi(() => api.listAddresses());
 
   if (!result.ok) {
     if (result.error.kind === 'unauthenticated') {
-      redirect(`${ROUTES.login}?redirect=${encodeURIComponent(ROUTES.account.addresses)}`);
+      redirect(`${ROUTES.login}?redirect=${encodeURIComponent(currentPath)}`);
     }
 
     return (
@@ -54,5 +65,5 @@ export default async function AddressesPage() {
     );
   }
 
-  return <AddressBook addresses={result.data.data} />;
+  return <AddressBook addresses={result.data.data} redirectTo={redirectTarget} />;
 }

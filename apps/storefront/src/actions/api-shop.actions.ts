@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { isSafeRedirect } from '@/lib/safe-redirect';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { customerMessage } from '@/lib/api/errors';
@@ -108,6 +109,7 @@ export async function createAddressAction(
   formData: FormData,
 ): Promise<ActionState> {
   const postalCode = String(formData.get('postalCode') ?? '').trim();
+  const redirectTo = String(formData.get('redirectTo') ?? '').trim();
 
   const result = await tryApi(() =>
     api.createAddress({
@@ -127,6 +129,22 @@ export async function createAddressAction(
   if (!result.ok) return failure(result.error);
 
   revalidateAddresses();
+
+  /*
+   * Back to where the customer was, if they came from somewhere.
+   *
+   * Checkout sends them here when they have no address, and before this they
+   * arrived in the account area with the order they were in the middle of
+   * placing nowhere on screen and no way back to it. The field is checked by
+   * the same rule as `?redirect=` on sign-in, from the same module, because it
+   * is the same attacker-controlled value in a different envelope.
+   *
+   * `redirect()` throws, so it must stay outside `tryApi` — and after
+   * `revalidateAddresses()`, or the page being returned to would be served
+   * from a cache that does not have the address just added.
+   */
+  if (isSafeRedirect(redirectTo)) redirect(redirectTo);
+
   return emptyActionState;
 }
 

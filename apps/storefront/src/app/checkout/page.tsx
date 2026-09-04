@@ -97,7 +97,10 @@ export default async function CheckoutPage({
           icon={MapPin}
           heading="Add a delivery address"
           body="We need somewhere to send your order before you can place it."
-          cta={{ href: ROUTES.account.addresses, label: 'Add an address' }}
+          cta={{
+            href: `${ROUTES.account.addresses}?redirect=${encodeURIComponent(ROUTES.checkout)}`,
+            label: 'Add an address',
+          }}
         />
       </Shell>
     );
