@@ -7240,3 +7240,26 @@ a sentence can no longer delete a control.
 
 This is the fifth defect in this engagement whose whole signature was *"compiles,
 builds, does nothing"*.
+
+## Not one browser test had ever rendered a product image
+
+`imageUrl()` returns `null` without `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`, and the
+Playwright environment did not set one. Every product in every spec therefore
+drew its letter placeholder, and **no browser test in the suite had ever seen a
+product image**. That is how `ProductCard` could ship fading its image in on an
+`onLoad` that had already fired before hydration — loaded, decoded, laid out,
+and drawn at `opacity: 0` — through ninety-six passing tests.
+
+The config now supplies a cloud name that does not exist, and the browser-health
+fixture answers every request to it from `apps/api/dev-media`. It **fulfils
+rather than forwards**, so no test reaches the real CDN, and a missing file
+answers with a 1x1 transparent GIF rather than a 404, so the suite does not
+depend on anyone having run `media:placeholders` first. Layout is not the point
+in that case; the `<img>` existing and completing is, and that is what makes
+"the image loaded and is invisible" an assertable condition at all.
+
+`placeholder-media.mjs` also stopped resolving its own directory from
+`import.meta.url`. Playwright transpiles the module to CommonJS when the config
+imports it, where `import.meta` is a syntax error and the whole suite fails to
+load. Both callers run from `apps/storefront`, so the working directory is the
+one thing they agree on.

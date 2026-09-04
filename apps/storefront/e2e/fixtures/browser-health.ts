@@ -1,4 +1,5 @@
 import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
+import { servePlaceholderMedia } from '../qa/placeholder-media.mjs';
 
 /**
  * The browser-health fixture (F-14).
@@ -247,6 +248,19 @@ async function install(page: Page): Promise<BrowserHealth> {
   const record = (kind: HealthProblem['kind'], detail: string): void => {
     problems.push({ kind, detail, at: page.url() });
   };
+
+  /*
+   * Product images resolve, in every spec.
+   *
+   * `playwright.config.ts` gives the storefront a cloud name so `imageUrl()`
+   * stops returning `null`; this answers the resulting requests locally. Before
+   * the pair of them, no browser test in the suite had ever rendered a product
+   * image — which is exactly why a card that loaded every image and then drew
+   * it at `opacity: 0` passed 96 tests.
+   *
+   * It fulfils rather than forwards, so no test ever reaches the real CDN.
+   */
+  await servePlaceholderMedia(page);
 
   await page.addInitScript(REJECTION_REPORTER);
 

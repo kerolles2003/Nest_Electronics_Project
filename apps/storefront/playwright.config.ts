@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { API_BASE_URL, BASE_URL, HOST, PORT, SCRATCH_DATABASE, SCRATCH_SUITE } from './e2e/origin';
+import { PLACEHOLDER_CLOUD_NAME } from './e2e/qa/placeholder-media.mjs';
 
 /**
  * Browser end-to-end configuration.
@@ -198,6 +199,21 @@ export default defineConfig({
          * no second place for it to drift from.
          */
         DEV_ORIGIN_HOST: HOST,
+        /**
+         * So that product images EXIST.
+         *
+         * `imageUrl()` returns `null` without a cloud name, so every product in
+         * the suite rendered its letter placeholder and **not one browser test
+         * had ever rendered a product image**. That is how a card could ship
+         * with every image at `opacity: 0` — loaded, decoded, laid out and
+         * invisible — without a single test noticing.
+         *
+         * The cloud does not exist; `browser-health.ts` answers every request
+         * to it from `apps/api/dev-media`, falling back to a 1x1 pixel so the
+         * suite never depends on those files having been generated and never
+         * reaches the real network.
+         */
+        NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: PLACEHOLDER_CLOUD_NAME,
         /*
          * A bigger heap for `next dev`.
          *

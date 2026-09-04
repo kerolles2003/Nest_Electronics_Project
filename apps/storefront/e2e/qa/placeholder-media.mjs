@@ -20,11 +20,18 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const DEV_MEDIA = join(HERE, '..', '..', '..', 'api', 'dev-media');
+/**
+ * Resolved from the working directory, NOT from `import.meta.url`.
+ *
+ * Playwright transpiles this file to CommonJS when the config imports it, and
+ * `import.meta` is a syntax error there — the whole suite failed to load. Both
+ * callers run from `apps/storefront` (the QA scripts by convention, Playwright
+ * because that is where its config lives), so the working directory is the one
+ * thing they agree on.
+ */
+const DEV_MEDIA = join(process.cwd(), '..', 'api', 'dev-media');
 
 /** The value the storefront must be started with for the URLs to be built. */
 export const PLACEHOLDER_CLOUD_NAME = 'dev-placeholders';
@@ -44,6 +51,21 @@ const MIME = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
 };
+
+/**
+ * A 1x1 transparent GIF, for when no generated placeholder exists.
+ *
+ * The e2e suite installs this route so that product images RESOLVE — that is
+ * what makes "the image loaded and is invisible" an assertable condition. It
+ * must not depend on anyone having run `media:placeholders` first, and it must
+ * never fall through to the real network, so a missing file answers with a
+ * valid image instead of a 404. Layout is not the point in that case; the
+ * `<img>` existing and completing is.
+ */
+const ONE_PIXEL = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+  'base64',
+);
 
 /**
  * Installs the route on a page or context.
@@ -86,8 +108,10 @@ export async function servePlaceholderMedia(target) {
       });
     } catch {
       await route.fulfill({
-        status: 404,
-        body: `no placeholder for ${publicId} — run \`pnpm --filter api media:placeholders\``,
+        status: 200,
+        contentType: 'image/gif',
+        headers: { 'x-placeholder': `missing:${publicId}` },
+        body: ONE_PIXEL,
       });
     }
   };
