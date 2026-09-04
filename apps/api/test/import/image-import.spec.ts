@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { Model } from 'mongoose';
@@ -11,9 +11,11 @@ import { AppModule } from '../../src/app.module';
 import { mediaConfig, type MediaConfig } from '../../src/config/media.config';
 import { ImageImporter } from '../../src/database/import/image-importer';
 import { ImportRunner } from '../../src/database/import/import-runner';
+import { TransactionService } from '../../src/database/transaction.service';
 import { validateProfile, type MappingProfile } from '../../src/database/import/mapping-profile';
 import { MediaService } from '../../src/modules/media/application/media.service';
 import { MediaStoragePort } from '../../src/modules/media/application/ports/media-storage.port';
+import { MediaAssetRepository } from '../../src/modules/media/infrastructure/repositories/media-asset.repository';
 import {
   MediaAsset,
   type MediaAssetLean,
@@ -103,7 +105,10 @@ function runnerWithImages(): ImportRunner {
       categories: app.get<Model<Category>>(getModelToken(Category.name)),
       brands: app.get<Model<Brand>>(getModelToken(Brand.name)),
     },
-    new ImageImporter(media, config, join(folder, 'catalogue.csv')),
+    {
+      importer: new ImageImporter(media, config, join(folder, 'catalogue.csv')),
+      transactions: app.get(TransactionService),
+    },
   );
 }
 
@@ -240,6 +245,57 @@ describe('what it uploads', () => {
       .exec();
 
     expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.refCount === 1)).toBe(true);
+  });
+
+  it('writes the descriptors and the counts in ONE commit, or neither', async () => {
+    /*
+     * The same defect `ProductImageService.attach` had, on the path the owner's
+     * real catalogue arrives on.
+     *
+     * The product write and the `$inc`s that follow it used to be separate
+     * statements. An interruption between them leaves the product REFERENCING
+     * assets whose `refCount` is still 0 — which is the state
+     * `DELETE /admin/media` destroys from and the state the reconciliation
+     * report calls safe to clean up. Ordering could not fix it: writing the
+     * product first only decides WHICH half is lost.
+     *
+     * A crash cannot be scheduled, so the thing a crash would cause is injected.
+     */
+    const ledger = app.get(MediaAssetRepository);
+    const spy = jest.spyOn(ledger, 'retain').mockRejectedValue(new Error('ledger unavailable'));
+
+    let report;
+    try {
+      report = await run(csv(`${SKU_PREFIX}-R,Widget R ${RUN_ID},tools,199.00,10,one.jpg;two.png\n`));
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(report.rows[0]?.outcome).toBe('errored');
+
+    // The product exists — it is created before the images are touched — and
+    // holds NO descriptors. Before the transaction it held two, each pointing
+    // at an asset the ledger had never counted.
+    const product = await productBySku(`${SKU_PREFIX}-R`);
+    expect(product.images).toHaveLength(0);
+
+    // And the uploads were rolled back rather than left in the account, which
+    // is only safe BECAUSE the counts rolled back with them.
+    expect(await assets.countDocuments({ publicId: new RegExp(`^${config.folderRoot}/`) }).exec()).toBe(0);
+    expect(await storage.list(config.folderRoot)).toHaveLength(0);
+
+    // Re-runnable: the product has no images, so a second run imports them.
+    await run(csv(`${SKU_PREFIX}-R,Widget R ${RUN_ID},tools,199.00,10,one.jpg;two.png\n`));
+
+    const retried = await productBySku(`${SKU_PREFIX}-R`);
+    expect(retried.images).toHaveLength(2);
+
+    const rows = await assets
+      .find({ publicId: { $in: retried.images.map((image) => image.publicId) } })
+      .lean<MediaAssetLean[]>()
+      .exec();
+
     expect(rows.every((row) => row.refCount === 1)).toBe(true);
   });
 });

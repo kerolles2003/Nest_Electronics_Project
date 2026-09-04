@@ -14,6 +14,7 @@ import { AppModule } from '../../src/app.module';
 import { RefreshToken } from '../../src/modules/auth/infrastructure/schemas/refresh-token.schema';
 import { ImageImporter } from '../../src/database/import/image-importer';
 import { ImportRunner } from '../../src/database/import/import-runner';
+import { TransactionService } from '../../src/database/transaction.service';
 import type { RowResult } from '../../src/database/import/import-report';
 import { validateProfile, type MappingProfile } from '../../src/database/import/mapping-profile';
 import { Brand } from '../../src/modules/catalog/infrastructure/schemas/brand.schema';
@@ -544,7 +545,10 @@ suite('the media pipeline, against the real Cloudinary account', () => {
           categories: app.get<Model<Category>>(getModelToken(Category.name)),
           brands: app.get<Model<Brand>>(getModelToken(Brand.name)),
         },
-        new ImageImporter(app.get(MediaService), config, join(folder, 'catalogue.csv')),
+        {
+          importer: new ImageImporter(app.get(MediaService), config, join(folder, 'catalogue.csv')),
+          transactions: app.get(TransactionService),
+        },
       );
 
       const report = await runner.run({

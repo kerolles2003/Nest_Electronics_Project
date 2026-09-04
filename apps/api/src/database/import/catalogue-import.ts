@@ -14,6 +14,7 @@ import { ImportRunner } from './import-runner';
 import { countByOutcome, renderReport } from './import-report';
 import { ProfileError, validateProfile } from './mapping-profile';
 import { ImageImporter } from './image-importer';
+import { TransactionService } from '../transaction.service';
 import { MediaService } from '../../modules/media/application/media.service';
 
 /**
@@ -189,7 +190,13 @@ async function main(): Promise<void> {
      * fail because of it.
      */
     const images = args.withImages
-      ? new ImageImporter(app.get(MediaService), media, args.file)
+      ? {
+          importer: new ImageImporter(app.get(MediaService), media, args.file),
+          // The product write and the reference counts it makes true commit
+          // together, or an interrupted run leaves a photograph attached at
+          // refCount 0 — deletable while in use.
+          transactions: app.get(TransactionService),
+        }
       : undefined;
 
     const runner = new ImportRunner(

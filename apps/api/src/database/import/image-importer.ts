@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { AppException } from '../../common/errors/app.exception';
 import { readFileSync } from 'node:fs';
 import { isAbsolute, extname, resolve as resolvePath, dirname } from 'node:path';
-import type { Types } from 'mongoose';
+import type { ClientSession, Types } from 'mongoose';
 import { attach } from '../../modules/media/application/image-collection';
 import type { MediaService } from '../../modules/media/application/media.service';
 import type { MediaConfig } from '../../config/media.config';
@@ -177,17 +177,30 @@ export class ImageImporter {
   }
 
   /**
-   * Records the product's reference to each asset.
+   * Records the product's reference to each asset, in the caller's transaction.
    *
-   * Called only after the product document has been written. Reference counting
-   * is what makes `DELETE /admin/media` refuse to destroy an image a live page
-   * is showing, and what keeps the reconciliation report from offering one for
-   * cleanup — so an attached asset left at zero references is not a cosmetic
-   * gap, it is a photograph waiting to be deleted by a tool doing its job.
+   * Reference counting is what makes `DELETE /admin/media` refuse to destroy an
+   * image a live page is showing, and what keeps the reconciliation report from
+   * offering one for cleanup — so an attached asset left at zero references is
+   * not a cosmetic gap, it is a photograph waiting to be deleted by a tool
+   * doing its job.
+   *
+   * ## Why the session is required here and optional on `MediaService`
+   *
+   * Being called "only after the product document has been written" was the
+   * whole of the guarantee, and it was never enough: the write can land and one
+   * of these `$inc`s not, which leaves an asset the product REFERENCES at
+   * `refCount: 0` — the exact state `destroy` proceeds from. The same defect
+   * `ProductImageService.attach` had, on the path the owner's real catalogue
+   * arrives on.
+   *
+   * So the runner opens one transaction around the product write and this loop,
+   * and the parameter is not optional: there is no correct way to call this
+   * outside the transaction that wrote the images it is counting.
    */
-  async retainAll(publicIds: readonly string[]): Promise<void> {
+  async retainAll(publicIds: readonly string[], session: ClientSession): Promise<void> {
     for (const publicId of publicIds) {
-      await this.media.retain(publicId);
+      await this.media.retain(publicId, session);
     }
   }
 

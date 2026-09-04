@@ -1,5 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import { Logger } from '@nestjs/common';
+import type { TransactionService } from '../transaction.service';
 import type { ImageImporter, ImageImportResult } from './image-importer';
 import type { Model, Types } from 'mongoose';
 import { Brand } from '../../modules/catalog/infrastructure/schemas/brand.schema';
@@ -50,8 +51,18 @@ export class ImportRunner {
      * exactly as it did before images existed — an `imagePaths` column is
      * simply not acted on — which is what keeps the default path free of any
      * dependency on a media provider being configured.
+     *
+     * The importer and the transaction service arrive TOGETHER, in one object,
+     * so that "importing images without a transaction to write them in" is not
+     * a state this class can be constructed in. The product write and the
+     * reference counts that follow it have to commit together — see
+     * `ImageImporter.retainAll` — and an optional second parameter would have
+     * made forgetting it the easy path.
      */
-    private readonly images?: ImageImporter,
+    private readonly images?: {
+      readonly importer: ImageImporter;
+      readonly transactions: TransactionService;
+    },
   ) {}
 
   async run(options: {
@@ -370,6 +381,10 @@ export class ImportRunner {
       return undefined;
     }
 
+    // Bound once. The narrowing on `this.images` does not survive into the
+    // transaction callback below, and re-asserting it there would be noise.
+    const media = this.images;
+
     const paths = Array.isArray(input.mapped.imagePaths)
       ? (input.mapped.imagePaths as string[])
       : [];
@@ -382,7 +397,7 @@ export class ImportRunner {
       return { uploaded: 0, skipped: paths.length, failures: [] };
     }
 
-    const { images, result } = await this.images.importFor({
+    const { images, result } = await media.importer.importFor({
       productId,
       paths,
       existing: existingImages,
@@ -392,24 +407,42 @@ export class ImportRunner {
       const publicIds = (images as { publicId: string }[]).map((image) => image.publicId);
 
       try {
-        await this.models.products.updateOne({ _id: productId }, { $set: { images } }).exec();
+        /*
+         * The descriptors and the reference counts, in ONE commit.
+         *
+         * Ordering alone was the rule here and it was never sufficient: writing
+         * the product first means a failed write leaves nothing referenced, but
+         * it says nothing about the opposite half — the write landing and a
+         * `$inc` not, which leaves an asset the product REFERENCES at
+         * `refCount: 0`. That is the state `DELETE /admin/media` destroys from
+         * and the state the reconciliation report calls safe to clean up, and
+         * this is the path the owner's real catalogue arrives on.
+         *
+         * Nothing external is inside the transaction: every upload already
+         * happened in `importFor` above, and the rollback that destroys them is
+         * below, outside it (CONSISTENCY-MODEL.md §7).
+         */
+        await media.transactions.run(async (session) => {
+          await this.models.products
+            .updateOne({ _id: productId }, { $set: { images } }, { session })
+            .exec();
+
+          await media.importer.retainAll(publicIds, session);
+        });
       } catch (error) {
         /*
-         * The assets are already in Cloudinary and the product cannot reference
-         * them, which is the definition of an orphan. Roll them back rather
-         * than leave the account paying for images nothing points at.
+         * The assets are already in Cloudinary and the product does not
+         * reference them, which is the definition of an orphan. Roll them back
+         * rather than leave the account paying for images nothing points at.
          *
-         * Safe to destroy precisely because nothing has been retained yet: the
-         * reference count is still zero, so `destroy` will not refuse.
+         * Safe to destroy precisely because the transaction rolled back: the
+         * reference count is still zero, so `destroy` will not refuse. Before
+         * the transaction this handler covered only the product write, because
+         * a failure in `retainAll` left counts it could not reason about.
          */
-        await this.images.rollback(publicIds);
+        await media.importer.rollback(publicIds);
         throw error;
       }
-
-      // AFTER the write. The product now references them, and the ledger has to
-      // say so or a later `DELETE /admin/media` would happily destroy an image
-      // a live product page is showing.
-      await this.images.retainAll(publicIds);
     }
 
     return result;

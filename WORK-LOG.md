@@ -6203,3 +6203,35 @@ With the fix restored: **30 passed, 30 total**.
 The **catalogue import tool** (`ImportRunner.importImages` →
 `ImageImporter.retainAll`) has the same two-statement shape and is the path the
 owner's real catalogue will arrive on. Closed in the next commit.
+
+## Part 6e (continued) — the same fix on the import path
+
+The catalogue import tool had the identical two-statement shape, and it is the
+path the owner's real catalogue arrives on:
+
+```ts
+await this.models.products.updateOne({ _id: productId }, { $set: { images } });
+await this.images.retainAll(publicIds);   // one $inc per image
+```
+
+`ImportRunner`'s second constructor parameter changed from `images?: ImageImporter`
+to `images?: { importer, transactions }` — **one object, so "importing images
+without a transaction to write them in" is not a state the class can be
+constructed in.** An optional second parameter would have made forgetting it the
+easy path. `retainAll`'s session is REQUIRED for the same reason: there is no
+correct way to call it outside the transaction that wrote the images it counts.
+
+The rollback that destroys the uploads now covers the whole transaction rather
+than only the product write — and it is still safe to destroy, precisely
+*because* the counts rolled back with the descriptors.
+
+One new test, proved the same way. With the transaction split back into two
+statements:
+
+```
+● writes the descriptors and the counts in ONE commit, or neither
+    Expected length: 0   Received length: 2
+```
+
+Two descriptors on the product, both pointing at assets the ledger never
+counted. Restored: **75 passed, 75 total**, zero residue.
