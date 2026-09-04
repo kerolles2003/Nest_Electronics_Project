@@ -580,6 +580,184 @@ describe('categories — delete', () => {
   });
 });
 
+describe('categories — restore, the "first" the refusal has been referring to', () => {
+  /*
+   * `PATCH` answers a deleted category with `CATEGORY_DELETED — restore it
+   * first`, and until now there was no "first": the only way out of a soft
+   * delete was a database edit. That mattered because a delete KEEPS the slug
+   * reserved — deliberately, since reusing it would repoint existing links — so
+   * a mis-click cost the name permanently.
+   */
+
+  function restoreCategory(id: string): request.Test {
+    return http()
+      .post(`/api/v1/admin/catalog/categories/${id}/restore`)
+      .set(...bearer(admin))
+      .set('User-Agent', USER_AGENT);
+  }
+
+  async function deleteCategory(id: string): Promise<void> {
+    await http()
+      .delete(`/api/v1/admin/catalog/categories/${id}`)
+      .set(...bearer(admin))
+      .expect(200);
+  }
+
+  it('brings a deleted category back, INACTIVE, and audits it', async () => {
+    const category = await makeCategory();
+    await deleteCategory(category.id);
+
+    const restored = await restoreCategory(category.id).expect(200);
+
+    expect(restored.body.data.deletedAt).toBeNull();
+    /*
+     * Not republished. `DELETE` set `isActive: false` and restore clears only
+     * `deletedAt` — the category comes back to the EDITOR, not to the
+     * storefront, which is the same rule the product restore follows.
+     */
+    expect(restored.body.data.isActive).toBe(false);
+
+    const rows = await auditLogs
+      .find({ 'entity.type': AuditEntityType.CATEGORY, 'entity.id': new Types.ObjectId(category.id) })
+      .lean()
+      .exec();
+
+    expect(rows.map((row) => row.action)).toContain(AuditAction.CATEGORY_RESTORED);
+  });
+
+  it('makes the slug usable again — by the SAME category, not by a new one', async () => {
+    const category = await makeCategory();
+    await deleteCategory(category.id);
+
+    // Still reserved while deleted: this is what makes restore necessary rather
+    // than merely convenient.
+    await http()
+      .post('/api/v1/admin/catalog/categories')
+      .set(...bearer(admin))
+      .send({ slug: category.slug, name: { en: 'Impostor' } })
+      .expect(409);
+
+    await restoreCategory(category.id).expect(200);
+
+    const listed = await http()
+      .get('/api/v1/admin/catalog/categories')
+      .set(...bearer(admin))
+      .expect(200);
+
+    expect((listed.body.data as { id: string }[]).map((row) => row.id)).toContain(category.id);
+  });
+
+  it('is editable again, which the deleted one was not', async () => {
+    const category = await makeCategory();
+    await deleteCategory(category.id);
+
+    await patchCategory(category.id, { name: { en: 'Nope' } }).expect(409);
+
+    await restoreCategory(category.id).expect(200);
+
+    const edited = await patchCategory(category.id, { name: { en: 'Back In Use' } }).expect(200);
+    expect(edited.body.data.name.en).toBe('Back In Use');
+  });
+
+  it('refuses a category that is not deleted', async () => {
+    const category = await makeCategory();
+
+    const refused = await restoreCategory(category.id).expect(400);
+    expect(refused.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('refuses while the PARENT is still deleted, and says to restore that first', async () => {
+    /*
+     * `path[]` is the materialised ancestor chain, and a chain through a deleted
+     * node names a category that renders nowhere — the tree read would drop the
+     * branch or show a child with no visible parent. So the order is forced.
+     */
+    const parent = await makeCategory();
+    const child = await makeCategory({ parentId: parent.id });
+
+    await deleteCategory(child.id);
+    await deleteCategory(parent.id);
+
+    const refused = await restoreCategory(child.id).expect(400);
+    expect(refused.body.error.details[0].field).toBe('parentId');
+
+    await restoreCategory(parent.id).expect(200);
+    await restoreCategory(child.id).expect(200);
+  });
+
+  it('refuses a CUSTOMER', async () => {
+    const category = await makeCategory();
+    await deleteCategory(category.id);
+
+    await http()
+      .post(`/api/v1/admin/catalog/categories/${category.id}/restore`)
+      .set(...bearer(customer))
+      .expect(403);
+  });
+});
+
+describe('brands — restore', () => {
+  function restoreBrand(id: string): request.Test {
+    return http()
+      .post(`/api/v1/admin/catalog/brands/${id}/restore`)
+      .set(...bearer(admin))
+      .set('User-Agent', USER_AGENT);
+  }
+
+  it('brings a deleted brand back, INACTIVE, and audits it', async () => {
+    const brand = await makeBrand();
+
+    await http()
+      .delete(`/api/v1/admin/catalog/brands/${brand.id}`)
+      .set(...bearer(admin))
+      .expect(200);
+
+    const restored = await restoreBrand(brand.id).expect(200);
+
+    expect(restored.body.data.deletedAt).toBeNull();
+    expect(restored.body.data.isActive).toBe(false);
+
+    const rows = await auditLogs
+      .find({ 'entity.type': AuditEntityType.BRAND, 'entity.id': new Types.ObjectId(brand.id) })
+      .lean()
+      .exec();
+
+    expect(rows.map((row) => row.action)).toContain(AuditAction.BRAND_RESTORED);
+  });
+
+  it('does NOT re-brand the products the deletion un-branded', async () => {
+    /*
+     * Deleting a brand un-brands its products rather than refusing — that is
+     * the existing, deliberate behaviour. Restore is not its inverse and does
+     * not pretend to be: the products stayed edited, and re-attaching them
+     * would need a record of which ones were attached, which nothing keeps.
+     */
+    const brand = await makeBrand();
+    const category = await makeCategory();
+    const productId = await makeProduct(category.id, brand.id);
+
+    await http()
+      .delete(`/api/v1/admin/catalog/brands/${brand.id}`)
+      .set(...bearer(admin))
+      .expect(200);
+
+    await restoreBrand(brand.id).expect(200);
+
+    const product = await http()
+      .get(`/api/v1/admin/catalog/products/${productId}`)
+      .set(...bearer(admin))
+      .expect(200);
+
+    expect(product.body.data.brand).toBeNull();
+  });
+
+  it('refuses a brand that is not deleted', async () => {
+    const brand = await makeBrand();
+
+    await restoreBrand(brand.id).expect(400);
+  });
+});
+
 describe('brands', () => {
   it('creates, and rewrites the snapshot on every product on rename', async () => {
     const brand = await makeBrand({ name: { en: 'Old Brand' } });

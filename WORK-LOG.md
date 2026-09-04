@@ -6522,3 +6522,64 @@ Both were flagged by `react-hooks/set-state-in-effect` and both were real:
 - **Browser-unverified.** Nothing here has been driven in a browser: not the
   create/edit round trip, not the publish action, and in particular not the
   upload path, which posts real bytes to a real media pipeline.
+
+---
+
+# Part 7c — Category and brand restore: the "first" the refusal referred to
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+## A promise the API had not kept
+
+`PATCH /admin/catalog/categories/:id` answers a deleted category with
+
+> `CATEGORY_DELETED — restore it first.`
+
+and there was no *first*. No restore endpoint existed for categories or brands
+— only for products. The only way out of a soft delete was a database edit.
+
+That is not cosmetic, because **a soft delete keeps the slug reserved**. It has
+to: reusing a slug would silently repoint every existing link at a different
+entity. So a mis-click did not merely hide a category, it cost the name — and
+the admin screen this chunk is about to wire has a Delete button on it, on data
+the owner is about to enter for real.
+
+## What landed
+
+`POST /admin/catalog/categories/:id/restore` and
+`POST /admin/catalog/brands/:id/restore`, both `200`, mirroring the product
+restore in every respect that matters:
+
+- **It comes back INACTIVE.** `DELETE` sets `isActive: false` alongside
+  `deletedAt`; restore clears only the second. A restore returns the entity to
+  the *editor*, not to the storefront — the same rule the product restore
+  follows, and the reason `CATEGORY_RESTORED` is never a substitute for a
+  publish.
+- **A category whose PARENT is still deleted is refused**, with
+  `details[0].field = "parentId"` and a message saying to restore the parent
+  first. `path[]` is the materialised ancestor chain, and a chain through a
+  deleted node names a category that renders nowhere: the tree read would drop
+  the branch or show a child with no visible parent.
+- **A brand restore does NOT re-brand the products the deletion un-branded.**
+  Deleting a brand un-brands its products rather than refusing — existing,
+  deliberate behaviour — and restore is not its inverse. Re-attaching would need
+  a record of which products were attached, and nothing keeps one. Asserted in a
+  test so the asymmetry is a decision rather than a surprise.
+- `CATEGORY_RESTORED` and `BRAND_RESTORED` added to the audit vocabulary, with
+  the same argument `PRODUCT_RESTORED` carries: the trail records the removal
+  and would otherwise be silent about the return.
+
+## Verification
+
+- 9 new tests in `test/catalog/admin-taxonomy.spec.ts`; suite **36 passed, 36
+  total** (was 27). They cover the round trip, the audit row, the slug being
+  reserved while deleted and usable by the same entity after, editability
+  returning, the parent ordering, the un-branding asymmetry, a non-deleted
+  entity being refused, and a `CUSTOMER` getting a 403.
+- One failure caught on the way and fixed rather than asserted around: `@Post`
+  defaults to `201`, and the product restore is `200`. Two restore endpoints
+  answering with different status codes would be a contract inconsistency
+  nothing else would have caught.
+- Drift gate: additive change detected, `openapi:export` re-run, artifact
+  committed, `openapi:check` **OK**.
+- `tsc --noEmit` and ESLint clean; zero database residue.

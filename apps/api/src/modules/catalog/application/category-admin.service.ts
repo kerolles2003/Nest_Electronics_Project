@@ -308,6 +308,80 @@ export class CategoryAdminService {
     return updated;
   }
 
+  /**
+   * Undoes a soft delete.
+   *
+   * ## Why this exists now rather than earlier
+   *
+   * Because the API already promised it. `PATCH /admin/catalog/categories/:id`
+   * answers a deleted category with `CATEGORY_DELETED — restore it first`, and
+   * there was no "first" to do: the only way out of a soft delete was a
+   * database edit. Meanwhile the delete keeps the slug reserved — deliberately,
+   * because reusing it would repoint existing links — so a mis-click cost the
+   * name permanently.
+   *
+   * ## It comes back INACTIVE, and under a live parent or not at all
+   *
+   * `softDelete` sets `isActive: false` alongside `deletedAt`, and restore
+   * leaves it false: the category returns to the editor, not to the storefront.
+   * That mirrors `ProductAdminService.restore`, which deliberately does not
+   * republish.
+   *
+   * A category whose PARENT is still deleted is refused. `path[]` is the
+   * materialised ancestor chain, and a chain through a deleted node names a
+   * category that renders nowhere — the tree read would either drop the branch
+   * or show a child with no visible parent. Restoring the parent first is the
+   * answer, and the message says so.
+   */
+  async restore(id: Types.ObjectId, context: AdminWriteContext): Promise<CategoryLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt === null) {
+      throw AppException.validation([
+        { field: 'id', message: 'That category is not deleted.', code: 'STATE' },
+      ]);
+    }
+
+    if (current.parentId !== null) {
+      const parent = await this.categories
+        .findOne({ _id: current.parentId })
+        .lean<CategoryLean>()
+        .exec();
+
+      if (parent === null || parent.deletedAt !== null) {
+        throw AppException.validation([
+          {
+            field: 'parentId',
+            message:
+              'Its parent category is deleted, so restoring this one would file it under a ' +
+              'category that renders nowhere. Restore the parent first.',
+            code: 'PARENT_DELETED',
+          },
+        ]);
+      }
+    }
+
+    const updated =
+      (await this.categories
+        .findOneAndUpdate({ _id: id }, { $set: { deletedAt: null } }, { new: true })
+        .lean<CategoryLean>()
+        .exec()) ?? current;
+
+    this.cache.invalidateCache();
+
+    await this.audit.record({
+      actor: toAuditActor(actor),
+      action: AuditAction.CATEGORY_RESTORED,
+      entity: { type: AuditEntityType.CATEGORY, id, label: updated.slug },
+      changes: { before: { deletedAt: current.deletedAt }, after: { deletedAt: null } },
+      metadata: { name: updated.name.en, isActive: updated.isActive },
+      context: context.forensics,
+    });
+
+    return updated;
+  }
+
   private async resolveActor(actorId: Types.ObjectId): Promise<UserProfile> {
     const profile = await this.users.findById(actorId);
 

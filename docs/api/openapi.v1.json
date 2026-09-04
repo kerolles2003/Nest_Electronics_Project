@@ -3539,6 +3539,85 @@
         ]
       }
     },
+    "/api/v1/admin/catalog/categories/{id}/restore": {
+      "post": {
+        "description": "The \"first\" that `CATEGORY_DELETED — restore it first` has been referring to. Until this\nexisted, the only way out of a soft delete was a database edit — and because a delete\nkeeps the slug reserved (reusing it would repoint existing links), a mis-click cost the\nname permanently.\n\n**It comes back INACTIVE.** `DELETE` sets `isActive: false` alongside `deletedAt`, and\nthis clears only the second. A restore returns a category to the editor, not to the\nstorefront — the same rule as `POST /products/:id/restore`, which deliberately does not\nrepublish.\n\n**Refused while its PARENT is deleted.** `path[]` is the materialised ancestor chain, and\na chain through a deleted node names a category that renders nowhere. Restore the parent\nfirst; the message says so.",
+        "operationId": "AdminTaxonomyController_restoreCategory_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCategoryResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — the category is not deleted, or its parent still is.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CATEGORY_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Undo a soft delete",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
     "/api/v1/admin/catalog/brands": {
       "get": {
         "operationId": "AdminTaxonomyController_listBrands_v1",
@@ -3910,6 +3989,85 @@
           }
         ],
         "summary": "Delete a brand (soft), un-branding its products",
+        "tags": [
+          "admin · catalogue"
+        ]
+      }
+    },
+    "/api/v1/admin/catalog/brands/{id}/restore": {
+      "post": {
+        "description": "The counterpart of the category restore, for the same reason: `BRAND_DELETED — restore it\nfirst` had no \"first\", and a delete keeps the slug reserved.\n\n**It comes back INACTIVE**, so a restore returns a brand to the editor rather than to the\nstorefront. A brand has no parent, so there is nothing to check but the state.",
+        "operationId": "AdminTaxonomyController_restoreBrand_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBrandResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — the brand is not deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "BRAND_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Undo a soft delete",
         "tags": [
           "admin · catalogue"
         ]

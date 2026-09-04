@@ -244,6 +244,48 @@ export class AdminTaxonomyController {
     return { data: AdminCategoryDto.from(deleted) };
   }
 
+  @Post('categories/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Undo a soft delete',
+    description: [
+      'The "first" that `CATEGORY_DELETED — restore it first` has been referring to. Until this',
+      'existed, the only way out of a soft delete was a database edit — and because a delete',
+      'keeps the slug reserved (reusing it would repoint existing links), a mis-click cost the',
+      'name permanently.',
+      '',
+      '**It comes back INACTIVE.** `DELETE` sets `isActive: false` alongside `deletedAt`, and',
+      'this clears only the second. A restore returns a category to the editor, not to the',
+      'storefront — the same rule as `POST /products/:id/restore`, which deliberately does not',
+      'republish.',
+      '',
+      '**Refused while its PARENT is deleted.** `path[]` is the materialised ancestor chain, and',
+      'a chain through a deleted node names a category that renders nowhere. Restore the parent',
+      'first; the message says so.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminCategoryResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description:
+      'VALIDATION_ERROR — the category is not deleted, or its parent still is.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'CATEGORY_NOT_FOUND.' })
+  async restoreCategory(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminCategoryResponseDto> {
+    const restored = await this.categories.restore(new Types.ObjectId(params.id), {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminCategoryDto.from(restored) };
+  }
+
   // --- brands ---------------------------------------------------------------
 
   @Get('brands')
@@ -352,5 +394,37 @@ export class AdminTaxonomyController {
     });
 
     return { data: AdminBrandDto.from(deleted) };
+  }
+  @Post('brands/:id/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Undo a soft delete',
+    description: [
+      'The counterpart of the category restore, for the same reason: `BRAND_DELETED — restore it',
+      'first` had no "first", and a delete keeps the slug reserved.',
+      '',
+      '**It comes back INACTIVE**, so a restore returns a brand to the editor rather than to the',
+      'storefront. A brand has no parent, so there is nothing to check but the state.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminBrandResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'VALIDATION_ERROR — the brand is not deleted.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'BRAND_NOT_FOUND.' })
+  async restoreBrand(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminBrandResponseDto> {
+    const restored = await this.brands.restore(new Types.ObjectId(params.id), {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminBrandDto.from(restored) };
   }
 }

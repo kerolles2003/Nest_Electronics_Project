@@ -59,9 +59,19 @@ export enum AuditAction {
   CATEGORY_CREATED = 'CATEGORY_CREATED',
   CATEGORY_UPDATED = 'CATEGORY_UPDATED',
   CATEGORY_DELETED = 'CATEGORY_DELETED',
+
+  /**
+   * The same argument as `PRODUCT_RESTORED`, for the same reason: the trail
+   * recorded the removal and would otherwise be silent about the return.
+   *
+   * A restored category comes back INACTIVE, so this is never a substitute for
+   * a publish.
+   */
+  CATEGORY_RESTORED = 'CATEGORY_RESTORED',
   BRAND_CREATED = 'BRAND_CREATED',
   BRAND_UPDATED = 'BRAND_UPDATED',
   BRAND_DELETED = 'BRAND_DELETED',
+  BRAND_RESTORED = 'BRAND_RESTORED',
   MEDIA_DELETED = 'MEDIA_DELETED',
 
   // ---- Inventory (§3) ----------------------------------------------------

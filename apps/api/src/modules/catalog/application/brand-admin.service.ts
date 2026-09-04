@@ -238,6 +238,48 @@ export class BrandAdminService {
     return updated;
   }
 
+  /**
+   * Undoes a soft delete.
+   *
+   * The counterpart of the category one, and it exists for the same reason:
+   * `PATCH /admin/catalog/brands/:id` answers a deleted brand with
+   * `BRAND_DELETED — restore it first`, and there was no way to. The delete
+   * keeps the slug reserved, so without this a mis-click cost the name.
+   *
+   * A brand has no parent, so there is nothing to check but the state. It comes
+   * back INACTIVE — `softDelete` sets that alongside `deletedAt` — so a restore
+   * returns it to the editor rather than to the storefront.
+   */
+  async restore(id: Types.ObjectId, context: AdminWriteContext): Promise<BrandLean> {
+    const actor = await this.resolveActor(context.actorId);
+    const current = await this.findById(id);
+
+    if (current.deletedAt === null) {
+      throw AppException.validation([
+        { field: 'id', message: 'That brand is not deleted.', code: 'STATE' },
+      ]);
+    }
+
+    const updated =
+      (await this.brands
+        .findOneAndUpdate({ _id: id }, { $set: { deletedAt: null } }, { new: true })
+        .lean<BrandLean>()
+        .exec()) ?? current;
+
+    this.cache.invalidateCache();
+
+    await this.audit.record({
+      actor: toAuditActor(actor),
+      action: AuditAction.BRAND_RESTORED,
+      entity: { type: AuditEntityType.BRAND, id, label: updated.slug },
+      changes: { before: { deletedAt: current.deletedAt }, after: { deletedAt: null } },
+      metadata: { name: updated.name.en, isActive: updated.isActive },
+      context: context.forensics,
+    });
+
+    return updated;
+  }
+
   private async resolveActor(actorId: Types.ObjectId): Promise<UserProfile> {
     const profile = await this.users.findById(actorId);
 
