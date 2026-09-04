@@ -6,6 +6,7 @@ import * as api from '@/lib/api/endpoints';
 import { customerMessage } from '@/lib/api/errors';
 import { clearSession, readSession, writeSession } from '@/lib/api/session';
 import type { ActionState, AuthFormState } from '@/lib/api/action-state';
+import { safeRedirect } from '@/lib/safe-redirect';
 
 /**
  * Authentication against the NestJS API.
@@ -16,31 +17,6 @@ import type { ActionState, AuthFormState } from '@/lib/api/action-state';
  * cookies. No Supabase Auth, no Clerk, no second session store, and no
  * client-side notion of "logged in" beyond the presence of that cookie.
  */
-
-/**
- * Where to send someone after they sign in, when the page carried a
- * destination.
- *
- * **Only a path on this site.** `?redirect=` is attacker-controlled — it
- * arrives in a link anybody can send — so an unchecked value here is an open
- * redirect: a phishing page reachable from a real, correctly-spelled link to
- * this site, arrived at through a genuine sign-in.
- *
- * A leading `//` is rejected along with everything else that is not a plain
- * path, because `//evil.example` is protocol-relative and a browser reads it as
- * another origin. Anything unrecognised falls back to the account area rather
- * than failing: the customer signed in successfully, and the destination is the
- * least important part of that.
- */
-function safeRedirect(raw: string): string {
-  if (!raw.startsWith('/')) return '/account/orders';
-  if (raw.startsWith('//')) return '/account/orders';
-  // A backslash is normalised to a forward slash by some browsers, so `/\evil`
-  // would leave the site too.
-  if (raw.startsWith('/\\')) return '/account/orders';
-
-  return raw;
-}
 
 function fieldErrorsOf(error: {
   details: readonly { field: string; message: string }[];

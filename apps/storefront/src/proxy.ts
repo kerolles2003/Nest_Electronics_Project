@@ -128,7 +128,7 @@ export function proxy(request: NextRequest): NextResponse {
   ) {
     // Not a failure, and deliberately not logged as one: a signed-in customer
     // opening /login is a bookmark, not an attack.
-    return NextResponse.redirect(new URL('/account/orders', request.url));
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   return NextResponse.next();
@@ -149,12 +149,18 @@ function isUnder(pathname: string, prefix: string): boolean {
 export const config = {
   matcher: [
     /*
-     * Everything except Next's own assets and static files.
+     * Only the routes the navigation guard actually cares about:
+     * - Protected areas an anonymous visitor is sent away from (/account, /checkout)
+     * - Auth pages a signed-in customer is redirected away from (/login, /register, /forgot-password)
      *
-     * `_next/static` and `_next/image` are excluded because running this on
-     * every chunk and every image is pure overhead — the guard has nothing to
-     * say about a JavaScript bundle.
+     * Everything else (/, /shop, catalogue reads, static assets) skips the
+     * proxy entirely, removing middleware overhead from general browsing.
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/account/:path*',
+    '/checkout/:path*',
+    '/login',
+    '/register',
+    '/forgot-password/:path*',
   ],
 };
+

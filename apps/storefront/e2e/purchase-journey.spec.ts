@@ -69,8 +69,12 @@ test('a customer can register, order and see it in their history', async ({ page
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    // No `redirect` was carried, so the default destination applies.
-    await page.waitForURL('**/account/orders');
+    /*
+     * No `redirect` was carried, so the default destination applies — the
+     * storefront home. It used to be `/account/orders`, and asserting either
+     * would be asserting nothing about the change that moved it.
+     */
+    await page.waitForURL((url) => url.pathname === '/');
   });
 
   const productName = await test.step('browse and open an in-stock product', async () => {

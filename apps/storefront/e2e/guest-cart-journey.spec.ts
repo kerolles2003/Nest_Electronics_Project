@@ -223,7 +223,9 @@ async function signIn(page: Page, email: string): Promise<void> {
   // `exact`: the reveal toggle beside the input is labelled "Show password".
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign In' }).click();
-  await page.waitForURL('**/account/orders');
+  // No `redirect` was carried, so the default destination applies: the
+  // storefront home, which is where `safeRedirect` sends an empty value.
+  await page.waitForURL((url) => url.pathname === '/');
 }
 
 /** The merge runs on mount and is asynchronous; wait for the basket to empty. */

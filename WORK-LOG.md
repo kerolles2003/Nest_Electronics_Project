@@ -7159,3 +7159,28 @@ up the design where the amount is large and the currency small beside it — a
 design decision, not this pass's to take. The three entries in
 `money-formatting.spec.ts` still cover it, and their call sites are unchanged so
 the guard's both-directions check stays green.
+
+## Sign-in landed on an orders list, and the proxy ran on everything
+
+Signing in with no carried destination sent the customer to `/account/orders` —
+an empty list for anybody who has just registered, and a detour for everybody
+else, who has to navigate back out of it to do the thing they came to do. The
+storefront home is the fallback now, and the account area is one click away in
+the header. The signed-in-customer-opens-`/login` bounce in `proxy.ts` moves to
+match, so the two cannot disagree.
+
+`safeRedirect` had also been **copied inline, without its reasoning**, into
+`createAddressAction` — two places that must agree about what "a safe
+destination" means, one of which explains itself and one of which is three
+`startsWith` calls behind a one-line comment. It is now `lib/safe-redirect.ts`,
+imported by both. It could not simply be exported from the action file: every
+export of a `'use server'` module has to be an async function.
+
+The proxy's matcher ran on every request that was not a Next asset. It has
+exactly two things to say — anonymous visitors off `/account` and `/checkout`,
+signed-in customers off the auth pages — so it now matches those five prefixes
+and nothing else. Browsing the catalogue no longer enters middleware at all.
+
+Both journey specs asserted the old destination. They were first widened to
+accept `/` **or** `/account/orders`, which asserts nothing about the change that
+moved it; they now assert the one real destination.
