@@ -6,14 +6,20 @@ import type {
   AdminDashboardStats,
   AdminOrder,
   AdminShippingRate,
+  AdjustmentResult,
+  AdjustmentType,
+  AdminCategory,
   AuthUser,
   DashboardWindowKey,
   Envelope,
+  InventoryEvent,
   OrderQueueStats,
   OrderStatus,
   OrderSummary,
   PagedEnvelope,
+  ReconciliationReport,
   SessionTokens,
+  StockLevel,
 } from './types';
 
 /**
@@ -267,6 +273,99 @@ export function listCustomers(
 
 export function getCustomer(id: string): Promise<Envelope<AdminCustomerSummary>> {
   return apiFetch(`/admin/customers/${id}`);
+}
+
+// --- catalogue taxonomy -----------------------------------------------------
+
+/**
+ * Every category, flat and shallowest-first, INCLUDING inactive ones.
+ *
+ * Flat is what the API returns and what a filter dropdown wants; each row
+ * carries its own `parentId`, `path` and `depth`, so any shape can be assembled
+ * without a second request. Soft-deleted ones are excluded unless asked for —
+ * a filter listing deleted categories offers a choice that matches nothing.
+ */
+export function listAdminCategories(
+  params: { includeDeleted?: boolean } = {},
+): Promise<Envelope<AdminCategory[]>> {
+  const suffix = params.includeDeleted === true ? '?includeDeleted=true' : '';
+
+  return apiFetch(`/admin/catalog/categories${suffix}`);
+}
+
+// --- inventory --------------------------------------------------------------
+
+export interface StockLevelParams {
+  page?: number;
+  limit?: number;
+  q?: string;
+  lowStock?: boolean;
+  outOfStock?: boolean;
+  /** A category SUBTREE, by id. Not a slug — the API filters on `category.path`. */
+  categoryId?: string;
+  includeInactive?: boolean;
+}
+
+/**
+ * Stock levels, scarcest first.
+ *
+ * The ordering is the server's and is deliberate: the list exists to be acted
+ * on, so what runs out next is at the top. There is no sort parameter, which is
+ * why this console does not offer one.
+ *
+ * Note what is NOT here: no brand filter, and no reserved/available columns.
+ * The API's stock is a single `onHand` — reservation is not part of the model —
+ * so a console showing "Reserved: 0" beside every row would be inventing a
+ * concept the system does not have.
+ */
+export function listStockLevels(params: StockLevelParams = {}): Promise<PagedEnvelope<StockLevel>> {
+  const query = new URLSearchParams();
+
+  if (params.page !== undefined) query.set('page', String(params.page));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.q !== undefined && params.q.trim() !== '') query.set('q', params.q.trim());
+  if (params.lowStock === true) query.set('lowStock', 'true');
+  if (params.outOfStock === true) query.set('outOfStock', 'true');
+  if (params.categoryId !== undefined && params.categoryId !== '') {
+    query.set('categoryId', params.categoryId);
+  }
+  if (params.includeInactive === true) query.set('includeInactive', 'true');
+
+  const suffix = query.toString();
+  return apiFetch(`/admin/inventory${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+/** One product's movement history, newest first. */
+export function stockHistory(
+  productId: string,
+  params: { page?: number; limit?: number } = {},
+): Promise<PagedEnvelope<InventoryEvent>> {
+  const query = new URLSearchParams();
+
+  if (params.page !== undefined) query.set('page', String(params.page));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+
+  const suffix = query.toString();
+  return apiFetch(`/admin/inventory/${productId}/events${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+/**
+ * Moves stock by a SIGNED delta and writes the ledger entry, in one transaction.
+ *
+ * A delta, not a target. An absolute value would silently overwrite a
+ * concurrent sale; a delta composes with one. That semantic is preserved from
+ * `adjust_stock_v2`, which was well designed and never once ran successfully.
+ */
+export function adjustStock(
+  productId: string,
+  body: { delta: number; reason: string; type: AdjustmentType },
+): Promise<Envelope<AdjustmentResult>> {
+  return apiFetch(`/admin/inventory/${productId}/adjust`, { method: 'POST', body });
+}
+
+/** Does `Σ quantityDelta` still equal `stock.onHand` for every product? */
+export function inventoryReconciliation(): Promise<Envelope<ReconciliationReport>> {
+  return apiFetch('/admin/inventory/reconciliation');
 }
 
 // --- shipping rates ---------------------------------------------------------

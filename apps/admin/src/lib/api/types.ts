@@ -294,6 +294,102 @@ export interface AdminCustomerSummary {
   lastOrderAt: string | null;
 }
 
+// --- catalogue taxonomy -----------------------------------------------------
+
+export interface AdminLocalizedText {
+  en: string;
+  ar: string | null;
+}
+
+export interface AdminCategory {
+  id: string;
+  slug: string;
+  name: AdminLocalizedText;
+  description: AdminLocalizedText | null;
+  parentId: string | null;
+  /** Ancestor ids, root first, EXCLUDING self. */
+  path: string[];
+  depth: number;
+  sortOrder: number;
+  isActive: boolean;
+  productCount: number;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// --- inventory --------------------------------------------------------------
+
+/**
+ * Derived by the SERVER, never re-computed here.
+ *
+ * The legacy console worked out availability in five places and got five
+ * answers. `onHand <= lowStockThreshold` is a per-product rule — a reel of
+ * resistors and an oscilloscope do not reorder at the same number — so a
+ * console constant could not express it even if one were wanted.
+ */
+export type StockState = 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+
+export interface StockLevel {
+  productId: string;
+  sku: string;
+  slug: string;
+  name: string;
+  onHand: number;
+  lowStockThreshold: number;
+  state: StockState;
+  isActive: boolean;
+  categoryName: string;
+  /** ADMIN ONLY, minor units. `null` when unset. */
+  costPrice: number | null;
+}
+
+/**
+ * What an operator may post directly.
+ *
+ * `SALE`, `RETURN` and `CANCELLATION` are absent because they are consequences
+ * of an order, written inside that order's transaction. They appear in HISTORY
+ * — an operator reads them — but nothing here can write one.
+ */
+export const ADJUSTMENT_TYPES = ['RESTOCK', 'ADJUSTMENT', 'DAMAGE'] as const;
+
+export type AdjustmentType = (typeof ADJUSTMENT_TYPES)[number];
+
+export interface InventoryEvent {
+  /** The full frozen vocabulary, not only the three an operator can write. */
+  type: string;
+  /** SIGNED. Negative when stock left. */
+  quantityDelta: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  reason: string;
+  referenceId: string | null;
+  actorName: string | null;
+  createdAt: string;
+}
+
+export interface AdjustmentResult {
+  productId: string;
+  sku: string;
+  balanceBefore: number;
+  balanceAfter: number;
+  state: StockState;
+}
+
+export interface ReconciliationDiscrepancy {
+  productId: string;
+  sku: string;
+  onHand: number;
+  ledgerSum: number;
+  /** `onHand - ledgerSum`. Non-zero proves an out-of-band mutation. */
+  difference: number;
+}
+
+export interface ReconciliationReport {
+  checked: number;
+  discrepancies: ReconciliationDiscrepancy[];
+}
+
 // --- shipping rates ---------------------------------------------------------
 
 export interface AdminShippingRate {

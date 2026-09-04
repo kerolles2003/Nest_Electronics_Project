@@ -202,28 +202,6 @@ export async function getProductStats() {
   }
 }
 
-export async function getInventoryStats() {
-  const { supabase } = await getAdminServices()
-
-  const { data } = await supabase
-    .from('products')
-    .select('stock_quantity, reserved_quantity, low_stock_threshold')
-    .is('deleted_at', null)
-
-  const rows = data ?? []
-  const totalReserved = rows.reduce((sum: number, r: any) => sum + (r.reserved_quantity ?? 0), 0)
-  const inStock = rows.filter((r: any) => r.stock_quantity > 0).length
-  const outOfStock = rows.filter((r: any) => r.stock_quantity === 0).length
-
-  // Use available_stock logic: stock - reserved > 0 and <= threshold
-  const lowStock = rows.filter((r: any) => {
-    const available = (r.stock_quantity ?? 0) - (r.reserved_quantity ?? 0)
-    return available > 0 && available <= (r.low_stock_threshold ?? 5)
-  }).length
-
-  return { total: rows.length, inStock, lowStock, outOfStock, totalReserved }
-}
-
 /**
  * Recent ADMIN actions.
  *
@@ -261,14 +239,4 @@ export async function getRecentActivity(limit = 8) {
     description: a.entity_id ? `Ref: ${(a.entity_id as string).slice(0, 8)}…` : 'System action',
     time: a.created_at as string,
   }))
-}
-
-export async function getInventoryTransactions(limit = 8) {
-  const { supabase } = await getAdminServices()
-  const { data } = await supabase
-    .from('inventory_transactions')
-    .select('id, type, quantity, notes, created_at, product:products(name_en), profiles(full_name)')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-  return data ?? []
 }

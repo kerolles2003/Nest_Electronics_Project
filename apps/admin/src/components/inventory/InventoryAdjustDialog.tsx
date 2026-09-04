@@ -1,237 +1,263 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
-import { X, Loader2, Minus, Plus, Box, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { Button } from '@nest/ui';
-import { useToast } from '@nest/ui';
-import type { Product } from '@nest/types';
+import { useState, useTransition } from 'react';
+import { X, Loader2, Minus, Plus, Box, AlertTriangle, CheckCircle2, PackagePlus, Wrench, Trash2 } from 'lucide-react';
 import { adjustStockAction } from '@/actions/inventory.actions';
+import type { AdjustmentType, StockLevel } from '@/lib/api/types';
 
-type AdjustmentType = 'stock_in' | 'stock_out' | 'set_exact';
+/**
+ * Move stock by a signed delta, with a reason and a kind.
+ *
+ * ## A delta, never a target
+ *
+ * The field asks how much stock MOVED, not what the number should become. That
+ * is preserved from `adjust_stock_v2` — whose semantics were right even though
+ * it never once ran successfully — and it is not a stylistic choice: an
+ * absolute value silently overwrites a sale that landed while the dialog was
+ * open, and a delta composes with it.
+ *
+ * ## The kind is required, and it is not cosmetic
+ *
+ * `RESTOCK`, `ADJUSTMENT` and `DAMAGE` are different business events. Reporting
+ * has to tell "we received 100" from "the count was wrong" from "three were
+ * broken", and a single generic movement type makes that permanently
+ * unanswerable. The three an operator may post are the only three the API
+ * accepts here: `SALE`, `RETURN` and `CANCELLATION` belong to an order's own
+ * transaction, and an operator able to hand-write a `SALE` could move stock
+ * with no order behind it.
+ *
+ * ## Validation lives on the server
+ *
+ * The reason minimum, the non-zero delta and the floor at zero are the API's
+ * rules and its messages are shown verbatim. This dialog previews the resulting
+ * balance and refuses to submit an obviously empty form; it does not
+ * re-implement the rules, because two copies is two things to keep in step.
+ */
 
-interface Props {
-  product: Pick<Product, 'id' | 'name_en' | 'sku' | 'stock_quantity' | 'reserved_quantity' | 'available_stock' | 'low_stock_threshold'>;
+interface InventoryAdjustDialogProps {
+  level: StockLevel;
   onClose: () => void;
+  onAdjusted: () => void;
 }
 
-export function InventoryAdjustDialog({ product, onClose }: Props) {
-  const { addToast } = useToast();
-  const [type, setType] = useState<AdjustmentType>('stock_in');
-  const [quantity, setQuantity] = useState('');
+const TYPES: { value: AdjustmentType; label: string; hint: string; icon: typeof PackagePlus }[] = [
+  { value: 'RESTOCK', label: 'Restock', hint: 'Goods arrived', icon: PackagePlus },
+  { value: 'ADJUSTMENT', label: 'Correction', hint: 'The count was wrong', icon: Wrench },
+  { value: 'DAMAGE', label: 'Damage', hint: 'Units were destroyed', icon: Trash2 },
+];
+
+export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryAdjustDialogProps) {
+  const [direction, setDirection] = useState<1 | -1>(1);
+  const [magnitude, setMagnitude] = useState('');
   const [reason, setReason] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [type, setType] = useState<AdjustmentType>('RESTOCK');
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  const qtyNum = parseInt(quantity, 10);
-  const isValidQty = !isNaN(qtyNum) && qtyNum > 0;
+  const units = Number.parseInt(magnitude, 10);
+  const hasUnits = Number.isInteger(units) && units > 0;
+  const delta = hasUnits ? units * direction : 0;
+  const projected = level.onHand + delta;
 
-  const previewStock = useMemo(() => {
-    if (!isValidQty) return null;
-    if (type === 'stock_in') return product.stock_quantity + qtyNum;
-    if (type === 'stock_out') return Math.max(0, product.stock_quantity - qtyNum);
-    return qtyNum;
-  }, [type, qtyNum, isValidQty, product.stock_quantity]);
+  /*
+   * The API floors stock at zero and refuses the movement rather than clamping
+   * it. Saying so before the request is sent is the difference between a form
+   * that teaches and a form that scolds — but the refusal itself is still the
+   * server's, so this only previews it.
+   */
+  const wouldGoNegative = hasUnits && projected < 0;
+  const canSubmit = hasUnits && reason.trim().length >= 3 && !wouldGoNegative && !isPending;
 
-  const previewAvailable = useMemo(() => {
-    if (previewStock === null) return null;
-    return Math.max(0, previewStock - product.reserved_quantity);
-  }, [previewStock, product.reserved_quantity]);
+  const submit = () => {
+    setError(null);
 
-  const handleSubmit = useCallback(async () => {
-    setError('');
+    startTransition(async () => {
+      const result = await adjustStockAction({
+        productId: level.productId,
+        delta,
+        reason: reason.trim(),
+        type,
+      });
 
-    if (!quantity || isNaN(qtyNum) || qtyNum < 1) {
-      setError('Quantity must be a positive number');
-      return;
-    }
-
-    if (!reason.trim()) {
-      setError('Reason is required');
-      return;
-    }
-
-    if (type === 'stock_out' && qtyNum > product.available_stock) {
-      setError(`Cannot remove more than available stock (${product.available_stock})`);
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const formData = new FormData();
-      formData.set('productId', product.id);
-
-      let finalQty: number;
-      if (type === 'stock_in') {
-        finalQty = qtyNum;
-      } else if (type === 'stock_out') {
-        finalQty = -qtyNum;
-      } else {
-        finalQty = qtyNum - product.stock_quantity;
+      if (!result.ok) {
+        setError(result.error ?? 'The adjustment was not applied.');
+        return;
       }
 
-      formData.set('quantity', finalQty.toString());
-      formData.set('reason', reason);
-
-      const result = await adjustStockAction(formData);
-
-      if (result.success) {
-        addToast('Stock adjusted successfully', 'success');
-        onClose();
-        setTimeout(() => window.location.reload(), 500);
-      } else {
-        setError(result.error ?? 'Failed to adjust stock');
-      }
-    } catch {
-      setError('An unexpected error occurred');
-    } finally {
-      setLoading(false);
-    }
-  }, [type, quantity, reason, product, addToast, onClose, qtyNum]);
-
-  const typeOptions: { value: AdjustmentType; label: string; icon: typeof Plus; desc: string; color: string }[] = [
-    { value: 'stock_in', label: 'Stock In', icon: Plus, desc: 'Add inventory', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
-    { value: 'stock_out', label: 'Stock Out', icon: Minus, desc: 'Remove inventory', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' },
-    { value: 'set_exact', label: 'Set Exact', icon: Box, desc: 'Set total stock', color: 'text-blue-400 bg-blue-500/10 border-blue-500/20' },
-  ];
-
-  const isLowStock = product.stock_quantity <= (product.low_stock_threshold ?? 5);
-  const isOutOfStock = product.stock_quantity === 0;
+      onAdjusted();
+    });
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-
-      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-card shadow-elevated">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-border bg-muted/20 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Adjust Stock</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Update inventory levels</p>
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-foreground">Adjust stock</h2>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={level.name}>
+              {level.name}
+            </p>
+            <span className="text-[11px] font-mono text-muted-foreground">{level.sku}</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted transition-colors" aria-label="Close">
-            <X className="w-4 h-4 text-muted-foreground" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
-          {/* Product Info Card */}
-          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-bold text-foreground">{product.name_en}</p>
-                <p className="text-[11px] font-mono text-muted-foreground">SKU: {product.sku}</p>
-              </div>
-              {isOutOfStock ? (
-                <span className="inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[10px] font-bold bg-rose-500/10 text-rose-400 shrink-0">
-                  <AlertTriangle className="h-3 w-3" /> Out
-                </span>
-              ) : isLowStock ? (
-                <span className="inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[10px] font-bold bg-amber-500/10 text-amber-400 shrink-0">
-                  <AlertTriangle className="h-3 w-3" /> Low
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[10px] font-bold bg-emerald-500/10 text-emerald-400 shrink-0">
-                  <CheckCircle2 className="h-3 w-3" /> OK
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-              <span>Stock: <strong className="text-foreground">{product.stock_quantity}</strong></span>
-              <span>Reserved: <strong className="text-foreground">{product.reserved_quantity}</strong></span>
-              <span>Available: <strong className={product.available_stock <= 0 ? 'text-rose-400' : 'text-foreground'}>{product.available_stock}</strong></span>
-            </div>
+        <div className="space-y-4 px-5 py-4">
+          {/* Current */}
+          <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2.5">
+            <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <Box className="h-3.5 w-3.5" />
+              On hand now
+            </span>
+            <span className="text-sm font-bold tabular-nums text-foreground">{level.onHand}</span>
           </div>
 
-          {/* Adjustment Type */}
+          {/* Kind */}
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Adjustment Type</label>
-            <div className="grid grid-cols-3 gap-2">
-              {typeOptions.map((opt) => {
-                const Icon = opt.icon;
-                const isActive = type === opt.value;
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              What kind of movement
+            </span>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {TYPES.map((option) => {
+                const Icon = option.icon;
+                const selected = option.value === type;
+
                 return (
                   <button
-                    key={opt.value}
-                    onClick={() => { setType(opt.value); setQuantity(''); setError(''); }}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center transition-all ${isActive ? opt.color + ' ring-1' : 'border-border bg-background hover:bg-muted/40'}`}
+                    key={option.value}
+                    type="button"
+                    onClick={() => setType(option.value)}
+                    className={`rounded-lg border px-2 py-2 text-left transition-colors ${
+                      selected
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border bg-background hover:bg-muted'
+                    }`}
                   >
-                    <Icon className={`h-4 w-4 ${isActive ? '' : 'text-muted-foreground'}`} />
-                    <span className={`text-[11px] font-bold ${isActive ? '' : 'text-foreground'}`}>{opt.label}</span>
-                    <span className="text-[9px] text-muted-foreground">{opt.desc}</span>
+                    <Icon className={`h-3.5 w-3.5 ${selected ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <span className="mt-1 block text-xs font-bold text-foreground">{option.label}</span>
+                    <span className="block text-[10px] leading-tight text-muted-foreground">{option.hint}</span>
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Quantity */}
+          {/* Delta */}
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Quantity</label>
-            <input
-              type="number"
-              min={1}
-              max={type === 'stock_out' ? product.available_stock : undefined}
-              value={quantity}
-              onChange={(e) => { setQuantity(e.target.value); setError(''); }}
-              placeholder={type === 'set_exact' ? `Current: ${product.stock_quantity}` : 'Enter quantity'}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-bold tabular-nums focus:ring-2 focus:ring-primary/10 transition-all outline-none"
-              autoFocus
-            />
-            {type === 'stock_out' && (
-              <p className="text-[10px] text-muted-foreground mt-1">Max removable: {product.available_stock}</p>
+            <label htmlFor="adjust-units" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              How many units moved
+            </label>
+            <div className="mt-1.5 flex items-stretch gap-2">
+              <div className="inline-flex rounded-lg border border-border bg-background p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setDirection(1)}
+                  aria-pressed={direction === 1}
+                  className={`inline-flex items-center gap-1 rounded-md px-3 text-xs font-bold transition-colors ${
+                    direction === 1 ? 'bg-success/15 text-success' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Plus className="h-3.5 w-3.5" /> In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDirection(-1)}
+                  aria-pressed={direction === -1}
+                  className={`inline-flex items-center gap-1 rounded-md px-3 text-xs font-bold transition-colors ${
+                    direction === -1 ? 'bg-destructive/15 text-destructive' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Minus className="h-3.5 w-3.5" /> Out
+                </button>
+              </div>
+              <input
+                id="adjust-units"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                value={magnitude}
+                onChange={(event) => setMagnitude(event.target.value)}
+                placeholder="0"
+                className="h-10 flex-1 rounded-lg border border-border bg-background px-3 text-sm tabular-nums outline-none transition-all focus:ring-2 focus:ring-primary/10"
+              />
+            </div>
+
+            {hasUnits && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {level.onHand} {delta >= 0 ? '+' : '−'} {Math.abs(delta)} ={' '}
+                <span className={`font-bold tabular-nums ${wouldGoNegative ? 'text-destructive' : 'text-foreground'}`}>
+                  {projected}
+                </span>
+              </p>
+            )}
+
+            {wouldGoNegative && (
+              <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Stock cannot go below zero — there are only {level.onHand} on hand.
+              </p>
             )}
           </div>
 
           {/* Reason */}
           <div>
-            <label className="block text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Reason</label>
-            <input
-              type="text"
+            <label htmlFor="adjust-reason" className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              Why
+            </label>
+            <textarea
+              id="adjust-reason"
               value={reason}
-              onChange={(e) => { setReason(e.target.value); setError(''); }}
-              placeholder="e.g., Physical count, supplier restock, damaged goods..."
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm focus:ring-2 focus:ring-primary/10 transition-all outline-none"
+              onChange={(event) => setReason(event.target.value)}
+              rows={2}
+              maxLength={500}
+              placeholder="Damaged in storage — water ingress on the top shelf"
+              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-primary/10"
             />
+            {/*
+              Not a nag. This is the field that makes the ledger readable a year
+              later, and it is the one the legacy schema never enforced.
+            */}
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Required, at least 3 characters. It is what makes this movement explicable later.
+            </p>
           </div>
 
-          {/* Stock Preview */}
-          {previewStock !== null && previewAvailable !== null && (
-            <div className="rounded-lg border border-border bg-muted/20 p-3">
-              <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Result Preview</p>
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground">New Stock</span>
-                  <span className="font-bold text-foreground tabular-nums">{previewStock}</span>
-                </div>
-                <div className="text-muted-foreground">→</div>
-                <div className="flex flex-col items-end">
-                  <span className="text-[10px] text-muted-foreground">New Available</span>
-                  <span className={`font-bold tabular-nums ${previewAvailable <= 0 ? 'text-rose-400' : previewAvailable <= (product.low_stock_threshold ?? 5) ? 'text-amber-400' : 'text-emerald-400'}`}>
-                    {previewAvailable}
-                  </span>
-                </div>
-              </div>
+          {error !== null && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
+        </div>
 
-          {/* Error */}
-          {error && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-400 font-medium">
-              {error}
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={onClose} disabled={loading} className="rounded-lg text-xs">
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={loading || !isValidQty || !reason.trim()} className="rounded-lg text-xs">
-              {loading && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              {loading ? 'Adjusting...' : 'Confirm Adjustment'}
-            </Button>
-          </div>
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isPending}
+            className="rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            Apply adjustment
+          </button>
         </div>
       </div>
     </div>

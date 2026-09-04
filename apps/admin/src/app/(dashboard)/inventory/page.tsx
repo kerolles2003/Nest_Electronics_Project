@@ -1,26 +1,52 @@
-import { requireAdmin, getAdminServices, getCachedCategories, getCachedBrands, getInventoryStats, getInventoryTransactions } from '@/lib/services';
+import { requireAdmin } from '@/lib/services';
 import { Suspense } from 'react';
 import { InventoryTable } from '@/components/inventory/InventoryTable';
-import { UnwiredScreenWarning } from '@/components/system/UnwiredScreenWarning';
-import type { Product } from '@nest/types';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { operatorMessage } from '@/lib/api/errors';
+import { AlertTriangle } from 'lucide-react';
 
-function mapInventoryProduct(raw: any): Product {
-  const stock = (raw.stock_quantity ?? 0) as number;
-  const reserved = (raw.reserved_quantity ?? 0) as number;
-  return {
-    ...raw,
-    available_stock: stock - reserved,
-    images: raw.images ?? [],
-    category: raw.category ?? null,
-    brand: raw.brand ?? null,
-  } as Product;
-}
+/**
+ * Stock, from the API.
+ *
+ * ## What changed, and what had to be given up to make it true
+ *
+ * This screen used to query Supabase `products` directly and write through
+ * `adjust_stock_v2`. Both halves were writing into a database nothing reads —
+ * and the RPC has never once completed successfully in production, so the
+ * screen's central action did nothing even there.
+ *
+ * Three things the old screen showed are gone, and each is an invention rather
+ * than a loss:
+ *
+ * **Reserved / Available.** The API's stock is a single `onHand`. There is no
+ * reservation in the model, so "Reserved: 0" beside every row was a column of
+ * zeroes describing a mechanism that does not exist.
+ *
+ * **The brand filter.** `GET /admin/inventory` filters by search, category
+ * subtree, low-stock and out-of-stock. A brand dropdown that quietly did
+ * nothing is worse than no dropdown.
+ *
+ * **Client-side low-stock refinement.** The old page fetched `stock <= 15` and
+ * then filtered in JavaScript against each product's threshold, so page 2 of a
+ * low-stock list could be shorter than page 1 and the count above it was never
+ * the count of rows below it. `?lowStock=true` is a database predicate against
+ * the product's OWN threshold.
+ *
+ * ## The counters come from the dashboard aggregate
+ *
+ * There is no inventory-stats endpoint, and there should not be: the dashboard
+ * already computes active/low/out over the same collection in one pass. The
+ * strip says "active products" because that is what the aggregate covers —
+ * `?includeInactive=true` widens the LIST, and the counters keep saying what
+ * they actually counted rather than following the filter.
+ */
 
 function InventorySkeleton() {
   return (
     <div className="space-y-5 animate-pulse">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="rounded-xl border border-border bg-card p-4 h-20" />
         ))}
       </div>
@@ -30,93 +56,103 @@ function InventorySkeleton() {
   );
 }
 
+function one(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? '';
+}
+
 export default async function InventoryPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await requireAdmin();
-  const { supabase } = await getAdminServices();
   const sp = await props.searchParams;
 
-  const page = Number(sp.page) || 1;
-  const search = (sp.search as string) || '';
-  const categorySlug = (sp.category as string) || '';
-  const brandSlug = (sp.brand as string) || '';
-  const stockFilter = (sp.stock as string) || '';
+  const page = Number(one(sp['page'])) || 1;
+  const search = one(sp['search']);
+  const categoryId = one(sp['category']);
+  const stockFilter = one(sp['stock']);
+  const includeInactive = one(sp['inactive']) === 'true';
   const limit = 25;
 
-  const [categories, brands, stats, recentActivity] = await Promise.all([
-    getCachedCategories(),
-    getCachedBrands(),
-    getInventoryStats(),
-    getInventoryTransactions(10),
+  const [levelsRes, categoriesRes, statsRes] = await Promise.all([
+    tryApi(() =>
+      api.listStockLevels({
+        page,
+        limit,
+        q: search,
+        categoryId,
+        includeInactive,
+        lowStock: stockFilter === 'low_stock',
+        outOfStock: stockFilter === 'out_of_stock',
+      }),
+    ),
+    tryApi(() => api.listAdminCategories()),
+    tryApi(() => api.dashboardStats()),
   ]);
 
-  let dbQuery = supabase
-    .from('products')
-    .select(
-      `*, images:product_images(*), category:categories(name_en, slug), brand:brands(name_en, slug)`,
-      { count: 'exact' }
-    )
-    .is('deleted_at', null);
-
-  if (search) {
-    dbQuery = dbQuery.or(`name_en.ilike.%${search}%,sku.ilike.%${search}%`);
-  }
-  if (categorySlug) {
-    dbQuery = dbQuery.eq('category.slug', categorySlug);
-  }
-  if (brandSlug) {
-    dbQuery = dbQuery.eq('brand.slug', brandSlug);
-  }
-  if (stockFilter === 'in_stock') {
-    dbQuery = dbQuery.gt('stock_quantity', 0);
-  } else if (stockFilter === 'out_of_stock') {
-    dbQuery = dbQuery.eq('stock_quantity', 0);
-  } else if (stockFilter === 'low_stock') {
-    // Low stock: available > 0 and available <= threshold
-    // We approximate with stock_quantity <= 15 to capture most low-stock items,
-    // then filter client-side by available_stock for accuracy
-    dbQuery = dbQuery.lte('stock_quantity', 15).gt('stock_quantity', 0);
-  } else if (stockFilter === 'reserved') {
-    dbQuery = dbQuery.gt('reserved_quantity', 0);
+  /*
+   * A failed list is stated, never rendered as an empty inventory. "No products
+   * found" when the request failed is the same class of lie as a dashboard
+   * printing 0 orders because a fetch timed out.
+   */
+  if (!levelsRes.ok) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Inventory</h1>
+          <p className="text-sm text-muted-foreground mt-1">Stock levels and movements, from the API.</p>
+        </div>
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center">
+          <AlertTriangle className="h-8 w-8 text-destructive/70 mx-auto mb-3" />
+          <h2 className="text-base font-bold text-foreground">Stock levels could not be loaded</h2>
+          <p className="text-sm text-muted-foreground mt-1">{operatorMessage(levelsRes.error)}</p>
+        </div>
+      </div>
+    );
   }
 
-  const { data, count } = await dbQuery
-    .range((page - 1) * limit, page * limit - 1)
-    .order('stock_quantity', { ascending: true });
+  const levels = levelsRes.data.data;
+  const meta = levelsRes.data.meta;
 
-  let products = (data ?? []).map(mapInventoryProduct);
+  const categories = categoriesRes.ok
+    ? categoriesRes.data.data.filter((category) => category.deletedAt === null)
+    : [];
 
-  // Client-side refine for low_stock filter using available_stock logic
-  if (stockFilter === 'low_stock') {
-    products = products.filter((p: Product) => {
-      const available = p.available_stock;
-      return available > 0 && available <= (p.low_stock_threshold ?? 5);
-    });
-  }
+  const products = statsRes.ok ? statsRes.data.data.products : null;
 
-  const total = count ?? 0;
-  const totalPages = Math.ceil(total / limit);
+  /*
+   * `lowStockCount` is `onHand <= threshold`, which INCLUDES zero. Subtracting
+   * gives the two disjoint groups an operator reads as "low" and "out", so the
+   * three counters add up to the total instead of double-counting the empty
+   * shelves.
+   */
+  const stats =
+    products === null
+      ? null
+      : {
+          total: products.total,
+          lowStock: Math.max(products.lowStockCount - products.outOfStockCount, 0),
+          outOfStock: products.outOfStockCount,
+          inStock: Math.max(products.total - products.lowStockCount, 0),
+        };
 
   return (
     <div className="space-y-5">
-      <UnwiredScreenWarning screen="inventory" />
-
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Inventory</h1>
-        <p className="text-sm text-muted-foreground mt-1">Monitor and manage marketplace stock levels.</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Stock levels and movements. Scarcest first — the order is the server&apos;s, because the
+          list exists to be worked down.
+        </p>
       </div>
 
       <Suspense fallback={<InventorySkeleton />}>
         <InventoryTable
-          initialProducts={products}
+          levels={levels}
           categories={categories}
-          brands={brands}
-          currentPage={page}
-          totalPages={totalPages}
-          total={total}
+          currentPage={meta.page}
+          totalPages={meta.totalPages}
+          total={meta.total}
           stats={stats}
-          recentActivity={recentActivity}
         />
       </Suspense>
     </div>

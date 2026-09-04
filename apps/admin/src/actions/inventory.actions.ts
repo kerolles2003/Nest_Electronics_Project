@@ -1,116 +1,144 @@
-'use server'
+'use server';
 
-import { createClient } from '@/lib/supabase'
-import { requireAdminActor } from '@/lib/api/identity'
-import { logAdminAction } from '@/lib/audit/log-action'
-import { logger } from '@/lib/logger'
-import { revalidatePath } from 'next/cache'
-import { z } from 'zod'
+import { revalidatePath } from 'next/cache';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { operatorMessage } from '@/lib/api/errors';
+import { requireAdminActor } from '@/lib/api/identity';
+import { ADJUSTMENT_TYPES } from '@/lib/api/types';
+import type { AdjustmentResult, AdjustmentType, InventoryEvent } from '@/lib/api/types';
 
-const adjustStockSchema = z.object({
-  productId: z.string().uuid(),
-  quantity: z.number().int().refine((v) => v !== 0, 'Quantity must be non-zero'),
-  reason: z.string().min(3, 'Reason must be at least 3 characters'),
-})
+/**
+ * Stock operations, through the API.
+ *
+ * ## What this replaces
+ *
+ * `adjust_stock_v2`, a Supabase RPC with two facts in the frozen record: its
+ * `EXECUTE` was granted to `anon` (F-CRIT-1 — anybody who could reach the
+ * database could move stock), and **zero `adjustment` events exist in
+ * production, so it never once completed successfully.** The screen above it
+ * has been writing into a function that does not work, into a database nothing
+ * reads.
+ *
+ * Its SEMANTICS survive because they were well designed and are now enforced
+ * server-side: a signed delta rather than a target, a required reason of at
+ * least three characters, a floor at zero. What is new is that the stock change
+ * and the ledger entry commit in ONE transaction, which is what makes
+ * `Σ quantityDelta == stock.onHand` an invariant instead of an aspiration —
+ * legacy wrote its ledger from a different code path, so the two diverged.
+ *
+ * ## No Zod here, and no local audit write
+ *
+ * Both were doing the API's job. The `AdjustStockDto` validates the delta, the
+ * reason length and the type, and returns a 400 with a per-field message that
+ * `operatorMessage` renders; a second copy of those rules in this file is a
+ * second place for them to drift. The audit record is written by the API inside
+ * the same transaction as the movement, so an adjustment that is not audited is
+ * not representable — which is a stronger guarantee than a `logAdminAction`
+ * call that can fail on its own after the stock has already moved.
+ */
 
-export async function adjustStockAction(formData: FormData) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
-
-  const raw = {
-    productId: formData.get('productId') as string,
-    quantity: parseInt(formData.get('quantity') as string, 10),
-    reason: (formData.get('reason') as string)?.trim() || '',
-  }
-
-  const parsed = adjustStockSchema.safeParse(raw)
-  if (!parsed.success) {
-    const messages = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
-    return { success: false, error: messages }
-  }
-
-  try {
-    /*
-     * `adjust_stock_v2` exists in the database but NOT in the committed
-     * generated types: packages/types/src/database.ts declares only
-     * generate_order_number, is_admin, release_expired_reservations and
-     * search_products. Until those types are regenerated from the live
-     * schema, this one call site is typed loosely rather than weakening the
-     * client for every other query.
-     */
-    const rpc = supabase.rpc as unknown as (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-
-    const { data, error: rpcError } = await rpc('adjust_stock_v2', {
-      p_product_id: parsed.data.productId,
-      p_quantity: parsed.data.quantity,
-      p_reason: parsed.data.reason,
-      p_admin_id: admin.id,
-      p_reference_type: 'manual',
-    } as any)
-
-    if (rpcError) {
-      logger.error('adjust_stock_v2 RPC failed', rpcError)
-      return { success: false, error: rpcError.message }
-    }
-
-    const result = data as any
-    if (!result.success) {
-      return { success: false, error: result.error }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'product:stock_adjust',
-      entityType: 'product',
-      entityId: parsed.data.productId,
-      changes: { delta: parsed.data.quantity, reason: parsed.data.reason },
-    })
-
-    logger.info(`Stock adjusted: product=${parsed.data.productId} delta=${parsed.data.quantity} by=${admin.id}`)
-
-    revalidatePath('/admin/inventory')
-    revalidatePath('/admin/products')
-    revalidatePath(`/admin/products/${parsed.data.productId}`)
-
-    return { success: true, newStock: result.newStock }
-  } catch (e) {
-    logger.error('adjustStockAction failed', e)
-    return { success: false, error: 'Internal server error' }
-  }
+export interface AdjustStockResult {
+  ok: boolean;
+  error?: string;
+  result?: AdjustmentResult;
 }
 
-export async function getInventoryTransactionsAction(productId: string, page: number, limit: number) {
-  /* CRITICAL: This action was missing auth validation. */
-  await requireAdminActor()
+/**
+ * A plain object, not `FormData`.
+ *
+ * The dialog is a client component that already holds typed state; passing
+ * `FormData` meant stringifying a number and parsing it back, which is where
+ * the old action's `parseInt` lived — and `parseInt('')` is `NaN`, which its
+ * schema then reported as "Expected number, received nan".
+ */
+export async function adjustStockAction(input: {
+  productId: string;
+  delta: number;
+  reason: string;
+  type: AdjustmentType;
+}): Promise<AdjustStockResult> {
+  await requireAdminActor();
 
-  const supabase = await createClient()
-  const offset = (page - 1) * limit
-
-  try {
-    const { data, count, error } = await supabase
-      .from('inventory_transactions')
-      .select('*, profiles(full_name, avatar_url)', { count: 'exact' })
-      .eq('product_id', productId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1) as any
-
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    return {
-      success: true,
-      data: data ?? [],
-      total: count ?? 0,
-      page,
-      limit,
-      totalPages: Math.ceil((count ?? 0) / limit),
-    }
-  } catch (e) {
-    logger.error('getInventoryTransactionsAction failed', e)
-    return { success: false, error: 'Internal server error' }
+  /*
+   * Two checks are made here and only two, both because they are about the
+   * REQUEST being well formed rather than about the rule:
+   *
+   *   - a non-integer delta cannot be sent as JSON `delta` at all
+   *   - a type outside the three an operator may post is a caller bug, not
+   *     something to show an operator a server error for
+   *
+   * Everything else — the non-zero delta, the reason length, the floor at zero,
+   * whether the product exists — is the API's, and its message is shown.
+   */
+  if (!Number.isInteger(input.delta)) {
+    return { ok: false, error: 'Enter a whole number of units.' };
   }
+
+  if (!ADJUSTMENT_TYPES.includes(input.type)) {
+    return { ok: false, error: 'Choose what kind of movement this is.' };
+  }
+
+  const res = await tryApi(() =>
+    api.adjustStock(input.productId, {
+      delta: input.delta,
+      reason: input.reason.trim(),
+      type: input.type,
+    }),
+  );
+
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
+
+  /*
+   * The dashboard's low-stock panel and the products list both read stock, so
+   * both are stale the moment this returns. `/admin`-prefixed paths are listed
+   * as well because `basePath` is `/admin` and the two forms are not
+   * interchangeable in the cache.
+   */
+  revalidatePath('/inventory');
+  revalidatePath('/admin/inventory');
+  revalidatePath('/products');
+  revalidatePath('/admin/products');
+  revalidatePath('/');
+  revalidatePath('/admin');
+
+  return { ok: true, result: res.data.data };
+}
+
+export interface StockHistoryResult {
+  ok: boolean;
+  error?: string;
+  events?: InventoryEvent[];
+  total?: number;
+  page?: number;
+  totalPages?: number;
+}
+
+/**
+ * One product's movement history.
+ *
+ * The whole ledger, not only what an operator posted: a `SALE` written inside
+ * an order's transaction is exactly what makes a balance explicable, and the
+ * legacy drawer could not show one because legacy left `created_by` NULL on
+ * every sale event (F-MED-2) and the rows were written by a path that did not
+ * always run.
+ */
+export async function getStockHistoryAction(
+  productId: string,
+  page = 1,
+  limit = 20,
+): Promise<StockHistoryResult> {
+  await requireAdminActor();
+
+  const res = await tryApi(() => api.stockHistory(productId, { page, limit }));
+
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
+
+  return {
+    ok: true,
+    events: res.data.data,
+    total: res.data.meta.total,
+    page: res.data.meta.page,
+    totalPages: res.data.meta.totalPages,
+  };
 }

@@ -6330,3 +6330,85 @@ the console and the invoice disagree about rounding.
 - Turbopack production build of `apps/admin`: 19/19 routes.
 - **Browser-unverified**: the window picker, the revenue caption and the
   customers cards have not been seen rendered in a browser.
+
+---
+
+# Part 7a — The inventory screen, on the API
+
+**Strays reaped before every run.** Checked before the build; 0 orphaned runners found.
+
+## What it was writing into
+
+`adjust_stock_v2`, a Supabase RPC with two facts in the frozen record:
+`EXECUTE` was granted to `anon` (**F-CRIT-1** — anybody who could reach the
+database could move stock), and **zero `adjustment` events exist in production,
+so it never once completed successfully.** The screen's central action did
+nothing, in a database nothing reads.
+
+Its *semantics* survive because they were well designed: a signed delta rather
+than a target, a required reason, a floor at zero. What is new is that the stock
+change and the ledger entry now commit in **one transaction**, which is what
+makes `Σ quantityDelta == stock.onHand` an invariant rather than an aspiration —
+legacy wrote its ledger from a different code path, so the two diverged.
+
+## Three things the old screen showed are gone, and each was an invention
+
+| Removed | Why |
+|---|---|
+| **Reserved / Available** columns | the API's stock is a single `onHand`; there is no reservation in the model. A column of zeroes describing a mechanism that does not exist |
+| **Brand filter** | `GET /admin/inventory` filters by search, category subtree, low-stock, out-of-stock. A dropdown that quietly does nothing is worse than no dropdown |
+| **Client-side low-stock refinement** | the old page fetched `stock <= 15` and then filtered in JavaScript against each product's threshold, so page 2 could be shorter than page 1 and the count above the table was never the count of rows below it. `?lowStock=true` is a database predicate against the product's OWN threshold |
+
+Added in their place: a **show-unpublished** toggle, because the API hides
+inactive products from a work list by default and an operator has to be able to
+find one they hid.
+
+## Decisions worth recording
+
+- **No sort control.** The endpoint orders by `onHand` ascending and offers no
+  alternative: the list exists to be worked down, so what runs out next is at
+  the top. A console control that cannot be honoured is worse than its absence.
+- **`state` is printed, never re-derived.** `IN_STOCK` / `LOW_STOCK` /
+  `OUT_OF_STOCK` comes from the server. The legacy console computed
+  availability in five places and got five answers.
+- **`balanceBefore` / `balanceAfter` are printed, never accumulated.** The
+  drawer does not add deltas up to reconstruct a running total: that is a second
+  opinion about a number the database already recorded inside the transaction
+  that moved the stock, and the two disagreeing is exactly how a decorative
+  ledger looks right until somebody checks it.
+- **The counters are the dashboard aggregate**, labelled "active products", and
+  they deliberately do NOT follow the show-unpublished toggle. A counter that
+  silently changes population when a filter moves is one nobody can reason
+  about. `lowStockCount − outOfStockCount` is used so "low" and "out" are
+  disjoint and the four tiles add up.
+- **No Zod in the action, and no local audit write.** Both were doing the API's
+  job. `AdjustStockDto` validates the delta, the reason and the type and returns
+  a per-field 400; a second copy drifts. The audit record is written by the API
+  *inside the same transaction as the movement*, so an unaudited adjustment is
+  not representable — stronger than a `logAdminAction` call that can fail on its
+  own after the stock has already moved.
+- **A failed list is stated, never rendered as an empty inventory.** "No
+  products found" because a request failed is the same class of lie as a
+  dashboard printing 0 orders.
+
+## Files
+
+- rewritten: `app/(dashboard)/inventory/page.tsx`,
+  `components/inventory/InventoryTable.tsx`,
+  `components/inventory/InventoryAdjustDialog.tsx`,
+  `actions/inventory.actions.ts`
+- replaced: `InventoryTransactionDrawer.tsx` → `InventoryHistoryDrawer.tsx`
+  (the ledger, including the `SALE` rows an operator can never post but needs to
+  read)
+- deleted: `getInventoryStats()` and `getInventoryTransactions()` from
+  `lib/services.ts` — dead Supabase readers
+- the `UnwiredScreenWarning` is **gone from this screen**, which is the whole
+  point of the banner being a to-do rather than a decoration
+
+## Verification
+
+- `tsc --noEmit` clean; ESLint 0 errors (5 pre-existing `any` warnings).
+- Turbopack production build: 19/19 routes.
+- **Browser-unverified.** No human or Playwright session has driven this screen.
+  The adjust path in particular writes real stock and has not been exercised
+  end-to-end from a browser.
