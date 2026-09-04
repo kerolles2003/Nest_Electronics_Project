@@ -1,314 +1,355 @@
 'use client';
 
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Pagination, StatusBadge } from '@nest/ui';
-import {
-  Search, X, ClipboardList, User, Package, Tag, ShoppingCart, Settings,
-  Filter, ChevronDown, Calendar, Loader2, Shield, FileText
-} from 'lucide-react';
+import Link from 'next/link';
+import { Pagination } from '@nest/ui';
+import type { AuditLogEntry } from '@/lib/api/types';
+import { Filter, ChevronDown, Loader2, Shield, X, ChevronRight, User, Globe } from 'lucide-react';
 
-interface AuditLog {
-  id: string;
-  action: string;
-  entity_type: string;
-  entity_id: string | null;
-  changes: any;
-  created_at: string;
-  profiles?: { full_name: string } | null;
-}
+/**
+ * The audit trail, from the API.
+ *
+ * ## What it used to show
+ *
+ * Supabase `admin_audit_logs`: a table with **zero rows**, which can no longer
+ * receive any — its `admin_id` has a foreign key to Supabase `profiles`, and
+ * the acting admin is an API account. So this screen displayed an empty audit
+ * log while the real trail filled up beside it, which is the legacy failure
+ * (`AUDIT-MODEL.md` §4: "read sixty-one times in that state") reproduced by a
+ * different mechanism.
+ *
+ * ## Three things it deliberately does not do
+ *
+ * **No text search.** The old toolbar had one — `action.ilike.%…%` joined to
+ * `profiles`. No index answers an unanchored pattern, so it would be a
+ * collection scan over two years of records on a screen an operator types into,
+ * and nobody discovered that because the table was empty. The filters offered
+ * here are the four §8 names, each served by a frozen index.
+ *
+ * **No stat tiles.** The old header showed total / today / this week, each its
+ * own `count: exact` query. Three extra aggregate reads to decorate a log that
+ * is read to answer a specific question — "what did this person do", "what
+ * happened to this order" — is a cost with no reader.
+ *
+ * **No edit and no delete.** There is no route to call. The trail is
+ * append-only and a two-year TTL is the only thing that removes a record: an
+ * audit trail somebody can edit is not an audit trail.
+ *
+ * ## The changes column is the point
+ *
+ * `{ before, after }` per field, never whole documents. It is collapsed by
+ * default because most rows are read for *who and when*, and expanded on demand
+ * because the ones that are read for *what* are the ones that matter.
+ */
 
 interface AuditLogTableProps {
-  initialLogs: AuditLog[];
+  logs: AuditLogEntry[];
+  actions: string[];
   currentPage: number;
   totalPages: number;
   total: number;
-  stats: {
-    total: number;
-    today: number;
-    thisWeek: number;
-  };
 }
 
-function formatDate(dateString: string) {
-  const d = new Date(dateString);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+/** `PRODUCT_PRICE_CHANGED` → `Product price changed`. */
+function humanise(action: string): string {
+  const words = action.toLowerCase().split('_');
+  const first = words[0] ?? '';
+
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(' ');
 }
 
-function formatRelativeTime(dateString: string) {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return formatDate(dateString);
-}
-
-function getEntityIcon(type: string) {
-  switch (type) {
-    case 'product': return Package;
-    case 'category': return Tag;
-    case 'brand': return Tag;
-    case 'order': return ShoppingCart;
-    case 'coupon': return Tag;
-    case 'review': return FileText;
-    case 'settings': return Settings;
-    default: return Shield;
+/**
+ * Colour by CONSEQUENCE, not by entity.
+ *
+ * An operator scanning this page is looking for the destructive and the
+ * authorization-changing rows; making every product action one colour and every
+ * order action another would bury both.
+ */
+function tone(action: string): string {
+  if (action.includes('DELETED') || action.includes('CANCELLED')) {
+    return 'border-destructive/20 bg-destructive/10 text-destructive';
   }
+  if (action.includes('ROLE') || action.includes('RESTORED')) {
+    return 'border-warning/20 bg-warning/10 text-warning';
+  }
+  if (action.includes('CREATED') || action.includes('PUBLISHED')) {
+    return 'border-success/20 bg-success/10 text-success';
+  }
+
+  return 'border-primary/20 bg-primary/10 text-primary';
 }
 
-function formatAction(action: string) {
-  return action.replace(/_/g, ' ').replace(/:/g, ' › ');
+function when(value: string): string {
+  return new Date(value).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-export function AuditLogTable({ initialLogs, currentPage, totalPages, total, stats }: AuditLogTableProps) {
+export function AuditLogTable({ logs, actions, currentPage, totalPages, total }: AuditLogTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  const [searchInput, setSearchInput] = useState(searchParams.get('search') || '');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
-  const search = searchParams.get('search') || '';
-  const entityFilter = searchParams.get('entity') || '';
-  const hasFilters = search || entityFilter;
+  const action = searchParams.get('action') ?? '';
+  const entityType = searchParams.get('entityType') ?? '';
+  const actorId = searchParams.get('actorId') ?? '';
+  const hasFilters = action !== '' || entityType !== '' || actorId !== '';
 
-  useEffect(() => {
-    if (searchInput === search) return;
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (searchInput) {
-        params.set('search', searchInput);
-      } else {
-        params.delete('search');
-      }
-      params.set('page', '1');
-      startTransition(() => {
-        router.push(`/audit-log?${params.toString()}`);
-      });
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [searchInput, search, router, searchParams]);
-
-  const updateQueryParam = (key: string, value: string) => {
+  const setParam = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (value) {
-      params.set(key, value);
-    } else {
-      params.delete(key);
-    }
-    if (key !== 'page') params.set('page', '1');
+    if (value !== '') params.set(key, value);
+    else params.delete(key);
+    params.set('page', '1');
     startTransition(() => {
       router.push(`/audit-log?${params.toString()}`);
     });
   };
 
-  const handlePageChange = (page: number) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('page', String(page));
-    startTransition(() => {
-      router.push(`/audit-log?${params.toString()}`);
-    });
-  };
-
-  const clearAllFilters = () => {
-    startTransition(() => {
-      router.push('/audit-log');
-    });
-  };
-
-  const filterChips: { key: string; label: string }[] = [];
-  if (search) filterChips.push({ key: 'search', label: `Search: "${search}"` });
-  if (entityFilter) filterChips.push({ key: 'entity', label: `Entity: ${entityFilter}` });
-
-  const statItems = [
-    { label: 'Total Entries', value: stats.total, icon: ClipboardList, color: 'primary' as const },
-    { label: 'Today', value: stats.today, icon: Calendar, color: 'success' as const },
-    { label: 'This Week', value: stats.thisWeek, icon: Calendar, color: 'warning' as const },
-  ];
+  const entityTypes = [...new Set(logs.map((log) => log.entity.type))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 
   return (
     <div className="space-y-5">
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {statItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <div key={item.label} className="rounded-xl border border-border bg-card p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className={`rounded-lg p-1.5 bg-${item.color}/10`}>
-                  <Icon className={`h-3.5 w-3.5 text-${item.color}`} />
-                </div>
-              </div>
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{item.label}</p>
-              <p className="text-lg font-bold tracking-tight text-foreground mt-0.5">{item.value.toLocaleString('en-EG')}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Toolbar */}
-      <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[240px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search by action or admin..."
-              value={searchInput}
-              className="h-10 w-full rounded-lg border border-border bg-background pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/10 transition-all outline-none"
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-            {searchInput && (
-              <button
-                onClick={() => setSearchInput('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs">
-                <Filter className="h-3 w-3 text-muted-foreground shrink-0" />
-                <span className="text-muted-foreground font-medium shrink-0 hidden sm:inline">Entity</span>
-                <select
-                  value={entityFilter}
-                  onChange={(e) => updateQueryParam('entity', e.target.value)}
-                  className="bg-transparent border-none focus:ring-0 cursor-pointer text-foreground font-semibold text-xs outline-none appearance-none pr-4 min-w-[80px]"
-                >
-                  <option value="">All Entities</option>
-                  <option value="product">Product</option>
-                  <option value="category">Category</option>
-                  <option value="brand">Brand</option>
-                  <option value="order">Order</option>
-                  <option value="coupon">Coupon</option>
-                  <option value="review">Review</option>
-                  <option value="settings">Settings</option>
-                </select>
-                <ChevronDown className="h-3 w-3 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            </div>
-            {hasFilters && (
-              <button onClick={clearAllFilters} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-all">
-                <X className="h-3.5 w-3.5" /> Clear
-              </button>
-            )}
-          </div>
-        </div>
-        {filterChips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Active:</span>
-            {filterChips.map(chip => (
-              <button
-                key={chip.key}
-                onClick={() => updateQueryParam(chip.key, '')}
-                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-[11px] font-semibold text-foreground hover:bg-muted transition-colors"
-              >
-                {chip.label}
-                <X className="h-3 w-3 text-muted-foreground" />
-              </button>
-            ))}
-          </div>
-        )}
-        {isPending && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Updating results...
-          </div>
-        )}
-      </div>
-
-      {/* Table */}
-      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/30 border-b border-border">
-                <th className="px-5 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Action</th>
-                <th className="px-5 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Entity</th>
-                <th className="px-5 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Admin</th>
-                <th className="px-5 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Details</th>
-                <th className="px-5 py-3 text-right text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Time</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {initialLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <ClipboardList className="h-8 w-8 text-muted-foreground/40" />
-                      <p className="text-sm font-medium text-muted-foreground">
-                        {hasFilters ? 'No entries match your filters' : 'No audit entries yet'}
-                      </p>
-                      <p className="text-xs text-muted-foreground/60">
-                        {hasFilters ? 'Try adjusting your filters.' : 'Admin actions will be logged here.'}
-                      </p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                initialLogs.map((log) => {
-                  const Icon = getEntityIcon(log.entity_type);
-                  return (
-                    <tr key={log.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="h-7 w-7 rounded-lg border border-border bg-muted flex items-center justify-center shrink-0">
-                            <Icon className="h-3.5 w-3.5 text-muted-foreground/50" />
-                          </div>
-                          <span className="text-xs font-bold text-foreground">{formatAction(log.action)}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <StatusBadge status={log.entity_type} />
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center shrink-0 border border-border">
-                            <User className="h-3 w-3 text-muted-foreground/50" />
-                          </div>
-                          <span className="text-xs font-semibold text-foreground">
-                            {log.profiles?.full_name ?? 'System'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        {log.entity_id && (
-                          <span className="text-[11px] font-mono text-muted-foreground">
-                            {log.entity_id.slice(0, 8)}…
-                          </span>
-                        )}
-                        {log.changes && (
-                          <span className="text-[10px] text-muted-foreground/60 ml-2">
-                            {JSON.stringify(log.changes).slice(0, 60)}
-                            {JSON.stringify(log.changes).length > 60 ? '…' : ''}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <span className="text-[11px] text-muted-foreground">{formatRelativeTime(log.created_at)}</span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-5 py-3 border-t border-border bg-muted/20 flex flex-wrap items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">
-            Showing <span className="font-semibold text-foreground">{initialLogs.length}</span> of <span className="font-semibold text-foreground">{total}</span> entries
-          </span>
-          {totalPages > 1 && (
-            <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={handlePageChange} />
+      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <Dropdown
+            label="Action"
+            value={action}
+            options={[
+              { value: '', label: 'Every action' },
+              ...actions.map((value) => ({ value, label: humanise(value) })),
+            ]}
+            onChange={(value) => setParam('action', value)}
+          />
+          <Dropdown
+            label="Entity"
+            value={entityType}
+            options={[
+              { value: '', label: 'Every entity' },
+              ...entityTypes.map((value) => ({ value, label: humanise(value) })),
+            ]}
+            onChange={(value) => setParam('entityType', value)}
+          />
+          {actorId !== '' && (
+            <button
+              type="button"
+              onClick={() => setParam('actorId', '')}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              One person only
+              <X className="h-3 w-3 text-muted-foreground" />
+            </button>
           )}
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                startTransition(() => {
+                  router.push('/audit-log');
+                });
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-muted-foreground transition-all hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" /> Clear
+            </button>
+          )}
+          {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">
+          {/*
+            Said rather than left to be discovered by an operator typing into a
+            search box that is not there.
+          */}
+          Filtered by action, entity and person — each served by an index. There is no free-text
+          search: no index answers one, and it would read two years of records per keystroke.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        {logs.length === 0 ? (
+          <div className="p-12 text-center">
+            <Shield className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+            <h3 className="text-base font-bold text-foreground">
+              {hasFilters ? 'Nothing matches these filters' : 'Nothing recorded yet'}
+            </h3>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+              {hasFilters
+                ? 'The trail has no entries for this combination.'
+                : 'Every administrative action is recorded here as it happens.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <ul className="divide-y divide-border">
+              {logs.map((log) => {
+                const open = expanded === log.id;
+
+                return (
+                  <li key={log.id} className="px-4 py-3 transition-colors hover:bg-muted/20">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-1.5 py-[2px] text-[10px] font-bold ${tone(log.action)}`}>
+                            {humanise(log.action)}
+                          </span>
+                          <span className="text-sm font-semibold text-foreground">
+                            {log.entity.label}
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            {log.entity.type}
+                          </span>
+                        </div>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                          <button
+                            type="button"
+                            onClick={() => setParam('actorId', log.actor.id)}
+                            className="inline-flex items-center gap-1 hover:text-primary hover:underline"
+                            title="Everything this person did"
+                          >
+                            <User className="h-3 w-3" />
+                            {log.actor.name}
+                            <span className="text-muted-foreground/60">({log.actor.role})</span>
+                          </button>
+                          {log.ip !== null && (
+                            <span className="inline-flex items-center gap-1 font-mono">
+                              <Globe className="h-3 w-3" />
+                              {log.ip}
+                            </span>
+                          )}
+                          <span>{when(log.createdAt)}</span>
+                        </div>
+                      </div>
+
+                      {(log.changes !== null || log.metadata !== null) && (
+                        <button
+                          type="button"
+                          onClick={() => setExpanded(open ? null : log.id)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <ChevronRight className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} />
+                          {open ? 'Hide' : 'What changed'}
+                        </button>
+                      )}
+                    </div>
+
+                    {open && (
+                      <div className="mt-2 space-y-2 rounded-lg border border-border bg-background p-3">
+                        {log.changes !== null && (
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <ChangeSide title="Before" values={log.changes.before} />
+                            <ChangeSide title="After" values={log.changes.after} />
+                          </div>
+                        )}
+                        {log.metadata !== null && (
+                          <div>
+                            <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Context
+                            </p>
+                            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-foreground">
+                              {JSON.stringify(log.metadata, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                        <p className="font-mono text-[10px] text-muted-foreground/70">
+                          {/* The one field that ties this row to a server log line. */}
+                          request {log.requestId}
+                        </p>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3">
+              <span className="text-xs text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{logs.length}</span> of{' '}
+                <span className="font-semibold text-foreground">{total}</span> records
+              </span>
+              {totalPages > 1 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPageChange={(page) => {
+                    const params = new URLSearchParams(searchParams.toString());
+                    params.set('page', String(page));
+                    startTransition(() => {
+                      router.push(`/audit-log?${params.toString()}`);
+                    });
+                  }}
+                />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <p className="text-[10px] text-muted-foreground">
+        Records are kept for two years and cannot be edited or deleted — there is no route to do
+        either. <Link href="/settings" className="hover:text-primary hover:underline">Settings</Link>
+      </p>
+    </div>
+  );
+}
+
+function ChangeSide({ title, values }: { title: string; values: Record<string, unknown> }) {
+  return (
+    <div>
+      <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </p>
+      <dl className="space-y-0.5">
+        {Object.entries(values).map(([key, value]) => (
+          <div key={key} className="flex gap-2 text-[11px]">
+            <dt className="shrink-0 font-mono text-muted-foreground">{key}</dt>
+            <dd className="min-w-0 break-words text-foreground">{JSON.stringify(value)}</dd>
+          </div>
+        ))}
+        {Object.keys(values).length === 0 && (
+          <span className="text-[11px] text-muted-foreground/60">—</span>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function Dropdown({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs">
+        <Filter className="h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="hidden shrink-0 font-medium text-muted-foreground sm:inline">{label}</span>
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={label}
+          className="min-w-[110px] appearance-none border-none bg-transparent pr-4 text-xs font-semibold text-foreground outline-none focus:ring-0"
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
       </div>
     </div>
   );

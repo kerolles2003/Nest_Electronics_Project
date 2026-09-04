@@ -6662,3 +6662,113 @@ was built to be: a to-do with a deadline, not a decoration.
   rest of the decommission.
 - **Browser-unverified.** Neither screen has been driven in a browser: not the
   create/edit round trip, not a reparent, not a delete or a restore.
+
+---
+
+# Part 7e — The audit trail becomes readable, and the KEEP/REMOVE pass
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+**Baseline before this part:** full API suite — 55 suites passed, 1 skipped
+(real-Cloudinary), **1288 passed, 0 failed**, zero database residue.
+
+## The trail was being written into a room with no door
+
+`AuditModule` carried a note from the day it was written: *"There is also no
+controller yet. Reading the log is an admin screen and belongs with the rest of
+the admin surface; writing it correctly is the part that had to exist first."*
+
+Writing has worked for several phases. Every catalogue, inventory, order and
+role change since is in `auditLogs` — and **nothing could read a single one of
+them.**
+
+Meanwhile the console's Audit Log screen read Supabase `admin_audit_logs`: a
+table with **zero rows** that can no longer receive any, because its `admin_id`
+has a foreign key to Supabase `profiles` and the acting admin has been an API
+account since Phase 6. So the console displayed an empty audit log beside a real
+one filling up — which is `AUDIT-MODEL.md` §4's own recorded failure ("read
+sixty-one times in that state") reproduced by a different mechanism.
+
+## Implemented exactly as §8 specifies it
+
+The frozen document names the route and its parameters verbatim:
+
+```
+GET /api/v1/admin/audit-logs
+    ?actorId=&action=&entityType=&entityId=&from=&to=&page=&limit=
+```
+
+Every one of those filters is served by one of the four frozen indexes — that is
+not a coincidence, the index set was designed for exactly these questions.
+
+- **No text search**, deliberately. No index answers an unanchored pattern, so
+  one would be a collection scan over two years of records on a screen an
+  operator types into. The Supabase screen had one (`action.ilike.%…%` joined to
+  `profiles`) against a table holding zero rows, so nobody ever discovered what
+  it cost.
+- **`GET /admin/audit-logs/actions`** returns the actions actually PRESENT, not
+  the whole thirty-member vocabulary. A filter offering options that match
+  nothing is decoration.
+- **`AuditReaderService` is a separate class from `AuditService` and is NOT
+  exported.** The writer goes to every module that audits; the reader goes only
+  to this module's controller. Nothing that writes the trail can list it, and
+  nothing anywhere can change it. `AuditService`'s methods never throw — an
+  audit write must not fail a business operation — and a read has the opposite
+  requirement, so putting both on one class would mean an object where half the
+  methods may fail silently.
+- **Sorted `{createdAt: -1, _id: -1}`.** One operation can audit twice in the
+  same millisecond, and a sort without a unique tail repeats a row on page two
+  while skipping another.
+
+## A test that was wrong, and the code that was right
+
+The changes-diff test first asserted `PRODUCT_UPDATED` for a price edit and
+failed. The code records **`PRODUCT_PRICE_CHANGED`** — and that distinction is
+the reason the vocabulary has thirty members rather than four: *"every price
+change since August"* is a question somebody asks, and it is unanswerable if a
+price edit looks like any other edit. The test was corrected and a second one
+added asserting a price edit does **not** appear under the generic action.
+
+## KEEP / REMOVE — every widget on every remaining screen
+
+| Screen / widget | Verdict | Why |
+|---|---|---|
+| **Dashboard** — Delivered revenue tile | KEEP | real, windowed, labelled (Part 6f) |
+| Dashboard — window picker | KEEP | governs revenue only, and says so |
+| Dashboard — Total orders / awaiting / ready / failed | KEEP | live queue counts, deliberately unwindowed |
+| Dashboard — Products, Customers | KEEP | current-state totals from the aggregate |
+| Dashboard — Recent orders table | KEEP | API, links resolve |
+| Dashboard — Low stock panel | KEEP | API, links to the wired inventory screen |
+| **Dashboard — Recent Activity** | **REPLACED** | read `admin_audit_logs` (0 rows, unwritable) and rendered "No recent activity" on a console where three orders had just been confirmed. Now the real trail, with a failure state that says *could not be loaded* rather than *nothing happened* |
+| Dashboard — Top Products | already REMOVED | its only source was a join through discarded `order_items` |
+| **Audit log** — the table | **REBUILT** on the API |
+| Audit log — text search | **REMOVED** | unindexable; see above |
+| Audit log — total/today/this-week tiles | **REMOVED** | three extra `count: exact` aggregates decorating a log that is read to answer a specific question |
+| **Settings** — shipping rates editor | KEEP | already API (Part 6c); 27 immutable rows, deletion refused |
+| **Coupons**, **Reviews** | KEEP + notice | Phase 8 domains — the API has no model, and PLAN's Phase 7 DoD excludes them explicitly. But an operator must not believe the work has an effect: there is no coupon field at checkout and no review anywhere on the storefront. `DomainNotLiveNotice` says so, in warning tone rather than alarm, because this is a schedule and not a defect |
+| `components/audit/AuditLogTable.tsx` | **DELETED** | a second copy of the component, imported by nothing |
+| `getRecentActivity` | **DELETED** | see Recent Activity |
+
+## Phase 7's definition of done, met
+
+> *admin has zero Supabase imports outside the Phase 8 domains.*
+
+`apps/admin/src` now touches Supabase in exactly three files —
+`actions/coupon.actions.ts`, `actions/review.actions.ts` and the
+`lib/audit/log-action.ts` those two call — plus `lib/supabase.ts` itself and the
+`getAdminServices()` that hands them the client. Every one of those is a Phase 8
+domain.
+
+## Verification
+
+- 16 new tests in `test/audit/admin-audit-log.spec.ts`; `test/audit` **40
+  passed, 40 total**, zero residue. They cover the 401/403/200 gate, the actor
+  snapshot surviving account deletion, the `userAgent` legacy silently dropped,
+  field-level changes rather than whole documents, newest-first ordering, all
+  four filters, a rejected action outside the vocabulary, a rejected undocumented
+  parameter, and — as the ABSENCE OF A ROUTE rather than a permission check —
+  that there is no POST, PATCH or DELETE.
+- Drift gate: additive, re-exported, **OK**.
+- `tsc --noEmit` and ESLint clean on API and admin; Turbopack build 18/18 routes.
+- **Browser-unverified**: the audit screen, the dashboard activity panel and the
+  two Phase 8 notices have not been seen rendered.

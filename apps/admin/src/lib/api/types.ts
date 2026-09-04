@@ -294,6 +294,42 @@ export interface AdminCustomerSummary {
   lastOrderAt: string | null;
 }
 
+// --- audit trail ------------------------------------------------------------
+
+/**
+ * One recorded administrative action.
+ *
+ * The actor is a SNAPSHOT, not a reference: the record has to stay readable
+ * after the account is deleted or renamed, which is exactly when an
+ * investigation wants it. So there is no id to follow for a name — the name and
+ * email are what they were at the time.
+ */
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  actor: { id: string; role: string; name: string; email: string };
+  entity: { type: string; id: string; label: string };
+  /** Only the fields that moved, never whole documents. */
+  changes: { before: Record<string, unknown>; after: Record<string, unknown> } | null;
+  metadata: Record<string, unknown> | null;
+  ip: string | null;
+  userAgent: string | null;
+  /** Correlates with the API's request log line. */
+  requestId: string;
+  createdAt: string;
+}
+
+export interface AuditLogParams {
+  page?: number;
+  limit?: number;
+  actorId?: string;
+  action?: string;
+  entityType?: string;
+  entityId?: string;
+  from?: string;
+  to?: string;
+}
+
 // --- catalogue taxonomy -----------------------------------------------------
 
 export interface AdminLocalizedText {

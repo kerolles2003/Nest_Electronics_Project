@@ -1,4 +1,5 @@
 import { requireAdmin, getAdminServices } from '@/lib/services';
+import { DomainNotLiveNotice } from '@/components/system/DomainNotLiveNotice';
 import { Suspense } from 'react';
 import { CouponsTable } from '@/components/coupons/CouponsTable';
 
@@ -86,6 +87,8 @@ export default async function CouponsPage(props: {
 
   return (
     <div className="space-y-5">
+      <DomainNotLiveNotice domain="coupons" />
+
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Coupons</h1>
         <p className="text-sm text-muted-foreground mt-1">Create and manage promotional coupon codes.</p>

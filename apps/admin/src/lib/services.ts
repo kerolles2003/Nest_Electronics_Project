@@ -34,11 +34,18 @@ import type { DashboardWindowKey } from '@/lib/api/types'
  * `SupabaseProductProvider` and `ProductService`. The admin no longer imports
  * `@nest/providers` or `@nest/services` at all.
  *
+ * The audit log went too, once the API grew the endpoint `AUDIT-MODEL.md` §8
+ * had specified all along — and `getRecentActivity` with it. That function read
+ * `admin_audit_logs`, a table with zero rows that can no longer receive any,
+ * and the dashboard panel above it rendered "No recent activity" on a console
+ * where an operator had just confirmed three orders. A panel that says nothing
+ * happened is a claim, not a neutral state.
+ *
  * What remains is `getAdminServices()`, which hands out one thing — the raw
- * client — to exactly three screens: **coupons, reviews and the audit log**.
- * The first two are Phase 8 domains and are rebuilt there. The audit log has an
- * API-side model but no admin endpoint yet, so it reads a table that is empty
- * going forward; `getRecentActivity` below says why.
+ * client — to exactly two screens: **coupons and reviews**. Both are Phase 8
+ * domains, rebuilt whole there rather than half-migrated now, and both say so
+ * on screen. That is Phase 7's definition of done: zero Supabase imports
+ * outside the Phase 8 domains.
  */
 
 export { requireAdmin } from '@/lib/api/identity'
@@ -147,44 +154,4 @@ export async function getDashboardStats(window?: DashboardWindowKey) {
     products: null,
     customers: null,
   };
-}
-
-
-/**
- * Recent ADMIN actions.
- *
- * ## Its order source was removed, and its remaining source is broken
- *
- * This used to merge two feeds: `order_status_history` and `admin_audit_logs`.
- * The first is a legacy-orders view — those rows are discarded (D-6) and
- * nothing writes them any more, because order transitions go through the API,
- * which records its own history ON THE ORDER and exposes it at
- * `GET /admin/orders/{id}` as `statusHistory[]`. So it is gone.
- *
- * `admin_audit_logs` remains the only source, and it will be EMPTY going
- * forward: its `admin_id` column has a foreign key to Supabase `profiles.id`,
- * and the acting admin is now an API account. `lib/audit/log-action.ts` refuses
- * those writes and says so once per process rather than letting the constraint
- * swallow them silently.
- *
- * An empty panel is the honest state. Filling it from the discarded table would
- * show activity that did not happen, and inventing an API-wide activity feed is
- * Phase 7's job — `AUDIT-MODEL.md` is where it belongs.
- */
-export async function getRecentActivity(limit = 8) {
-  const { supabase } = await getAdminServices()
-
-  const { data: recentAuditLogs } = await supabase
-    .from('admin_audit_logs')
-    .select('id, action, entity_type, entity_id, created_at')
-    .order('created_at', { ascending: false })
-    .limit(limit)
-
-  return (recentAuditLogs ?? []).map((a: any) => ({
-    id: a.id as string,
-    type: 'audit' as const,
-    title: `${(a.entity_type as string)?.replace(/_/g, ' ') ?? 'Item'} ${a.action as string}`,
-    description: a.entity_id ? `Ref: ${(a.entity_id as string).slice(0, 8)}…` : 'System action',
-    time: a.created_at as string,
-  }))
 }

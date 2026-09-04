@@ -950,6 +950,227 @@
         ]
       }
     },
+    "/api/v1/admin/audit-logs": {
+      "get": {
+        "description": "Every administrative action the system recorded: who, what, to which entity, from which\naddress, and — where the operation had a before and an after — **which fields changed**.\n\nThe actor is a SNAPSHOT, not a reference. §4 requires the record to stay readable after\nthe actor is deleted or renamed, which is exactly when it is most likely to be wanted, so\nthere is no join and no id to follow for a name.\n\nFilters: `actorId` (\"what has this person done\"), `action` (\"every price change\"),\n`entityType` + `entityId` (\"what happened to this order\"), and a `from`/`to` window. Each\nis served by one of the four frozen indexes.\n\n**There is no text search.** No index answers an unanchored pattern, so one would be a\ncollection scan over two years of records on a screen an operator types into. The\nSupabase screen this replaces had one — against a table holding zero rows, so nobody ever\ndiscovered what it cost.\n\nThe collection is APPEND-ONLY (§5 rule 4) and a two-year TTL is the only thing that ever\nremoves a record. There is no write, update or delete route here or anywhere.",
+        "operationId": "AdminAuditController_list_v1",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "1-based page number.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Items per page, 1–100.",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 24,
+              "example": 24,
+              "type": "number"
+            }
+          },
+          {
+            "name": "actorId",
+            "required": false,
+            "in": "query",
+            "description": "Everything one person did. Served by `audit_actor_history`.",
+            "schema": {
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ORDER_STATUS_CHANGED",
+                "ORDER_PAYMENT_CHANGED",
+                "PRODUCT_PRICE_CHANGED",
+                "PRODUCT_CREATED",
+                "PRODUCT_UPDATED",
+                "PRODUCT_PUBLISHED",
+                "PRODUCT_UNPUBLISHED",
+                "PRODUCT_DELETED",
+                "PRODUCT_RESTORED",
+                "CATEGORY_CREATED",
+                "CATEGORY_UPDATED",
+                "CATEGORY_DELETED",
+                "CATEGORY_RESTORED",
+                "BRAND_CREATED",
+                "BRAND_UPDATED",
+                "BRAND_DELETED",
+                "BRAND_RESTORED",
+                "MEDIA_DELETED",
+                "INVENTORY_ADJUSTED",
+                "USER_ROLE_CHANGED",
+                "USER_DELETED",
+                "SHIPPING_RATE_CHANGED"
+              ]
+            }
+          },
+          {
+            "name": "entityType",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ORDER",
+                "PRODUCT",
+                "CATEGORY",
+                "BRAND",
+                "USER",
+                "MEDIA",
+                "SHIPPING_RATE"
+              ]
+            }
+          },
+          {
+            "name": "entityId",
+            "required": false,
+            "in": "query",
+            "description": "Everything that happened to one thing. Pass `entityType` with it — the index leads on the type, so an id alone cannot seek.",
+            "schema": {
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "example": "2026-09-01T00:00:00.000Z",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "example": "2026-09-30T23:59:59.999Z",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The audit trail, newest first",
+        "tags": [
+          "admin · audit"
+        ]
+      }
+    },
+    "/api/v1/admin/audit-logs/actions": {
+      "get": {
+        "description": "For a filter dropdown. The vocabulary has thirty-odd members and most of them will never\nappear in a small shop’s log — offering all of them makes an operator choose between\noptions that match nothing, which is how a filter becomes decoration.",
+        "operationId": "AdminAuditController_actions_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditActionsResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The actions actually present in the trail",
+        "tags": [
+          "admin · audit"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "description": "Creates a `CUSTOMER` account and issues an email-verification challenge.\n\n**No session is returned.** The account must be verified before it can sign in, so the\nclient should show a \"check your email\" state rather than navigating to a guarded route.\n\nThe `role` field does not exist on this DTO. Sending one returns `400 UNKNOWN_FIELD`.\n\nRate limited to 3 requests per hour per IP.",
@@ -7822,6 +8043,186 @@
         },
         "required": [
           "role"
+        ]
+      },
+      "AuditActorDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "role": {
+            "type": "string",
+            "example": "ADMIN"
+          },
+          "name": {
+            "type": "string",
+            "example": "Mina Sobhy"
+          },
+          "email": {
+            "type": "string",
+            "example": "mina@example.test"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "name",
+          "email"
+        ]
+      },
+      "AuditEntityDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "ORDER",
+              "PRODUCT",
+              "CATEGORY",
+              "BRAND",
+              "USER",
+              "MEDIA",
+              "SHIPPING_RATE"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "label": {
+            "type": "string",
+            "example": "ESP32-WROOM-32",
+            "description": "Snapshotted, so the record stays readable after the entity is gone."
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "label"
+        ]
+      },
+      "AuditLogDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "ORDER_STATUS_CHANGED",
+              "ORDER_PAYMENT_CHANGED",
+              "PRODUCT_PRICE_CHANGED",
+              "PRODUCT_CREATED",
+              "PRODUCT_UPDATED",
+              "PRODUCT_PUBLISHED",
+              "PRODUCT_UNPUBLISHED",
+              "PRODUCT_DELETED",
+              "PRODUCT_RESTORED",
+              "CATEGORY_CREATED",
+              "CATEGORY_UPDATED",
+              "CATEGORY_DELETED",
+              "CATEGORY_RESTORED",
+              "BRAND_CREATED",
+              "BRAND_UPDATED",
+              "BRAND_DELETED",
+              "BRAND_RESTORED",
+              "MEDIA_DELETED",
+              "INVENTORY_ADJUSTED",
+              "USER_ROLE_CHANGED",
+              "USER_DELETED",
+              "SHIPPING_RATE_CHANGED"
+            ]
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AuditActorDto"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/AuditEntityDto"
+          },
+          "changes": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true,
+            "description": "Only the fields that changed, as `{ before, after }`. Never whole documents, and values that must not be stored are already replaced by a marker at write time."
+          },
+          "metadata": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true
+          },
+          "ip": {
+            "type": "string",
+            "example": "203.0.113.7",
+            "nullable": true
+          },
+          "userAgent": {
+            "type": "string",
+            "example": "Mozilla/5.0",
+            "nullable": true,
+            "description": "The exact field whose absence silently broke the legacy audit trail."
+          },
+          "requestId": {
+            "type": "string",
+            "example": "e5e95c05-cf9a-4a6b-80c8-26ad30792c70",
+            "description": "Correlates this record with the request log line and the error response."
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actor",
+          "entity",
+          "changes",
+          "metadata",
+          "ip",
+          "userAgent",
+          "requestId",
+          "createdAt"
+        ]
+      },
+      "AuditLogListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLogDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PaginationMetaDto"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AuditActionsResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "example": [
+              "ORDER_CONFIRMED",
+              "PRODUCT_UPDATED"
+            ],
+            "description": "The actions actually PRESENT in the trail, not the whole vocabulary. A filter offering thirty options that match nothing is a filter nobody uses.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "data"
         ]
       },
       "RegisterDto": {

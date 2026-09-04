@@ -1,4 +1,4 @@
-import { requireAdmin, getDashboardStats, getRecentActivity } from '@/lib/services';
+import { requireAdmin, getDashboardStats } from '@/lib/services';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { orderStatusCounts } from '@/lib/api/order-stats';
@@ -168,34 +168,79 @@ function WindowPicker({ active }: { active: DashboardWindowKey | null }) {
 /*  Async Components (streamed via Suspense)                          */
 /* ------------------------------------------------------------------ */
 
+/** `PRODUCT_PRICE_CHANGED` → `Product price changed`. */
+function humaniseAction(action: string): string {
+  const words = action.toLowerCase().split('_');
+  const first = words[0] ?? '';
+
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(' ');
+}
+
+/**
+ * The real audit trail, eight most recent.
+ *
+ * ## What this replaced, and why it was worse than empty
+ *
+ * Supabase `admin_audit_logs` — a table with zero rows that can no longer
+ * receive any, because its `admin_id` has a foreign key to Supabase `profiles`
+ * and the acting admin is an API account. The panel rendered "No recent
+ * activity" on a console where an operator had just confirmed three orders.
+ *
+ * A panel that says nothing happened is not neutral. It is a claim, and it was
+ * false every time it was read.
+ */
 async function ActivityFeed() {
-  const activities = await getRecentActivity(8);
+  const result = await tryApi(() => api.listAuditLogs({ limit: 8 }));
 
   return (
     <Card>
-      <CardHeader className="py-3">
+      <CardHeader className="py-3 flex flex-row items-center justify-between">
         <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
           <Activity className="h-4 w-4 text-primary" />
           Recent Activity
         </CardTitle>
+        <Link href="/audit-log" className="text-xs font-semibold text-primary hover:text-primary-hover transition-colors flex items-center gap-1">
+          Audit log <ArrowUpRight className="h-3 w-3" />
+        </Link>
       </CardHeader>
       <div className="px-0">
-        {activities.length > 0 ? (
+        {!result.ok && (
+          /*
+            NOT "no recent activity". The trail could not be read, and saying
+            nothing happened because a request failed is the exact lie this
+            panel used to tell every time it rendered.
+          */
+          <div className="flex flex-col items-center justify-center py-8 text-center px-5">
+            <AlertTriangle className="h-6 w-6 text-destructive/60 mb-2" />
+            <p className="text-xs font-medium text-foreground">Activity could not be loaded</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{result.error.message}</p>
+          </div>
+        )}
+
+        {result.ok && result.data.data.length > 0 && (
           <div className="divide-y divide-border">
-            {activities.map((activity) => (
-              <div key={activity.id} className="flex items-start gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
+            {result.data.data.map((entry) => (
+              <div key={entry.id} className="flex items-start gap-3 px-5 py-2.5 hover:bg-surface-high/30 transition-colors duration-150">
                 <div className="mt-0.5 rounded-full p-1.5 shrink-0 bg-purple/10">
                   <Activity className="h-3 w-3 text-purple" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground truncate">{activity.title}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{activity.description}</p>
-                  <p className="text-[10px] text-foreground-subtle mt-0.5">{formatRelativeTime(activity.time)}</p>
+                  <p className="text-xs font-semibold text-foreground truncate">
+                    {humaniseAction(entry.action)}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {entry.entity.label} · {entry.actor.name}
+                  </p>
+                  <p className="text-[10px] text-foreground-subtle mt-0.5">
+                    {formatRelativeTime(entry.createdAt)}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
-        ) : (
+        )}
+
+        {result.ok && result.data.data.length === 0 && (
           <div className="flex flex-col items-center justify-center py-8 text-center px-5">
             <Clock className="h-6 w-6 text-muted-foreground/40 mb-2" />
             <p className="text-xs font-medium text-muted-foreground">No recent activity</p>

@@ -1,4 +1,5 @@
 import { requireAdmin, getAdminServices } from '@/lib/services';
+import { DomainNotLiveNotice } from '@/components/system/DomainNotLiveNotice';
 import { Suspense } from 'react';
 import { ReviewsTable } from '@/components/reviews/ReviewsTable';
 
@@ -77,6 +78,8 @@ export default async function ReviewsPage(props: {
 
   return (
     <div className="space-y-5">
+      <DomainNotLiveNotice domain="reviews" />
+
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Reviews</h1>
         <p className="text-sm text-muted-foreground mt-1">Moderate product reviews and manage the approval queue.</p>

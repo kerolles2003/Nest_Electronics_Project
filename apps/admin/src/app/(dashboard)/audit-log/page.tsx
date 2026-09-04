@@ -1,100 +1,99 @@
-import { requireAdmin, getAdminServices } from '@/lib/services';
+import { requireAdmin } from '@/lib/services';
 import { Suspense } from 'react';
 import { AuditLogTable } from '@/components/audit-log/AuditLogTable';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { operatorMessage } from '@/lib/api/errors';
+import { AlertTriangle } from 'lucide-react';
+
+/**
+ * The audit trail, from the API.
+ *
+ * ## What this screen was showing until now
+ *
+ * Supabase `admin_audit_logs`: a table with **zero rows**, which can no longer
+ * receive any — its `admin_id` has a foreign key to Supabase `profiles`, and
+ * the acting admin has been an API account since Phase 6. So an empty audit log
+ * was displayed while the real one filled up beside it, which is precisely the
+ * legacy failure `AUDIT-MODEL.md` §4 records: an empty table that read as "no
+ * admin activity yet" rather than "this subsystem is broken", looked at
+ * sixty-one times in that state.
+ *
+ * The trail itself was never the problem. Every catalogue, inventory, order and
+ * role change since Phase 4 is in `auditLogs`; what was missing was any way to
+ * read it, and §8 specified the endpoint all along.
+ */
 
 function AuditSkeleton() {
   return (
     <div className="space-y-5 animate-pulse">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-border bg-card p-4 h-20" />
-        ))}
-      </div>
-      <div className="rounded-xl border border-border bg-card h-12" />
-      <div className="rounded-xl border border-border bg-card h-96" />
+      <div className="h-16 rounded-xl border border-border bg-card" />
+      <div className="h-96 rounded-xl border border-border bg-card" />
     </div>
   );
+}
+
+function one(value: string | string[] | undefined): string {
+  return (Array.isArray(value) ? value[0] : value) ?? '';
 }
 
 export default async function AuditLogPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await requireAdmin();
-  const { supabase } = await getAdminServices();
   const sp = await props.searchParams;
 
-  const page = Number(sp.page) || 1;
-  const search = (sp.search as string) || '';
-  const entityFilter = (sp.entity as string) || '';
-  const limit = 25;
+  const page = Number(one(sp['page'])) || 1;
 
-  let query = (supabase as any)
-    .from('admin_audit_logs')
-    .select('*, profiles(full_name)', { count: 'exact' })
-    .order('created_at', { ascending: false });
-
-  if (search) {
-    query = query.or(`action.ilike.%${search}%,profiles.full_name.ilike.%${search}%`);
-  }
-  if (entityFilter) {
-    query = query.eq('entity_type', entityFilter);
-  }
-
-  const { data, count } = await query
-    .range((page - 1) * limit, page * limit - 1);
-
-  const logs = (data ?? []) as Array<{
-    id: string;
-    action: string;
-    entity_type: string;
-    entity_id: string | null;
-    changes: any;
-    created_at: string;
-    profiles?: { full_name: string } | null;
-  }>;
-
-  const total = count ?? 0;
-  const totalPages = Math.ceil(total / limit);
-
-  /* Stats */
-  const { count: totalCount } = await (supabase as any)
-    .from('admin_audit_logs')
-    .select('*', { count: 'exact', head: true });
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const startOfWeek = new Date(now.getTime() - 7 * 86400000).toISOString();
-
-  const { count: todayCount } = await (supabase as any)
-    .from('admin_audit_logs')
-    .select('*', { count: 'exact', head: true })
-    .gte('created_at', startOfToday);
-
-  const { count: weekCount } = await (supabase as any)
-    .from('admin_audit_logs')
-    .select('*', { count: 'exact', head: true })
-    .gte('created_at', startOfWeek);
+  const [logsRes, actionsRes] = await Promise.all([
+    tryApi(() =>
+      api.listAuditLogs({
+        page,
+        limit: 25,
+        action: one(sp['action']),
+        entityType: one(sp['entityType']),
+        actorId: one(sp['actorId']),
+      }),
+    ),
+    tryApi(() => api.auditActions()),
+  ]);
 
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Audit Log</h1>
-        <p className="text-sm text-muted-foreground mt-1">View a complete history of admin actions across the system.</p>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">Audit log</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Every administrative action, with who did it and which fields changed. Append-only, kept
+          for two years.
+        </p>
       </div>
 
-      <Suspense fallback={<AuditSkeleton />}>
-        <AuditLogTable
-          initialLogs={logs}
-          currentPage={page}
-          totalPages={totalPages}
-          total={total}
-          stats={{
-            total: totalCount ?? 0,
-            today: todayCount ?? 0,
-            thisWeek: weekCount ?? 0,
-          }}
-        />
-      </Suspense>
+      {logsRes.ok ? (
+        <Suspense fallback={<AuditSkeleton />}>
+          <AuditLogTable
+            logs={logsRes.data.data}
+            actions={actionsRes.ok ? actionsRes.data.data : []}
+            currentPage={logsRes.data.meta.page}
+            totalPages={logsRes.data.meta.totalPages}
+            total={logsRes.data.meta.total}
+          />
+        </Suspense>
+      ) : (
+        /*
+         * An unreadable trail is stated as unreadable. An empty table here is
+         * the exact shape of the failure this screen exists to have stopped
+         * repeating.
+         */
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-destructive/70" />
+          <h2 className="text-base font-bold text-foreground">The audit trail could not be read</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{operatorMessage(logsRes.error)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            This is not the same as an empty log. Nothing has been lost — the records are written by
+            the API and are still there.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

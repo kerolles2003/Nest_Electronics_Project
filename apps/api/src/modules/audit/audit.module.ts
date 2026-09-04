@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AuditReaderService } from './application/audit-reader.service';
 import { AuditService } from './application/audit.service';
+import { AdminAuditController } from './presentation/admin-audit.controller';
 import { AuditLog, AuditLogSchema } from './infrastructure/schemas/audit-log.schema';
 
 /**
@@ -8,19 +10,29 @@ import { AuditLog, AuditLogSchema } from './infrastructure/schemas/audit-log.sch
  *
  * Authority: docs/architecture/AUDIT-MODEL.md.
  *
- * Exports `AuditService` and nothing else. There is deliberately no repository
- * export, no update path and no delete path: §5 rule 4 makes `auditLogs`
- * append-only, and the TTL is the only thing that removes a record. A module
- * that exported a way to modify the trail would make the trail an opinion.
+ * Exports `AuditService` — the WRITER — and nothing else. There is deliberately
+ * no repository export, no update path and no delete path: §5 rule 4 makes
+ * `auditLogs` append-only, and the TTL is the only thing that removes a record.
+ * A module that exported a way to modify the trail would make the trail an
+ * opinion.
  *
- * There is also no controller yet. Reading the log is an admin screen and
- * belongs with the rest of the admin surface; writing it correctly is the part
- * that had to exist first, because every administrative action taken before the
- * mechanism exists is unrecoverable.
+ * ## The controller that "did not exist yet" now does
+ *
+ * This module carried that note for several phases, with the reason: *writing
+ * it correctly is the part that had to exist first, because every
+ * administrative action taken before the mechanism exists is unrecoverable.*
+ * Writing has worked for several phases; what was missing was any way to read
+ * it, and AUDIT-MODEL.md §8 specifies the route.
+ *
+ * `AuditReaderService` is a provider and is NOT exported. The writer goes to
+ * every module that audits; the reader goes only to this module's own
+ * controller. So nothing that writes the trail can list it, and nothing
+ * anywhere can change it.
  */
 @Module({
   imports: [MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }])],
-  providers: [AuditService],
+  controllers: [AdminAuditController],
+  providers: [AuditService, AuditReaderService],
   exports: [AuditService],
 })
 export class AuditModule {}

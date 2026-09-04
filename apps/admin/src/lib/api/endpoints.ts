@@ -13,6 +13,8 @@ import type {
   AdminProduct,
   AdminProductSort,
   AdminProductState,
+  AuditLogEntry,
+  AuditLogParams,
   AuthUser,
   CreateBrandBody,
   CreateCategoryBody,
@@ -285,6 +287,39 @@ export function listCustomers(
 
 export function getCustomer(id: string): Promise<Envelope<AdminCustomerSummary>> {
   return apiFetch(`/admin/customers/${id}`);
+}
+
+// --- audit trail ------------------------------------------------------------
+
+/**
+ * The audit trail, newest first.
+ *
+ * There is deliberately NO text search: no index answers an unanchored pattern,
+ * so one would be a collection scan over two years of records. The Supabase
+ * screen this replaces had one — against a table holding zero rows, so nobody
+ * ever discovered what it cost.
+ */
+export function listAuditLogs(params: AuditLogParams = {}): Promise<PagedEnvelope<AuditLogEntry>> {
+  const query = new URLSearchParams();
+
+  if (params.page !== undefined) query.set('page', String(params.page));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.actorId !== undefined && params.actorId !== '') query.set('actorId', params.actorId);
+  if (params.action !== undefined && params.action !== '') query.set('action', params.action);
+  if (params.entityType !== undefined && params.entityType !== '') {
+    query.set('entityType', params.entityType);
+  }
+  if (params.entityId !== undefined && params.entityId !== '') query.set('entityId', params.entityId);
+  if (params.from !== undefined && params.from !== '') query.set('from', params.from);
+  if (params.to !== undefined && params.to !== '') query.set('to', params.to);
+
+  const suffix = query.toString();
+  return apiFetch(`/admin/audit-logs${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+/** The actions actually PRESENT in the trail — a filter listing the whole vocabulary is decoration. */
+export function auditActions(): Promise<Envelope<string[]>> {
+  return apiFetch('/admin/audit-logs/actions');
 }
 
 // --- catalogue taxonomy -----------------------------------------------------
