@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { refresh, revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
@@ -30,7 +30,11 @@ export async function updateShippingRateAction(
     return { ok: false, error: operatorMessage(res.error) };
   }
 
+  // A ROUTE path, not a URL: `basePath` is not part of what `revalidatePath`
+  // takes, so the `/admin/settings` that used to sit here named a route that
+  // does not exist and revalidated nothing.
   revalidatePath('/settings');
-  revalidatePath('/admin/settings');
+  refresh();
+
   return { ok: true, rate: res.data.data };
 }

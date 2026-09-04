@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { refresh, revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
@@ -96,10 +96,12 @@ function fieldErrorsFrom(error: {
  * are stale too — not only the taxonomy screen the operator is looking at.
  */
 function revalidateTaxonomy(): void {
+  // Route paths, not URLs — `basePath` is not part of them.
   for (const path of ['/categories', '/brands', '/products', '/inventory', '/']) {
     revalidatePath(path);
-    revalidatePath(`/admin${path === '/' ? '' : path}`);
   }
+
+  refresh();
 }
 
 function categoryBody(input: CategoryInput) {

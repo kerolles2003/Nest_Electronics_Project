@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { refresh, revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
@@ -91,16 +91,20 @@ export async function adjustStockAction(input: {
 
   /*
    * The dashboard's low-stock panel and the products list both read stock, so
-   * both are stale the moment this returns. `/admin`-prefixed paths are listed
-   * as well because `basePath` is `/admin` and the two forms are not
-   * interchangeable in the cache.
+   * both are stale the moment this returns.
+   *
+   * These are ROUTE paths, not URLs: `revalidatePath` takes the route file
+   * structure, so `basePath` is NOT included. An `/admin/inventory` alongside
+   * `/inventory` — which this console did in a couple of places — names a route
+   * that does not exist and revalidates nothing.
+   *
+   * `refresh()` then updates the client router, so the screen the operator is
+   * looking at re-reads without the component having to ask.
    */
   revalidatePath('/inventory');
-  revalidatePath('/admin/inventory');
   revalidatePath('/products');
-  revalidatePath('/admin/products');
   revalidatePath('/');
-  revalidatePath('/admin');
+  refresh();
 
   return { ok: true, result: res.data.data };
 }

@@ -6772,3 +6772,53 @@ domain.
 - `tsc --noEmit` and ESLint clean on API and admin; Turbopack build 18/18 routes.
 - **Browser-unverified**: the audit screen, the dashboard activity panel and the
   two Phase 8 notices have not been seen rendered.
+
+---
+
+# Part 7f — `revalidatePath` was being handed URLs, not routes
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+## The defect, found by reading the framework docs rather than by a failure
+
+Every server action in this console called `revalidatePath` twice per path:
+
+```ts
+revalidatePath('/products');
+revalidatePath('/admin/products');   // ← does nothing
+```
+
+`revalidatePath` takes **the route file structure**, not a URL. `basePath` is
+not part of it. So the second call in each pair named a route that does not
+exist and revalidated nothing — quietly, forever, with no error to notice.
+
+It was in `shipping-rates.actions.ts` before this session and I copied the
+pattern into four new action files rather than checking. `apps/admin/AGENTS.md`
+says to read `node_modules/next/dist/docs/` before writing code against this
+version, and this is exactly what that instruction is for.
+
+## And a better tool that this version has
+
+Next 16 exports `refresh()` from `next/cache`, callable inside a Server Action,
+which refreshes the client router. That is what makes the screen in front of the
+operator re-read — previously each client component had to remember
+`router.refresh()`, and `ProductImageManager` did not, so an attach would have
+appeared to do nothing until the operator navigated away and back.
+
+Every action now ends with the real route paths plus one `refresh()`.
+
+## Files
+
+`inventory.actions.ts`, `product.actions.ts`, `product-image.actions.ts`,
+`category-brand.actions.ts`, `shipping-rates.actions.ts` — the last of which had
+the original mistake.
+
+Also removed while there: a dead `sr-only` button left in `ProductForm`, and an
+unnecessary `as SpecRow[]` cast.
+
+## Verification
+
+- `tsc --noEmit` clean; ESLint 0 errors; Turbopack build 18/18 routes.
+- **Still browser-unverified**, and this is precisely the class of defect a
+  browser pass would have caught: nothing about it is visible to a type checker
+  or a build.

@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { refresh, revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
@@ -54,11 +54,15 @@ export interface ImageActionResult {
   product?: AdminProduct;
 }
 
+/** Route paths, not URLs — `basePath` is not part of them. See `product.actions.ts`. */
 function revalidateProduct(productId: string): void {
   revalidatePath(`/products/${productId}/edit`);
-  revalidatePath(`/admin/products/${productId}/edit`);
   revalidatePath('/products');
-  revalidatePath('/admin/products');
+
+  // The manager renders straight from the product prop, so the screen only
+  // updates when the route re-reads. Without this an attach appears to do
+  // nothing until the operator navigates away and back.
+  refresh();
 }
 
 /**

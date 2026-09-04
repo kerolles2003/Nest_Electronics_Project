@@ -11,7 +11,7 @@ import {
   unpublishProductAction,
   type ProductFormInput,
 } from '@/actions/product.actions';
-import { ProductSpecsEditor, emptySpec, type SpecRow } from './ProductSpecsEditor';
+import { ProductSpecsEditor } from './ProductSpecsEditor';
 import { ProductImageManager } from './ProductImageManager';
 import type { AdminBrand, AdminCategory, AdminProduct } from '@/lib/api/types';
 import {
@@ -405,15 +405,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
         </SectionCard>
 
         <SectionCard title="Specifications" icon={Tag}>
-          <ProductSpecsEditor specs={form.specs as SpecRow[]} onChange={(specs) => set('specs', specs)} />
-          {form.specs.length === 0 && (
-            <button
-              type="button"
-              onClick={() => set('specs', [emptySpec()])}
-              className="sr-only"
-              aria-hidden
-            />
-          )}
+          <ProductSpecsEditor specs={form.specs} onChange={(specs) => set('specs', specs)} />
         </SectionCard>
 
         {mode === 'edit' && product !== undefined ? (

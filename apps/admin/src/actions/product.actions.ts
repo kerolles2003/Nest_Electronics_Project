@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { refresh, revalidatePath } from 'next/cache';
 import { tryApi } from '@/lib/api/client';
 import * as api from '@/lib/api/endpoints';
 import { operatorMessage } from '@/lib/api/errors';
@@ -185,18 +185,26 @@ function fieldErrorsFrom(error: {
   return errors;
 }
 
+/**
+ * ROUTE paths, not URLs.
+ *
+ * `revalidatePath` takes the route file structure, so `basePath` is not part of
+ * it: `/products`, never `/admin/products`. The second form names a route that
+ * does not exist and revalidates nothing — it was in this console in a couple
+ * of places, doing nothing quietly.
+ *
+ * `refresh()` updates the client router so the screen in front of the operator
+ * re-reads, rather than leaving each component to call `router.refresh()` and
+ * one of them to forget.
+ */
 function revalidateCatalogue(productId?: string): void {
   revalidatePath('/products');
-  revalidatePath('/admin/products');
   revalidatePath('/inventory');
-  revalidatePath('/admin/inventory');
   revalidatePath('/');
-  revalidatePath('/admin');
 
-  if (productId !== undefined) {
-    revalidatePath(`/products/${productId}/edit`);
-    revalidatePath(`/admin/products/${productId}/edit`);
-  }
+  if (productId !== undefined) revalidatePath(`/products/${productId}/edit`);
+
+  refresh();
 }
 
 /**
