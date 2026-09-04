@@ -50,6 +50,7 @@ export function AuthShell({
           src="/images/auth-bg.webp"
           alt=""
           fill
+          sizes="50vw"
           className="object-cover opacity-60 mix-blend-overlay"
           priority
         />
@@ -92,7 +93,10 @@ export function AuthShell({
           </div>
 
           <div className="text-white/40 text-sm font-medium">
-            © 2026 Nest Electronics. All rights reserved.
+            {/* Was a hard-coded year, and the footer's hard-coded year said
+                something different. One of the two was always going to be
+                wrong; now neither can be. */}
+            © {new Date().getFullYear()} Nest Electronics. All rights reserved.
           </div>
         </div>
       </div>
