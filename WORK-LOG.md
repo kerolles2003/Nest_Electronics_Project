@@ -7127,3 +7127,35 @@ The panel above the list also promised something the system cannot do — *"Sign
 in to sync your wishlist across devices"*. There is no wishlist endpoint;
 server-side wishlists are Phase 8. It now says what is true: saved in this
 browser only.
+
+## The product page: two dead controls and two wrong prices
+
+The most-visited page in the catalogue had a **tab bar whose three tabs did
+nothing**. "Description", "Specifications" and "Reviews (38)" were plain
+`<button>`s in a server component — no handler, no state, nothing to switch —
+while the description *and* the specifications table rendered stacked below
+regardless. The Reviews tab was the worse half: reviews are explicitly not in
+v1, so it advertised a feature that does not exist and then did not respond. The
+image thumbnails were the same shape of lie: `cursor-pointer`, a hover-scale, a
+hover-opacity lift and a selected ring, none of it wired to anything, on `<div>`s
+in a server component.
+
+Both removed rather than faked. The sections keep their own headings, so nothing
+readable stopped being readable, and the thumbnails stay as what they honestly
+are — evidence that three photographs exist.
+
+The price line was wrong twice over. `formatPrice` returned `EGP 280` and every
+call site appended its own `EGP`, so the largest text on the page read
+**"EGP 280 EGP"**. And it was `Math.round`, so 14999 piastres — 149.99 EGP, the
+commonest shape a price takes — displayed as **150 EGP**, a pound above what the
+customer would actually be charged. The cart, the checkout quote and the order
+confirmation all use the server's `Money.formatted`, so the product page was the
+one screen in the system disagreeing about the price of the thing being sold.
+
+The number is now right. The **layering is still not**: the view model divides
+`pricing.basePrice.amount` by 100 and discards `formatted`, which is exactly
+what `MONEY-MODEL.md` says clients must not do. Using `formatted` means giving
+up the design where the amount is large and the currency small beside it — a
+design decision, not this pass's to take. The three entries in
+`money-formatting.spec.ts` still cover it, and their call sites are unchanged so
+the guard's both-directions check stays green.

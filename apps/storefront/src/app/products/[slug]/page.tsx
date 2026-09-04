@@ -44,8 +44,43 @@ export const dynamic = "force-dynamic"
  * account; the LAYOUT is driven by real counts and real dimensions either way.
  */
 
+/**
+ * The number only. The currency is rendered separately, smaller, beside it.
+ *
+ * ## It printed the currency twice
+ *
+ * This used to return `EGP 280`, and every call site then appended its own
+ * `EGP` — so the most important line on the product page read **"EGP 280 EGP"**,
+ * and the struck-through original read "EGP 325 EGP". Returning digits matches
+ * `packages/ui/src/product-card.tsx`, which is where the same price appears on
+ * the way to this page.
+ *
+ * ## And it rounded the piastres away
+ *
+ * It was also `Math.round`, so a product priced at 14999 piastres — 149.99 EGP,
+ * the commonest shape a price takes — was shown as **150 EGP**, a pound more
+ * than the customer would be charged. The cart, the checkout quote and the
+ * order confirmation all use the server's `Money.formatted` and would each have
+ * said 149.99, so the product page was the one screen disagreeing with the rest
+ * of the system about the price of the thing being sold.
+ *
+ * Fractions appear only when there are any: whole-pound prices, which most of
+ * this catalogue uses, still render as `280` and not `280.00`.
+ *
+ * ## What this still is not
+ *
+ * `MONEY-MODEL.md` says the server produces `formatted` precisely so no client
+ * re-derives a price, and this is still a client re-deriving one — the view
+ * model divides `pricing.basePrice.amount` by 100 and throws the formatted
+ * string away. The number is now right; the layering is not. Using `formatted`
+ * means giving up the design where the amount is large and the currency small
+ * beside it, which is a design decision and not this pass's to take.
+ */
 function formatPrice(price: number) {
-  return `EGP ${Math.round(price).toLocaleString()}`
+  return price.toLocaleString('en-EG', {
+    minimumFractionDigits: Number.isInteger(price) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })
 }
 
 /**
@@ -266,15 +301,30 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
               </div>
             )}
           </div>
+          {/*
+            A strip of the product's other photographs — and only that.
+
+            It used to carry `cursor-pointer`, a hover-scale, a hover-opacity
+            lift and a "selected" ring on the primary image, all of which say
+            "click me to see this one". None of them was wired to anything: this
+            is a server component, the thumbnails are `<div>`s, and clicking one
+            did nothing at all. A control that looks interactive and is not is
+            worse than no control, because the customer concludes the page is
+            broken rather than that the feature is absent.
+
+            The affordances are gone; the thumbnails stay, because seeing that
+            three photographs exist is genuinely useful. A gallery that opens
+            them needs client state and is proposed in the QA report.
+          */}
           {product.images.length > 1 && (
             <div className="flex gap-3 mt-4 overflow-x-auto pb-2 scrollbar-none">
               {product.images.map(img => (
                 <div
                   key={img.id}
-                  className={`w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden cursor-pointer transition-all duration-300 relative ${
-                    img.isPrimary 
-                      ? "border-2 border-primary shadow-sm scale-100" 
-                      : "border border-border opacity-70 hover:opacity-100 hover:border-border-strong hover:shadow-sm scale-95 hover:scale-100"
+                  className={`w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden relative ${
+                    img.isPrimary
+                      ? "border-2 border-primary shadow-sm"
+                      : "border border-border opacity-70"
                   }`}
                 >
                   {img.url !== null && (
@@ -372,21 +422,30 @@ export default async function ProductDetailPage(props: { params: Promise<{ slug:
             </div>
           </div>
 
-          {/* Tabs */}
+          {/*
+            There was a tab bar here. All three tabs were dead.
+
+            "Description", "Specifications" and "Reviews (38)" were plain
+            `<button>`s in a server component: no handler, no state, nothing to
+            switch. Every one of them did nothing when clicked, while the
+            description AND the specifications table rendered stacked below
+            regardless — so the bar was decoration that promised navigation the
+            page could not perform.
+
+            The Reviews tab was the worse half: reviews are explicitly not in
+            v1, so it advertised a feature that does not exist and never
+            responded. Making the tabs work would need a client component and,
+            for that third tab, a reviews feature. Both are Phase 8.
+
+            Removed rather than faked. The sections keep their own headings, so
+            nothing that was readable stopped being readable. If tabs are wanted
+            back, the QA report says exactly what they need.
+          */}
           <div className="mt-4">
-            <div className="flex gap-6 border-b border-border/50">
-              <button className="relative pb-4 text-[15px] font-bold text-foreground after:content-[''] after:absolute after:bottom-[-1px] after:left-0 after:w-full after:h-[2px] after:bg-primary transition-colors">
-                Description
-              </button>
-              <button className="relative pb-4 text-[15px] font-semibold text-foreground-muted hover:text-foreground transition-colors duration-300">
-                Specifications
-              </button>
-              <button className="relative pb-4 text-[15px] font-semibold text-foreground-muted hover:text-foreground transition-colors duration-300 flex items-center gap-2">
-                Reviews
-                <span className="bg-surface-low text-foreground-subtle text-[11px] font-bold px-1.5 py-0.5 rounded-sm">{product.reviewCount}</span>
-              </button>
-            </div>
-            
+            <h2 className="pb-4 border-b border-border/50 text-[15px] font-bold text-foreground">
+              Description
+            </h2>
+
             <div className="py-8 prose prose-sm max-w-none text-foreground-muted">
               {product.description ? (
                 <div className="leading-relaxed whitespace-pre-line text-[15px]">{product.description}</div>
