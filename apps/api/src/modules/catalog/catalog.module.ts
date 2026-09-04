@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuditModule } from '../audit/audit.module';
+import { MediaModule } from '../media/media.module';
+import { Order, OrderSchema } from '../orders/infrastructure/schemas/order.schema';
 import { UsersModule } from '../users/users.module';
 import { BrandAdminService } from './application/brand-admin.service';
 import { BrandsService } from './application/brands.service';
 import { CategoryAdminService } from './application/category-admin.service';
 import { CategoriesService } from './application/categories.service';
 import { ProductAdminService } from './application/product-admin.service';
+import { ProductImageService } from './application/product-image.service';
 import { ProductsService } from './application/products.service';
 import { SlugRedirectService } from './application/slug-redirect.service';
 import { SlugService } from './application/slug.service';
@@ -50,8 +53,6 @@ import { ProductsController } from './presentation/products.controller';
  *   specDefinitions     — the canonical key dictionary is owner data nobody has
  *                         supplied; deriving one from seeded products would be
  *                         inventing a taxonomy and calling it frozen
- *   MediaModule         — attaching an image is reference-counted and lands
- *                         with the media UI
  */
 @Module({
   imports: [
@@ -60,9 +61,25 @@ import { ProductsController } from './presentation/products.controller';
       { name: Category.name, schema: CategorySchema },
       { name: Brand.name, schema: BrandSchema },
       { name: SlugRedirect.name, schema: SlugRedirectSchema },
+      /*
+       * Another module's model, registered here for ONE read: "has this
+       * product ever been ordered", which CATALOG-MODEL.md §9 makes the
+       * precondition of a hard delete. Importing OrdersModule would close a
+       * cycle — OrdersModule -> CartModule -> CatalogModule — and the
+       * precedent for doing it this way is InventoryModule, which registers
+       * `Product` for the same kind of reason. Mongoose resolves both to the
+       * one compiled model on the shared connection, so `indexes:sync` still
+       * sees exactly one `orders` collection. Nothing here writes an order.
+       */
+      { name: Order.name, schema: OrderSchema },
     ]),
     AuditModule,
     UsersModule,
+    /*
+     * The upload pipeline and the reference-count ledger. MediaModule imports
+     * nothing from the catalogue, so this is one-directional.
+     */
+    MediaModule,
   ],
   controllers: [
     ProductsController,
@@ -77,6 +94,7 @@ import { ProductsController } from './presentation/products.controller';
     CategoriesService,
     BrandsService,
     ProductAdminService,
+    ProductImageService,
     CategoryAdminService,
     BrandAdminService,
     ProductRepository,

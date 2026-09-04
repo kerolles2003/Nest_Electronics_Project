@@ -36,14 +36,19 @@ import { describeSharpBackend, detectSharpBackend } from './sharp-backend';
  * a malicious file to find a memory bug. The decode is last among the checks
  * because it is the only expensive one.
  *
- * ## What this phase deliberately does NOT do
+ * ## Who attaches an image, and who does not
  *
- * Nothing here attaches an image to a product. Product CRUD is Phase 7, and
- * inventing a half-endpoint for it now would ship an untested write path
- * against a schema that phase may still change. What ships is the pipeline, the
- * ledger, and the invariant functions Phase 7 will call — all exercised by
- * tests, because with no catalogue and no admin UI, tests are the only thing
- * exercising them at all (Phase 4 risk note).
+ * Not this class. `ProductImageService` in CatalogModule holds the attach and
+ * detach endpoints and is what calls `retain` and `release` — the split is
+ * MEDIA-MODEL.md's: this module owns the bytes, the ledger and the invariant,
+ * and knows nothing about what a product is.
+ *
+ * **Until Phase 7 nothing called either of them**, so every `refCount` in the
+ * system sat at zero. That was not an unused feature: zero is the exact
+ * condition under which `destroy` proceeds, so the count was harmless only for
+ * as long as no product had an image. `test/catalog/product-images.spec.ts` is
+ * where the guarantee is now proved — an asset a live page is showing cannot be
+ * deleted, and one two products share survives either letting go.
  */
 @Injectable()
 export class MediaService implements OnModuleInit {
@@ -158,6 +163,7 @@ export class MediaService implements OnModuleInit {
     // recoverable.
     await this.ledger.record({
       publicId: stored.publicId,
+      version: stored.version,
       bytes: stored.bytes,
       format: stored.format,
       width: stored.width,
@@ -194,8 +200,9 @@ export class MediaService implements OnModuleInit {
    * zero everywhere — harmless while no product had an image, and a live defect
    * the moment one did.
    *
-   * The catalogue import is the first real consumer. Phase 7's admin upload UI
-   * is the second, and it needs exactly this.
+   * The catalogue import was the first consumer of the ledger; Phase 7's
+   * `ProductImageService.attach` is the first caller of THIS, and it is what
+   * turned reference counting from a written mechanism into an enforced one.
    *
    * Called AFTER the referencing document is written, never before. If the
    * write fails, the count stays at zero and the asset is an ordinary
@@ -210,8 +217,8 @@ export class MediaService implements OnModuleInit {
   /**
    * Records that one fewer document references this asset.
    *
-   * The counterpart of `retain`, and the operation a Phase 7 "remove this
-   * image" action performs. It never destroys anything: an asset that falls to
+   * The counterpart of `retain`, and what `ProductImageService.detach` — the
+   * "remove this image" action — performs. It never destroys anything: an asset that falls to
    * zero references is a candidate for cleanup, reported by
    * `reconcile()`, and MEDIA-MODEL.md §9 is explicit that reconciliation
    * reports rather than deletes.

@@ -158,6 +158,42 @@ export enum ErrorCode {
    */
   CATEGORY_NOT_EMPTY = 'CATEGORY_NOT_EMPTY',
 
+  /**
+   * 409. A ninth image was offered to a product that already holds eight.
+   *
+   * CATALOG-MODEL.md §8 bounds `images[]` at 8, and the bound is what keeps the
+   * array embeddable: it is loaded with the product on every read, so an
+   * unbounded one turns the hottest document in the system into a page of
+   * descriptors nobody looks at.
+   */
+  PRODUCT_IMAGE_LIMIT = 'PRODUCT_IMAGE_LIMIT',
+
+  /**
+   * 409. That asset is already attached to this product.
+   *
+   * Refused rather than treated as a no-op, and the reason is the ledger: a
+   * second attach that quietly "succeeded" would either double-count the
+   * reference — leaving an asset undeletable forever — or, if it skipped the
+   * retain, leave the count one short of the truth and the asset deletable
+   * while a live page shows it. Both are silent. A 409 is not.
+   */
+  PRODUCT_IMAGE_ALREADY_ATTACHED = 'PRODUCT_IMAGE_ALREADY_ATTACHED',
+
+  /** 404. The product does not carry an image with that `publicId`. */
+  PRODUCT_IMAGE_NOT_FOUND = 'PRODUCT_IMAGE_NOT_FOUND',
+
+  /**
+   * 409. A hard delete was attempted on a product an order refers to.
+   *
+   * CATALOG-MODEL.md §9 allows a hard delete only for a product "never
+   * referenced by any order". Orders embed product SNAPSHOTS so the commercial
+   * record survives regardless — but `productId` is retained on every line for
+   * traceability and reorder, and destroying the document turns that into a
+   * dangling id that analytics and the reorder button both follow to nothing.
+   * Soft delete is the answer for these, and it always was.
+   */
+  PRODUCT_HAS_ORDERS = 'PRODUCT_HAS_ORDERS',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

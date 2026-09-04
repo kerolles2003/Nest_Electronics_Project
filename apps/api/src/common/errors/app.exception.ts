@@ -521,6 +521,71 @@ export class AppException extends HttpException {
     );
   }
 
+  static productImageLimit(maximum: number): AppException {
+    return new AppException(
+      ErrorCode.PRODUCT_IMAGE_LIMIT,
+      HttpStatus.CONFLICT,
+      'That product already has the maximum number of images.',
+      [
+        {
+          field: 'publicId',
+          message: `A product may carry at most ${String(maximum)} images. Remove one first.`,
+          code: ErrorCode.PRODUCT_IMAGE_LIMIT,
+        },
+      ],
+    );
+  }
+
+  static productImageAlreadyAttached(): AppException {
+    return new AppException(
+      ErrorCode.PRODUCT_IMAGE_ALREADY_ATTACHED,
+      HttpStatus.CONFLICT,
+      'That image is already on this product.',
+      [
+        {
+          field: 'publicId',
+          message:
+            'The image is already attached. Attaching it twice would put the reference count ' +
+            'out of step with reality, in one direction or the other.',
+          code: ErrorCode.PRODUCT_IMAGE_ALREADY_ATTACHED,
+        },
+      ],
+    );
+  }
+
+  static productImageNotFound(): AppException {
+    return new AppException(
+      ErrorCode.PRODUCT_IMAGE_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      'That product does not have an image with that identifier.',
+    );
+  }
+
+  /**
+   * Refusing a hard delete of a product an order refers to.
+   *
+   * The count is included because it is the difference between "use soft
+   * delete" and "this looks like a bug" — an operator who is told 3 orders
+   * reference the product knows immediately why the answer is no.
+   */
+  static productHasOrders(orderCount: number): AppException {
+    return new AppException(
+      ErrorCode.PRODUCT_HAS_ORDERS,
+      HttpStatus.CONFLICT,
+      'That product has been ordered and cannot be permanently deleted.',
+      [
+        {
+          field: 'id',
+          message:
+            `${String(orderCount)} order(s) reference this product. Permanently deleting it ` +
+            'would leave those lines pointing at nothing, which analytics and the reorder ' +
+            'button both follow. Use a soft delete instead — it is what soft delete is for.',
+          code: ErrorCode.PRODUCT_HAS_ORDERS,
+        },
+      ],
+    );
+  }
+
   // --- Media ----------------------------------------------------------------
 
   /**

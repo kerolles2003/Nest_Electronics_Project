@@ -5476,3 +5476,164 @@ recorded rather than left to be discovered:
   the console's `attributes` route is untouched.
 - **The audit-log screen.** The trail now records catalogue writes as well as
   order transitions, and nothing reads any of it.
+
+---
+
+# Phase 7 Part 4a — `retain()` gets its first caller, and the count starts meaning something
+
+**Strays reaped before every run in this unit.** None found. The resident
+`node.exe` processes belong to `D:\ahmed-adel-project` and were not touched.
+
+## What the count was before this
+
+`MediaService.retain()` and `release()` were built in Phase 4 alongside the
+ledger and **nothing had ever called either of them.** Every asset in the system
+carried `refCount: 0`.
+
+That is not an unused feature. `refCount === 0` is the exact condition under
+which `DELETE /admin/media` destroys the stored object, so the count was
+harmless only for as long as no product had an image — and the endpoint that
+gives a product an image is this one. Shipping the attach path without the
+retain would have been the defect arriving fully formed.
+
+So the assertion this unit exists for is not "an image can be attached". It is:
+
+- **an asset a live product page is showing cannot be deleted** — `DELETE
+  /admin/media` answers 409 `MEDIA_ASSET_IN_USE` and the object is still in the
+  store afterwards; and
+- **an asset two products share is not destroyed when one lets go** — which is
+  W4 in its original form: legacy duplication copied the URL string, deleting
+  from either destroyed it for both, and the surviving product rendered a broken
+  image with no indication of why.
+
+Both are asserted directly, and so is the round trip: attach → deletion refused
+→ detach → deletion succeeds → the object is gone from the store.
+
+## Three endpoints, and one of them exists to be restrictive
+
+`POST /admin/catalog/products/:id/images` takes a `publicId` and, at most, an
+`alt`. **Every other field comes from the ledger** — width, height, format,
+bytes, version. MEDIA-MODEL.md §4: the browser is never the authority for media
+metadata. A client that could send dimensions could make a product page reserve
+the wrong space; one that could send a version could point the delivery URL at a
+generation the CDN has replaced. The DTO has no such fields, so sending one is a
+400, and the test asserts both halves — the rejection, and that the descriptor
+which lands carries the numbers sharp measured on the server.
+
+Attaching the same asset twice is a **409, not a no-op**. A silent second attach
+would either double-count — stranding the asset undeletable forever — or skip
+the retain and leave the count one short, making it deletable while a live page
+shows it. Both are silent failures in opposite directions.
+
+`DELETE /admin/catalog/products/:id/images?publicId=…` releases and removes.
+**It never destroys the asset**: one that falls to zero is a candidate reported
+by `GET /admin/media/reconciliation`, and §9 is explicit that reconciliation
+reports rather than deletes, because an automated deleter that misreads state
+destroys production assets irreversibly. Asserted: after a detach the object is
+still in the store and now appears in the report's `unreferenced` list.
+
+`publicId` is a query parameter, not a path segment, because it contains
+slashes. A path segment would need double-encoding by every caller, and a caller
+that forgot would silently address a different route.
+
+`PUT /admin/catalog/products/:id/images` closes **K9 and K10 together**, because
+both were the same defect — the array written in pieces. K9: reordering was an
+N+1 update loop, so an interrupted reorder left an order that was neither the
+old one nor the new. K10: "make this primary" was unset-then-set, so an
+interruption between them left a product with images and NO primary, and every
+grid rendering a placeholder for it. The whole array is written in one `$set`,
+which is what §8 asks for, and every method here writes it whole — attach and
+detach included. The extra cost is re-sending descriptors that did not change;
+the benefit is that there is no interleaving to reason about.
+
+Arrange **cannot add or remove an image**. That restriction is the design: it
+makes the operation incapable of moving a reference count, so attach and detach
+are the only two places that touch the ledger and there is one thing to be right
+about rather than three. Asserted by sending one image too many and one too few
+and checking that no count moved.
+
+## `version` moved into the ledger
+
+A small schema addition with a specific job: it is what lets attach take nothing
+from the client but a `publicId`. Every other field a `ProductImage` needs was
+already on the ledger row; without `version` the one remaining field would have
+had to be accepted from the caller, and §4 says it must not be. It is in the
+`$set` rather than the `$setOnInsert`, because a re-upload to the same id bumps
+it and a ledger holding the old one would hand every page a URL for a generation
+the CDN has replaced.
+
+## Hard delete, deferred from 3e and now landed
+
+`DELETE /admin/catalog/products/:id/permanent`. §9's sentence is *"Hard delete
+exists only as a `SUPER_ADMIN` operation for a product **never referenced by any
+order**, and it destroys the associated Cloudinary assets."* Every clause is a
+separate guard and all three are tested:
+
+- **SUPER_ADMIN only** — an ADMIN gets 403 here and 200 on the soft delete
+  beside it, asserted in the same test so the difference is visible.
+- **Never ordered** — refused with the count. Orders embed snapshots so the
+  commercial record survives, but every line keeps `productId` for traceability
+  and reorder, and destroying the document turns that into a dangling id.
+- **Destroys the assets, except the shared ones** — each image is released and
+  only those falling to zero are destroyed. The response names both lists, and
+  the test proves the shared one survives on the other product's page.
+
+Its `slugRedirects` rows are forgotten **here and only here**. A soft delete
+keeps them because the product is coming back; this is the one operation after
+which the destination genuinely stops existing, and a redirect to a 404 is worse
+than a 404 — it costs a round trip to reach the same answer.
+
+### The module cycle, and how it was resolved rather than worked around
+
+The order-reference check needs to read `orders` from CatalogModule, and
+importing OrdersModule closes a cycle: `OrdersModule → CartModule →
+CatalogModule → OrdersModule`.
+
+`forwardRef` was available and was not used. Instead the `Order` model is
+registered on the shared connection inside CatalogModule — the precedent
+InventoryModule already sets for the same kind of reason (it registers `Product`
+because it writes `stock`, ADR-INVENTORY-002). Mongoose resolves both
+registrations to the one compiled model, so `indexes:sync` still sees exactly
+one `orders` collection. It is a **read, and the only one**: nothing in the
+catalogue writes an order. That is stated in the module so the next person does
+not read it as ownership.
+
+## Three docstrings were wrong the moment this landed, and are now corrected
+
+`MediaService`'s class comment said *"Nothing here attaches an image to a
+product. Product CRUD is Phase 7"*; `retain()` said Phase 7's UI *"is the
+second"* consumer; `MediaAsset`'s said the ledger *"is untriggered today —
+nothing duplicates a product yet"*. All three described the world before this
+commit. They now say what is true and point at the suite that proves it. A
+comment that describes a plan the code has overtaken is worse than no comment,
+because it is read as a statement of fact.
+
+## Verification
+
+27 new tests in `test/catalog/product-images.spec.ts`, all passing on the first
+run. `test/catalog` + `test/media`: **233 passed, 15 skipped, 11 suites**, zero
+residue. `type-check` and `lint` clean, OpenAPI regenerated, drift gate green.
+
+Everything below the store is real in these tests — multer, the MIME allow-list,
+magic-byte sniffing, sharp, the ledger, MongoDB. Only the STORE is the in-memory
+adapter, and the suite asserts that rather than assuming it: if it ever resolved
+to the Cloudinary adapter it would start making authenticated calls against the
+owner's real account.
+
+**Browser-unverified:** all of it. There is no upload UI yet — that is 4b.
+
+## One residual window, stated rather than hidden
+
+`retain` is called **after** the product document is written, which is
+`MediaService.retain`'s own documented contract: if the product write fails the
+count stays at zero and the asset is an ordinary unattached upload that
+reconciliation can offer for cleanup, whereas incrementing first would leave a
+count nothing references and nothing can ever delete.
+
+The opposite window is real and smaller: the product write lands and the `$inc`
+does not. That is one atomic statement against the same database in the same
+request, so it happens only if the database goes away between two adjacent
+calls — after which the count is one short and `reconcile()` reports the asset
+as unreferenced while it is in use. Closing it properly means a transaction
+spanning `products` and `mediaAssets`, and the ledger repository is not written
+to take a session. Recorded, not fixed.

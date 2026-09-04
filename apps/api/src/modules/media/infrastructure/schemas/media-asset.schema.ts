@@ -21,9 +21,12 @@ import { HydratedDocument, Types } from 'mongoose';
  * references makes that impossible: destruction happens at zero and nowhere
  * else.
  *
- * It is untriggered today — nothing duplicates a product yet — and it is still
- * worth having, because the alternative is discovering the defect after an
- * operator has destroyed a photograph they cannot retake.
+ * It stayed untriggered until Phase 7: nothing attached an image, so nothing
+ * retained one, and every count sat at zero — which is the exact condition
+ * under which destruction is allowed. The attach and detach endpoints now
+ * maintain it, and the guarantee is asserted directly: an asset a live product
+ * page is showing is refused deletion, and one that two products share survives
+ * either of them letting go. That second case is W4 in its original form.
  *
  * ## What it is NOT
  *
@@ -60,6 +63,26 @@ export class MediaAsset {
    */
   @Prop({ type: Number, required: true, default: 0, min: 0 })
   refCount!: number;
+
+  /**
+   * The store's version for this object, as it reported at upload.
+   *
+   * ## Why the LEDGER carries it, when the ledger is about counting
+   *
+   * Because it is what makes attaching an image take nothing from the client
+   * but a `publicId`. MEDIA-MODEL.md §4 says the browser is never the authority
+   * for media metadata — and every other field a `ProductImage` needs is
+   * already here, so without `version` the one remaining field would have to be
+   * accepted from the caller, and a caller that can set the version can point a
+   * product's image URL at a cached generation that no longer exists.
+   *
+   * Defaulted rather than strictly required so that a ledger row written before
+   * this field existed still loads. `1` is what Cloudinary reports for a first
+   * upload, so the default is the truthful value for exactly the rows that
+   * predate it.
+   */
+  @Prop({ type: Number, required: true, default: 1 })
+  version!: number;
 
   @Prop({ type: Number, required: true })
   bytes!: number;

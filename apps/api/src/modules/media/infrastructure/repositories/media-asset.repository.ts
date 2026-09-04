@@ -30,6 +30,7 @@ export class MediaAssetRepository {
    */
   async record(asset: {
     publicId: string;
+    version: number;
     bytes: number;
     format: string;
     width: number;
@@ -41,6 +42,10 @@ export class MediaAssetRepository {
         { publicId: asset.publicId },
         {
           $set: {
+            // `version` is in the $set rather than the $setOnInsert: a re-upload
+            // to the same id bumps it, and a ledger holding the old one would
+            // hand every page a URL for a generation the CDN has replaced.
+            version: asset.version,
             bytes: asset.bytes,
             format: asset.format,
             width: asset.width,

@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -32,12 +33,19 @@ import { PaginationMetaDto } from '../../../common/dto/pagination-meta.dto';
 import type { AuthenticatedUser } from '../../auth/domain/authenticated-user';
 import { Role } from '../../users/infrastructure/schemas/user.schema';
 import { ProductAdminService } from '../application/product-admin.service';
+import { ProductImageService } from '../application/product-image.service';
 import { EntityIdParamDto } from './dto/admin-catalog-shared.dto';
 import {
   AdminProductQueryDto,
   CreateProductDto,
   UpdateProductDto,
 } from './dto/admin-product-request.dto';
+import {
+  ArrangeImagesDto,
+  AttachImageDto,
+  DetachImageQueryDto,
+  HardDeleteResponseDto,
+} from './dto/admin-product-image.dto';
 import {
   AdminProductDto,
   AdminProductListResponseDto,
@@ -77,7 +85,10 @@ const NO_STORE = 'no-store';
 @Controller('admin/catalog/products')
 @Roles(Role.ADMIN, Role.SUPER_ADMIN)
 export class AdminProductsController {
-  constructor(private readonly catalogue: ProductAdminService) {}
+  constructor(
+    private readonly catalogue: ProductAdminService,
+    private readonly images: ProductImageService,
+  ) {}
 
   @Get()
   @Header('Cache-Control', NO_STORE)
@@ -399,5 +410,218 @@ export class AdminProductsController {
     });
 
     return { data: AdminProductDto.from(restored) };
+  }
+
+  // --- images ---------------------------------------------------------------
+
+  @Post(':id/images')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Attach an uploaded image to a product',
+    description: [
+      'Takes a `publicId` from `POST /admin/media` and, at most, an `alt`. **Every other field',
+      'comes from the ledger** — width, height, format, bytes and version. MEDIA-MODEL.md §4:',
+      'the browser is never the authority for media metadata. A client that could send',
+      'dimensions could make a product page reserve the wrong space; one that could send a',
+      'version could point the delivery URL at a generation the CDN has replaced.',
+      '',
+      '**This is what makes the image undeletable while it is in use.** The attach increments the',
+      'asset’s reference count, and `DELETE /admin/media` refuses any asset whose count is above',
+      'zero. Before this endpoint existed nothing had ever called `retain()`, so every count in',
+      'the system sat at zero — harmless while no product had an image, and a live defect the',
+      'moment one did.',
+      '',
+      'The first image on a product becomes its primary automatically: §8 requires exactly one',
+      'when the array is non-empty, and leaving the first upload non-primary would render a',
+      'placeholder on every grid until somebody noticed a radio button.',
+      '',
+      'Attaching the same asset twice is a `409`, not a no-op. A silent second attach would',
+      'either double-count the reference — leaving the asset undeletable forever — or skip the',
+      'retain and leave the count one short, making it deletable while a live page shows it.',
+      'Both are silent; this is not.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto, description: 'VALIDATION_ERROR / UNKNOWN_FIELD.' })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'PRODUCT_NOT_FOUND. MEDIA_ASSET_NOT_FOUND — the id is not in the ledger.',
+  })
+  @ApiConflictResponse({
+    type: ErrorResponseDto,
+    description:
+      'PRODUCT_IMAGE_LIMIT — eight already. PRODUCT_IMAGE_ALREADY_ATTACHED. ' +
+      'PRODUCT_DELETED — restore it first.',
+  })
+  async attachImage(
+    @Param() params: EntityIdParamDto,
+    @Body() body: AttachImageDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.images.attach(
+      new Types.ObjectId(params.id),
+      body.publicId,
+      body.alt ?? null,
+      { actorId: new Types.ObjectId(user.id), forensics },
+    );
+
+    return { data: AdminProductDto.from(updated) };
+  }
+
+  @Delete(':id/images')
+  @ApiOperation({
+    summary: 'Remove an image from a product',
+    description: [
+      'Releases the reference and removes the descriptor. **It never destroys the asset.** One',
+      'that falls to zero references is a CANDIDATE for cleanup, reported by',
+      '`GET /admin/media/reconciliation` — MEDIA-MODEL.md §9 is explicit that reconciliation',
+      'reports rather than deletes, because an automated deleter that misreads state destroys',
+      'production assets irreversibly. The same asset may also still be attached elsewhere.',
+      '',
+      'If the image removed was the primary, the first remaining one becomes primary. Leaving a',
+      'product with images and no primary renders a placeholder on every grid — K10’s symptom,',
+      'reached by a different route.',
+      '',
+      '`publicId` is a query parameter rather than a path segment because it contains slashes:',
+      'a path segment would have to be double-encoded by every caller, and a caller that forgot',
+      'would silently address a different route.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto, description: 'VALIDATION_ERROR.' })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'PRODUCT_NOT_FOUND. PRODUCT_IMAGE_NOT_FOUND — not on this product.',
+  })
+  @ApiConflictResponse({ type: ErrorResponseDto, description: 'PRODUCT_DELETED.' })
+  async detachImage(
+    @Param() params: EntityIdParamDto,
+    @Query() query: DetachImageQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.images.detach(new Types.ObjectId(params.id), query.publicId, {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(updated) };
+  }
+
+  @Put(':id/images')
+  @ApiOperation({
+    summary: 'Reorder, re-caption and choose the primary — in one atomic write',
+    description: [
+      'Two legacy defects disappear together here, and both were "the array was written in',
+      'pieces":',
+      '',
+      '- **K9** — reordering was an N+1 update loop, one statement per image, so an interrupted',
+      '  reorder left an order that was neither the old one nor the new.',
+      '- **K10** — "make this the primary" was two statements, unset then set, so an interruption',
+      '  between them left a product with NO primary image and every grid rendering a placeholder.',
+      '',
+      'The whole array is written in a single `$set`. CATALOG-MODEL.md §8 asks for exactly this.',
+      '',
+      'The request must name exactly the images the product already has. That restriction is what',
+      'makes this operation incapable of changing a reference count — attach and detach are the',
+      'only two endpoints that touch the ledger, so there is one place to be right about it',
+      'rather than three.',
+      '',
+      'POSITION is the order. `sortOrder` is assigned from the index rather than accepted, because',
+      'two entries a client numbered identically would produce an order the database resolves',
+      'arbitrarily.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: AdminProductResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description:
+      'VALIDATION_ERROR — the list does not match the product’s images, repeats one, or names ' +
+      'more than one primary.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto, description: 'Staff only.' })
+  @ApiNotFoundResponse({
+    type: ErrorResponseDto,
+    description: 'PRODUCT_NOT_FOUND. PRODUCT_IMAGE_NOT_FOUND.',
+  })
+  @ApiConflictResponse({ type: ErrorResponseDto, description: 'PRODUCT_DELETED.' })
+  async arrangeImages(
+    @Param() params: EntityIdParamDto,
+    @Body() body: ArrangeImagesDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<AdminProductResponseDto> {
+    const updated = await this.images.arrange(new Types.ObjectId(params.id), body.images, {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return { data: AdminProductDto.from(updated) };
+  }
+
+  // --- hard delete ----------------------------------------------------------
+
+  @Delete(':id/permanent')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Destroy a product permanently, and its images with it',
+    description: [
+      'CATALOG-MODEL.md §9: "Hard delete exists only as a `SUPER_ADMIN` operation for a product',
+      '**never referenced by any order**, and it destroys the associated Cloudinary assets."',
+      'Every clause of that sentence is a separate guard.',
+      '',
+      '**SUPER_ADMIN only** — an ADMIN gets 403 here and 200 on the soft delete beside it.',
+      '',
+      '**Never ordered.** Orders embed product snapshots, so the commercial record survives',
+      'regardless — but every line keeps `productId` for traceability and reorder, and destroying',
+      'the document turns that into a dangling id that analytics and the reorder button both',
+      'follow to nothing. A referenced product is refused with a count, and soft delete is the',
+      'answer for it. That is what soft delete is for.',
+      '',
+      '**The images are destroyed — except the ones another product is showing.** Each is',
+      'released; only those that fall to zero references are destroyed in the store. Legacy',
+      'destroyed the object regardless of who else pointed at it, and the surviving product',
+      'rendered a broken image with no indication of why (W4). The response names both lists.',
+      '',
+      'The product’s `slugRedirects` rows are removed here and ONLY here: a soft delete keeps',
+      'them because the product is coming back, and this is the one operation after which the',
+      'destination genuinely no longer exists.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: HardDeleteResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description: 'FORBIDDEN — SUPER_ADMIN only. An ADMIN may soft-delete and nothing more.',
+  })
+  @ApiNotFoundResponse({ type: ErrorResponseDto, description: 'PRODUCT_NOT_FOUND.' })
+  @ApiConflictResponse({
+    type: ErrorResponseDto,
+    description: 'PRODUCT_HAS_ORDERS — `details` names how many. Use the soft delete.',
+  })
+  async hardDelete(
+    @Param() params: EntityIdParamDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Forensics() forensics: ForensicContext,
+  ): Promise<HardDeleteResponseDto> {
+    const outcome = await this.catalogue.hardDelete(new Types.ObjectId(params.id), {
+      actorId: new Types.ObjectId(user.id),
+      forensics,
+    });
+
+    return {
+      data: {
+        sku: outcome.sku,
+        slug: outcome.slug,
+        imagesDestroyed: [...outcome.imagesDestroyed],
+        imagesKept: [...outcome.imagesKept],
+      },
+    };
   }
 }

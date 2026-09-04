@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
@@ -6,11 +6,14 @@ import { DEFAULT_LIMIT, DEFAULT_PAGE } from '../../../common/dto/pagination-quer
 import { AuditService, type AuditContext } from '../../audit/application/audit.service';
 import { toAuditActor } from '../../audit/domain/audit-actor';
 import { AuditAction, AuditEntityType } from '../../audit/domain/audit-action';
+import { MediaService } from '../../media/application/media.service';
+import { Order } from '../../orders/infrastructure/schemas/order.schema';
 import { UsersService, type UserProfile } from '../../users/application/users.service';
 import { Brand, type BrandLean } from '../infrastructure/schemas/brand.schema';
 import { Category, type CategoryLean } from '../infrastructure/schemas/category.schema';
 import { Product, type ProductLean } from '../infrastructure/schemas/product.schema';
 import { SlugRedirectEntityType } from '../infrastructure/schemas/slug-redirect.schema';
+import { ProductImageService } from './product-image.service';
 import { SlugRedirectService } from './slug-redirect.service';
 import { AdminProductSort, AdminProductState } from '../presentation/dto/admin-product-request.dto';
 import { BrandsService } from './brands.service';
@@ -88,6 +91,16 @@ export interface AdminProductQuery {
   readonly sort?: AdminProductSort;
 }
 
+/** What a hard delete actually destroyed, so the caller can report it honestly. */
+export interface HardDeleteOutcome {
+  readonly sku: string;
+  readonly slug: string;
+  /** Assets that fell to zero references and were destroyed. */
+  readonly imagesDestroyed: readonly string[];
+  /** Assets another product still shows. Left alone — this is what refcounting is for. */
+  readonly imagesKept: readonly string[];
+}
+
 export interface AdminProductPage {
   readonly items: readonly ProductLean[];
   readonly total: number;
@@ -146,12 +159,29 @@ export interface AdminWriteContext {
  */
 @Injectable()
 export class ProductAdminService {
+  private readonly logger = new Logger(ProductAdminService.name);
+
   constructor(
     @InjectModel(Product.name) private readonly products: Model<Product>,
     @InjectModel(Category.name) private readonly categories: Model<Category>,
     @InjectModel(Brand.name) private readonly brands: Model<Brand>,
+    /*
+     * The `orders` collection, registered here rather than reached through
+     * OrdersModule. A hard delete has to ask "has this product ever been
+     * ordered", and importing OrdersModule would close a cycle:
+     * OrdersModule -> CartModule -> CatalogModule -> OrdersModule.
+     *
+     * Registering another module's model on the shared connection is the
+     * documented precedent InventoryModule already sets (ADR-INVENTORY-002) —
+     * Mongoose resolves it to the one compiled model, so `indexes:sync` still
+     * sees exactly one `orders` collection. This is a READ, and the only one:
+     * nothing here writes an order.
+     */
+    @InjectModel(Order.name) private readonly orders: Model<Order>,
     private readonly users: UsersService,
     private readonly redirects: SlugRedirectService,
+    private readonly images: ProductImageService,
+    private readonly media: MediaService,
     private readonly categoriesCache: CategoriesService,
     private readonly brandsCache: BrandsService,
     private readonly audit: AuditService,
@@ -689,6 +719,105 @@ export class ProductAdminService {
      */
     this.categoriesCache.invalidateCache();
     this.brandsCache.invalidateCache();
+  }
+
+
+  /**
+   * Destroys a product permanently, and its images with it.
+   *
+   * Authority: CATALOG-MODEL.md §9 — "Hard delete exists only as a
+   * `SUPER_ADMIN` operation for a product **never referenced by any order**, and
+   * it destroys the associated Cloudinary assets."
+   *
+   * Every clause of that sentence is a separate guard, and each is here:
+   *
+   * **`SUPER_ADMIN` only** — enforced by `@Roles` on the route, not here, so it
+   * is visible in the route table beside every other authorization decision.
+   *
+   * **Never referenced by any order** — orders embed product SNAPSHOTS, so the
+   * commercial record survives regardless; but every line keeps `productId` for
+   * traceability and reorder, and destroying the document turns that into a
+   * dangling id that analytics and the reorder button both follow to nothing.
+   * A referenced product is refused with a count, and soft delete is the answer
+   * for it — which is what soft delete is for.
+   *
+   * **Destroys the assets** — every image is released, and any that falls to
+   * zero references is destroyed. Ones still held by ANOTHER product are left
+   * alone; that is the entire point of the reference count, and it is the
+   * legacy defect W4 in its original form (two products sharing one storage
+   * object; deleting from either broke the other).
+   *
+   * ## Order of operations
+   *
+   * References first, then the assets, then the document. The assets go before
+   * the document because a failure there leaves the product intact and the
+   * operation retryable — whereas destroying the document first would strand
+   * the assets with nothing left to name them, and the reconciliation report
+   * would file them as store-only orphans an operator has to identify by hand.
+   *
+   * ## Redirects are forgotten here, and only here
+   *
+   * `forgetEntity` exists for exactly this moment: a soft delete keeps the
+   * redirects because the product is coming back, and a hard delete removes
+   * them because the destination genuinely no longer exists. A redirect to a
+   * 404 is worse than a 404 — it costs the client a round trip to reach the
+   * same answer.
+   */
+  async hardDelete(id: Types.ObjectId, context: AdminWriteContext): Promise<HardDeleteOutcome> {
+    const actor = await this.resolveActor(context.actorId);
+    const product = await this.findById(id);
+
+    const orderCount = await this.orders.countDocuments({ 'items.productId': id }).exec();
+
+    if (orderCount > 0) {
+      throw AppException.productHasOrders(orderCount);
+    }
+
+    const unreferenced = await this.images.releaseAll(product);
+
+    for (const publicId of unreferenced) {
+      await this.media.destroy(publicId);
+    }
+
+    await this.redirects.forgetEntity(SlugRedirectEntityType.PRODUCT, id);
+    await this.products.deleteOne({ _id: id }).exec();
+
+    await this.recount(product, { ...product, isActive: false, deletedAt: new Date() });
+
+    await this.audit.record({
+      actor: toAuditActor(actor),
+      action: AuditAction.PRODUCT_DELETED,
+      entity: { type: AuditEntityType.PRODUCT, id, label: product.sku },
+      /*
+       * The whole identity goes in `metadata`, which is the one place §4's
+       * "not whole documents" rule argues the other way: after this row is
+       * written there is no document left to join to, so a record that named
+       * only an ObjectId would be unreadable by the person who most needs it.
+       */
+      metadata: {
+        permanent: true,
+        slug: product.slug,
+        name: product.name.en,
+        categoryId: product.category.id.toHexString(),
+        imagesDestroyed: unreferenced.length,
+        imagesKeptForOtherProducts: product.images.length - unreferenced.length,
+      },
+      context: context.forensics,
+    });
+
+    this.logger.warn(
+      `product hard-deleted  id=${id.toHexString()}  sku=${product.sku}  ` +
+        `by=${actor._id.toHexString()}  assetsDestroyed=${String(unreferenced.length)}`,
+    );
+
+    return {
+      sku: product.sku,
+      slug: product.slug,
+      imagesDestroyed: unreferenced,
+      imagesKept: product.images
+        .map((image) => image.publicId)
+        .filter((publicId) => !unreferenced.includes(publicId)),
+    };
   }
 
   /**
