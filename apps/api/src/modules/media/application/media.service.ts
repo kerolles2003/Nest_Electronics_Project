@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { Types, type ClientSession } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
 import { appConfig, type AppConfig } from '../../../config/app.config';
 import { mediaConfig, type MediaConfig } from '../../../config/media.config';
@@ -204,14 +204,27 @@ export class MediaService implements OnModuleInit {
    * `ProductImageService.attach` is the first caller of THIS, and it is what
    * turned reference counting from a written mechanism into an enforced one.
    *
-   * Called AFTER the referencing document is written, never before. If the
-   * write fails, the count stays at zero and the asset is an ordinary
-   * unreferenced upload the reconciliation report can offer for cleanup —
-   * whereas a count incremented first would leave an asset nothing references
+   * ## In the caller's transaction, when the caller has one
+   *
+   * Ordering used to be the whole of the argument: called AFTER the referencing
+   * document is written, never before, so that a failure left the count at zero
+   * — an ordinary unreferenced upload — rather than a count nothing references
    * and nothing can delete.
+   *
+   * Ordering was never enough. The window it leaves is the other one: the
+   * document write lands and the `$inc` does not, which leaves an asset a
+   * product REFERENCES sitting at `refCount: 0` — deletable while in use, and
+   * offered for cleanup by `reconcile()`. That is the original defect reached
+   * by a different path, and unlike the release direction it does not fail
+   * safe.
+   *
+   * So `ProductImageService` now passes the session it opened for the product
+   * write, and the two commit together or not at all. The parameter is optional
+   * because a caller with nothing to be atomic with should not have to open a
+   * transaction to say so.
    */
-  async retain(publicId: string): Promise<number> {
-    return this.ledger.retain(publicId);
+  async retain(publicId: string, session?: ClientSession): Promise<number> {
+    return this.ledger.retain(publicId, session);
   }
 
   /**
@@ -223,8 +236,8 @@ export class MediaService implements OnModuleInit {
    * `reconcile()`, and MEDIA-MODEL.md §9 is explicit that reconciliation
    * reports rather than deletes.
    */
-  async release(publicId: string): Promise<number> {
-    return this.ledger.release(publicId);
+  async release(publicId: string, session?: ClientSession): Promise<number> {
+    return this.ledger.release(publicId, session);
   }
 
   async destroy(publicId: string): Promise<void> {

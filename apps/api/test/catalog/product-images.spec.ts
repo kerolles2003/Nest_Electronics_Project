@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
@@ -15,6 +15,7 @@ import { Category } from '../../src/modules/catalog/infrastructure/schemas/categ
 import { Product } from '../../src/modules/catalog/infrastructure/schemas/product.schema';
 import { SlugRedirect } from '../../src/modules/catalog/infrastructure/schemas/slug-redirect.schema';
 import { MediaStoragePort } from '../../src/modules/media/application/ports/media-storage.port';
+import { MediaAssetRepository } from '../../src/modules/media/infrastructure/repositories/media-asset.repository';
 import { MediaAsset } from '../../src/modules/media/infrastructure/schemas/media-asset.schema';
 import { InMemoryMediaStorage } from '../../src/providers/media/memory/in-memory-media-storage';
 import { Role, User, type UserLean } from '../../src/modules/users/infrastructure/schemas/user.schema';
@@ -165,6 +166,16 @@ function destroyAsset(publicId: string): request.Test {
     .delete('/api/v1/admin/media')
     .query({ publicId })
     .set(...bearer(admin));
+}
+
+/** The images the DATABASE holds, not the ones a response reported. */
+async function imagesOf(productId: string): Promise<{ publicId: string }[]> {
+  const row = await products
+    .findById(productId)
+    .lean<{ images: { publicId: string }[] }>()
+    .exec();
+
+  return row?.images ?? [];
 }
 
 async function refCountOf(publicId: string): Promise<number> {
@@ -450,6 +461,122 @@ describe('a referenced asset cannot be deleted — the guarantee this all exists
     expect(report.body.data.unreferenced.map((row: { publicId: string }) => row.publicId)).toContain(
       publicId,
     );
+  });
+});
+
+describe('the document and the ledger commit together, or neither does', () => {
+  /*
+   * The window this closes.
+   *
+   * `attach` used to be two statements with nothing joining them:
+   *
+   *   const updated  = await this.writeImages(productId, images);
+   *   const refCount = await this.media.retain(publicId);
+   *
+   * An interruption between them leaves the product REFERENCING an asset whose
+   * `refCount` is still 0 — and 0 is the exact condition under which
+   * `DELETE /admin/media` destroys the object and `reconcile()` lists it as
+   * safe to clean up. That is not a smaller version of the original defect; it
+   * IS the original defect, reached by a different path, and it is the one
+   * direction that does not fail safe.
+   *
+   * These two tests force the second statement to fail and assert that the
+   * first one did not survive it. Failing the ledger write is the only honest
+   * way to test a rollback: a crash cannot be scheduled, so the thing the crash
+   * would cause is injected instead.
+   */
+
+  const LEDGER_DOWN = 'ledger unavailable (injected)';
+
+  /** Makes the ledger statement fail the way a dropped connection would. */
+  function breakLedger(method: 'retain' | 'release'): { restore: () => void } {
+    const ledger = app.get(MediaAssetRepository);
+    const spy = jest.spyOn(ledger, method).mockRejectedValue(new Error(LEDGER_DOWN));
+
+    return { restore: () => { spy.mockRestore(); } };
+  }
+
+  it('rolls the product write BACK when the reference count cannot be incremented', async () => {
+    const productId = await makeProduct();
+    const publicId = await upload(productId);
+
+    const ledger = breakLedger('retain');
+
+    try {
+      await attach(productId, publicId).expect(500);
+    } finally {
+      ledger.restore();
+    }
+
+    /*
+     * The assertion that matters. Before the transaction the product came back
+     * from here holding the image with the ledger still at 0 — attached and
+     * deletable at the same time.
+     */
+    expect(await imagesOf(productId)).toHaveLength(0);
+    expect(await refCountOf(publicId)).toBe(0);
+
+    // And the pair is still usable: the failure left nothing half-done to
+    // clean up first.
+    await attach(productId, publicId).expect(200);
+    expect(await refCountOf(publicId)).toBe(1);
+  });
+
+  it('rolls the detach BACK when the reference count cannot be decremented', async () => {
+    const productId = await makeProduct();
+    const publicId = await upload(productId);
+
+    await attach(productId, publicId).expect(200);
+
+    const ledger = breakLedger('release');
+
+    try {
+      await detach(productId, publicId).expect(500);
+    } finally {
+      ledger.restore();
+    }
+
+    /*
+     * This direction always failed SAFE — a lost decrement leaks an asset
+     * nothing can delete rather than losing one in use. It is in the
+     * transaction anyway, and asserted here, because one pair of collections
+     * with two different consistency stories is how the next person gets it
+     * wrong.
+     */
+    expect(await imagesOf(productId)).toHaveLength(1);
+    expect(await refCountOf(publicId)).toBe(1);
+  });
+
+  it('leaves nothing the orphan report would offer for cleanup', async () => {
+    /*
+     * The consequence, stated as the operator would meet it. A rolled-back
+     * attach must not leave a row the reconciliation report calls unreferenced
+     * while a product is showing it — that report is what an operator acts on,
+     * and acting on it is a deletion.
+     */
+    const productId = await makeProduct();
+    const publicId = await upload(productId);
+
+    const ledger = breakLedger('retain');
+
+    try {
+      await attach(productId, publicId).expect(500);
+    } finally {
+      ledger.restore();
+    }
+
+    await attach(productId, publicId).expect(200);
+
+    const report = await http()
+      .get('/api/v1/admin/media/reconciliation')
+      .set(...bearer(admin))
+      .expect(200);
+
+    const unreferenced = report.body.data.unreferenced.map(
+      (row: { publicId: string }) => row.publicId,
+    );
+
+    expect(unreferenced).not.toContain(publicId);
   });
 });
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, type ClientSession } from 'mongoose';
 import { MediaAsset, type MediaAssetLean } from '../schemas/media-asset.schema';
 
 /**
@@ -14,6 +14,20 @@ import { MediaAsset, type MediaAssetLean } from '../schemas/media-asset.schema';
  * same duplicated product's images at the same time is exactly the scenario the
  * ledger exists for. `$inc` is atomic in the server; a `find` followed by a
  * `save` is not.
+ *
+ * ## Every read and write takes an optional `ClientSession`
+ *
+ * Atomic-per-statement was never the whole requirement. `retain` is called by
+ * `ProductImageService.attach` immediately after the product document is
+ * written, and those two writes have to commit together or not at all: an
+ * interruption between them leaves an asset a product REFERENCES sitting at
+ * `refCount: 0`, which is the exact state from which `DELETE /admin/media`
+ * destroys it and the reconciliation report offers it for cleanup.
+ *
+ * So the session is threaded rather than assumed away. It stays OPTIONAL
+ * because the upload path has no document to write alongside — `record` is one
+ * statement and has nothing to be atomic with — and a required parameter there
+ * would be ceremony.
  */
 @Injectable()
 export class MediaAssetRepository {
@@ -58,14 +72,23 @@ export class MediaAssetRepository {
       .exec();
   }
 
-  find(publicId: string): Promise<MediaAssetLean | null> {
-    return this.assets.findOne({ publicId }).lean<MediaAssetLean>().exec();
+  find(publicId: string, session?: ClientSession): Promise<MediaAssetLean | null> {
+    return this.assets
+      .findOne({ publicId })
+      .session(session ?? null)
+      .lean<MediaAssetLean>()
+      .exec();
   }
 
-  /** One atomic `$inc`. Returns the count AFTER the change. */
-  async retain(publicId: string): Promise<number> {
+  /**
+   * One atomic `$inc`. Returns the count AFTER the change.
+   *
+   * In a session when the caller has one, so the increment commits with the
+   * document that made it true. See the class docstring.
+   */
+  async retain(publicId: string, session?: ClientSession): Promise<number> {
     const updated = await this.assets
-      .findOneAndUpdate({ publicId }, { $inc: { refCount: 1 } }, { new: true })
+      .findOneAndUpdate({ publicId }, { $inc: { refCount: 1 } }, { new: true, session: session ?? null })
       .lean<MediaAssetLean>()
       .exec();
 
@@ -83,9 +106,13 @@ export class MediaAssetRepository {
    * negative reference count is the one state from which the ledger can never
    * recover on its own.
    */
-  async release(publicId: string): Promise<number> {
+  async release(publicId: string, session?: ClientSession): Promise<number> {
     const updated = await this.assets
-      .findOneAndUpdate({ publicId, refCount: { $gt: 0 } }, { $inc: { refCount: -1 } }, { new: true })
+      .findOneAndUpdate(
+        { publicId, refCount: { $gt: 0 } },
+        { $inc: { refCount: -1 } },
+        { new: true, session: session ?? null },
+      )
       .lean<MediaAssetLean>()
       .exec();
 
@@ -93,7 +120,7 @@ export class MediaAssetRepository {
 
     // Either the row is gone or it was already at zero. Both are "no references
     // remain", which is what the caller asked about.
-    const current = await this.find(publicId);
+    const current = await this.find(publicId, session);
     return current?.refCount ?? 0;
   }
 

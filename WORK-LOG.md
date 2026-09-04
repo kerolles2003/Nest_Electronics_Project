@@ -6100,3 +6100,106 @@ deleted, not left behind.
 - ESLint: 0 errors (6 pre-existing warnings, none in the new file).
 - Turbopack production build: 19/19 routes compiled.
 - **Browser-unverified** — the banner has not been seen rendered in a browser.
+
+---
+
+# Part 6e — The document and the ledger now commit together
+
+**Strays reaped before every run.** Checked before each test execution; 0 orphaned runners found.
+
+## The defect
+
+`ProductImageService.attach` was two statements with nothing joining them:
+
+```ts
+const updated  = await this.writeImages(productId, images);
+const refCount = await this.media.retain(publicId);
+```
+
+An interruption between them leaves the product **referencing** an asset whose
+`refCount` is still `0` — and `0` is the exact condition under which
+`DELETE /admin/media` destroys the object and under which `reconcile()` lists it
+as safe to clean up. It is not a smaller version of the original defect; it *is*
+the original defect reached by a different path.
+
+The two directions are not symmetric, which is why only one of them was urgent:
+
+| | lost `$inc` | result | severity |
+|---|---|---|---|
+| `detach` | count too **high** | an asset nothing can delete | a leak — recoverable by hand, visible in the report |
+| `attach` | count too **low** | a photograph a live page is showing, deletable by a tool doing its job | **irreversible** |
+
+## Chosen fix: one transaction. Not a reconciliation check.
+
+Both were on the table. The transaction won, for three reasons:
+
+1. **A report detects; it does not prevent.** What the media reconciliation
+   report would have detected is a deletion that already happened. Cloudinary
+   objects do not come back.
+2. **The existing report would have made it worse, not better.** `reconcile()`
+   builds its `unreferenced` list from `refCount` alone, so an asset caught in
+   this window appears in the list an operator acts on — the report would have
+   *recommended* the destruction.
+3. **The cost is zero.** `products` and `mediaAssets` are collections in the
+   same database on the same connection; `TransactionService` already exists and
+   is the frozen single place a transaction may be opened
+   (`CODEBASE-STRUCTURE.md` §2.1, §6.4). This is the same mechanism the order
+   lifecycle already uses.
+
+`CONSISTENCY-MODEL.md` §7's "no external I/O inside a transaction" holds without
+effort: the bytes were uploaded before the endpoint was called, and neither
+attach nor detach makes a store call.
+
+## What changed
+
+- `MediaAssetRepository.find/retain/release` take an optional `ClientSession`.
+  Optional, not required: the upload path has one statement and nothing to be
+  atomic with.
+- `MediaService.retain/release` pass it through.
+- `ProductImageService` injects `TransactionService`; `attach` and `detach` run
+  inside one `run()`, with the session threaded into the **loads** as well as the
+  writes — the image count validated and the array the `$set` is built from must
+  come from the snapshot the write lands on, or two concurrent attaches each
+  read seven images and each write an eighth.
+- `CatalogModule` imports `DatabaseModule`.
+
+`arrange` is deliberately untouched: it cannot change a reference count (it
+refuses to add or remove), so it is one write and has nothing to be atomic with.
+
+`hardDelete` is also untouched. Its ordering — release, destroy, then delete the
+document — is deliberate and documented, and its failure mode (a product about
+to be deleted briefly showing destroyed images, the operation retryable) is a
+different trade that was made on purpose. Changing it was not asked for and is
+not free: `media.destroy` is external I/O and cannot go inside a transaction.
+
+## Verification — the tests fail without the fix
+
+Three new tests in `test/catalog/product-images.spec.ts` inject a ledger failure
+(`jest.spyOn(MediaAssetRepository, 'retain').mockRejectedValue(...)`) — a crash
+cannot be scheduled, so the thing a crash would cause is injected instead.
+
+**Proved rather than assumed.** The fix was stashed and the three tests re-run
+against the pre-fix code:
+
+```
+● rolls the product write BACK …    Expected length: 0   Received length: 1
+● rolls the detach BACK …           Expected length: 1   Received length: 0
+● leaves nothing the orphan report would offer for cleanup
+Tests: 3 failed, 27 skipped, 30 total
+```
+
+The first failure is the defect itself, printed: the product holding the image
+with the ledger still at `0` — attached and deletable at the same time.
+
+With the fix restored: **30 passed, 30 total**.
+
+- Full run of `test/catalog`, `test/media`, `test/import`: 12 suites, **310
+  passed**, 15 skipped (the real-Cloudinary suite, skipped by default), 0 failed.
+- `nest_electronics_scratch_api is exactly as this run found it` — zero residue.
+- `tsc --noEmit` and ESLint clean.
+
+## Known residual, recorded rather than hidden
+
+The **catalogue import tool** (`ImportRunner.importImages` →
+`ImageImporter.retainAll`) has the same two-statement shape and is the path the
+owner's real catalogue will arrive on. Closed in the next commit.

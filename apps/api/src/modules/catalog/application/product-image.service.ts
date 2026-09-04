@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, type ClientSession } from 'mongoose';
 import { AppException } from '../../../common/errors/app.exception';
+import { TransactionService } from '../../../database/transaction.service';
 import { AuditService, type AuditContext } from '../../audit/application/audit.service';
 import { AuditAction, AuditEntityType } from '../../audit/domain/audit-action';
 import { toAuditActor } from '../../audit/domain/audit-actor';
@@ -60,21 +61,44 @@ export interface ArrangeEntry {
  * re-sending seven descriptors that did not change, and the benefit is that
  * there is no interleaving to reason about.
  *
- * ## Ordering: the document first, the ledger second
+ * ## The document and the ledger commit TOGETHER
  *
- * `MediaService.retain`'s own contract — "called AFTER the referencing document
- * is written, never before". If the product write fails, the count stays at
- * zero and the asset is an ordinary unattached upload that reconciliation can
- * offer for cleanup. The reverse order would leave a count nothing references
- * and nothing can ever delete.
+ * Ordering used to be the whole of the argument here: write the product first,
+ * `$inc` second, because a failed product write then leaves the count at zero
+ * and the asset is an ordinary unattached upload. That reasoning is sound and
+ * it closes one window while leaving the opposite one open — the product write
+ * lands and the `$inc` does not, which leaves an asset a product REFERENCES
+ * sitting at `refCount: 0`.
  *
- * The residual window is the opposite one: the product write lands and the
- * `$inc` does not. That is one atomic statement against the same database in
- * the same request, so it fails only if the database has gone away between two
- * adjacent calls — in which case the count is one short and `reconcile()`
- * reports the asset as unreferenced while it is in use. It is recorded rather
- * than hidden; closing it properly means a transaction across `products` and
- * `mediaAssets`, which the ledger repository is not written for.
+ * That residual is not a smaller version of the same bug. It is **the original
+ * defect**, reached by a different path: `refCount === 0` is the exact
+ * condition under which `DELETE /admin/media` destroys the object and under
+ * which `reconcile()` lists it as safe to clean up. Two adjacent statements
+ * against a database that can go away between them is not a rare enough event
+ * to trade an irreversible deletion against.
+ *
+ * The two directions are not symmetric, which is why only one of them was
+ * worth a transaction:
+ *
+ *   detach  document written, `$inc` lost  →  count too HIGH  →  an asset
+ *           nothing can delete. A leak. Recoverable by hand, visible in the
+ *           report, harms nobody.
+ *   attach  document written, `$inc` lost  →  count too LOW   →  a photograph
+ *           a live product page is showing, deletable by a tool doing its job.
+ *           Irreversible.
+ *
+ * So both now run inside ONE `TransactionService.run`, the way the order path
+ * does: `products` and `mediaAssets` are collections in the same database on
+ * the same connection, the session is threaded into every statement, and the
+ * document and the count commit together or neither does. A reconciliation
+ * report was the alternative and is the weaker answer — it DETECTS after the
+ * fact, and what it would have detected is a deletion that already happened.
+ *
+ * The callback is RE-ENTRANT (`withTransaction` re-runs it after a transient
+ * write conflict), so every read is inside it and no state survives an attempt.
+ * Nothing external happens in there: the bytes were uploaded before this
+ * endpoint was called and no store call is made here, so CONSISTENCY-MODEL.md
+ * §7's "no external I/O in a transaction" holds without effort.
  */
 @Injectable()
 export class ProductImageService {
@@ -86,6 +110,7 @@ export class ProductImageService {
     private readonly ledger: MediaAssetRepository,
     private readonly users: UsersService,
     private readonly audit: AuditService,
+    private readonly transactions: TransactionService,
   ) {}
 
   /**
@@ -105,49 +130,67 @@ export class ProductImageService {
     context: AdminWriteContext,
   ): Promise<ProductLean> {
     const actor = await this.resolveActor(context.actorId);
-    const product = await this.load(productId);
 
-    if (product.images.length >= MAX_PRODUCT_IMAGES) {
-      throw AppException.productImageLimit(MAX_PRODUCT_IMAGES);
-    }
+    /*
+     * Everything that reads or writes is inside the session, INCLUDING the
+     * loads. The image count validated below and the array the `$set` is built
+     * from must come from the same snapshot the write lands on, or two
+     * concurrent attaches can each read seven images and each write an eighth.
+     */
+    const { before, updated, refCount } = await this.transactions.run(async (session) => {
+      const product = await this.load(productId, session);
 
-    if (product.images.some((image) => image.publicId === publicId)) {
-      throw AppException.productImageAlreadyAttached();
-    }
+      if (product.images.length >= MAX_PRODUCT_IMAGES) {
+        throw AppException.productImageLimit(MAX_PRODUCT_IMAGES);
+      }
 
-    const asset = await this.ledger.find(publicId);
+      if (product.images.some((image) => image.publicId === publicId)) {
+        throw AppException.productImageAlreadyAttached();
+      }
 
-    if (asset === null) {
-      // Not in the ledger means it was never uploaded through this API — or it
-      // was destroyed. Either way there is nothing to reference-count, and
-      // attaching would put a descriptor on a product for an object the system
-      // cannot manage.
-      throw AppException.mediaAssetNotFound();
-    }
+      const asset = await this.ledger.find(publicId, session);
 
-    const images = [
-      ...product.images,
-      {
-        publicId: asset.publicId,
-        version: asset.version,
-        format: asset.format,
-        width: asset.width,
-        height: asset.height,
-        bytes: asset.bytes,
-        alt,
-        sortOrder: product.images.length,
-        // The first image on a product is its primary. §8 requires exactly one
-        // when the array is non-empty, and leaving the first upload
-        // non-primary would mean every new product renders a placeholder until
-        // somebody notices a radio button.
-        isPrimary: product.images.length === 0,
-      },
-    ];
+      if (asset === null) {
+        // Not in the ledger means it was never uploaded through this API — or it
+        // was destroyed. Either way there is nothing to reference-count, and
+        // attaching would put a descriptor on a product for an object the system
+        // cannot manage.
+        throw AppException.mediaAssetNotFound();
+      }
 
-    const updated = await this.writeImages(productId, images);
+      const images = [
+        ...product.images,
+        {
+          publicId: asset.publicId,
+          version: asset.version,
+          format: asset.format,
+          width: asset.width,
+          height: asset.height,
+          bytes: asset.bytes,
+          alt,
+          sortOrder: product.images.length,
+          // The first image on a product is its primary. §8 requires exactly one
+          // when the array is non-empty, and leaving the first upload
+          // non-primary would mean every new product renders a placeholder until
+          // somebody notices a radio button.
+          isPrimary: product.images.length === 0,
+        },
+      ];
 
-    // AFTER the write. See the class docstring.
-    const refCount = await this.media.retain(publicId);
+      const written = await this.writeImages(productId, images, session);
+
+      /*
+       * The document and the count, in ONE commit. If this throws — the ledger
+       * row was destroyed by a concurrent operation, a write conflict, anything
+       * — the `$set` above is rolled back with it, so the product never
+       * references an asset the ledger has not counted.
+       */
+      const count = await this.media.retain(publicId, session);
+
+      return { before: product, updated: written, refCount: count };
+    });
+
+    const product = before;
 
     this.logger.log(
       `image attached  product=${productId.toHexString()}  publicId=${publicId}  refCount=${String(refCount)}`,
@@ -183,28 +226,43 @@ export class ProductImageService {
     context: AdminWriteContext,
   ): Promise<ProductLean> {
     const actor = await this.resolveActor(context.actorId);
-    const product = await this.load(productId);
 
-    if (!product.images.some((image) => image.publicId === publicId)) {
-      throw AppException.productImageNotFound();
-    }
+    const { before, updated, refCount } = await this.transactions.run(async (session) => {
+      const product = await this.load(productId, session);
 
-    const remaining = product.images
-      .filter((image) => image.publicId !== publicId)
-      .map((image, index) => ({ ...image, sortOrder: index }));
+      if (!product.images.some((image) => image.publicId === publicId)) {
+        throw AppException.productImageNotFound();
+      }
 
-    /*
-     * If the primary was the one removed, the first remaining image becomes
-     * primary. §8's invariant is "exactly one when `images` is non-empty" —
-     * leaving none would render a placeholder on every grid for a product that
-     * has photographs, which is K10's symptom arrived at by a different route.
-     */
-    if (remaining.length > 0 && !remaining.some((image) => image.isPrimary)) {
-      remaining[0] = { ...remaining[0], isPrimary: true } as (typeof remaining)[number];
-    }
+      const remaining = product.images
+        .filter((image) => image.publicId !== publicId)
+        .map((image, index) => ({ ...image, sortOrder: index }));
 
-    const updated = await this.writeImages(productId, remaining);
-    const refCount = await this.media.release(publicId);
+      /*
+       * If the primary was the one removed, the first remaining image becomes
+       * primary. §8's invariant is "exactly one when `images` is non-empty" —
+       * leaving none would render a placeholder on every grid for a product that
+       * has photographs, which is K10's symptom arrived at by a different route.
+       */
+      if (remaining.length > 0 && !remaining.some((image) => image.isPrimary)) {
+        remaining[0] = { ...remaining[0], isPrimary: true } as (typeof remaining)[number];
+      }
+
+      const written = await this.writeImages(productId, remaining, session);
+
+      /*
+       * This direction already failed safe — a lost decrement leaves an asset
+       * nothing can delete, which is a leak rather than a loss. It shares the
+       * transaction anyway, because two paths through one pair of collections
+       * with two different consistency stories is how the next person gets it
+       * wrong.
+       */
+      const count = await this.media.release(publicId, session);
+
+      return { before: product, updated: written, refCount: count };
+    });
+
+    const product = before;
 
     this.logger.log(
       `image detached  product=${productId.toHexString()}  publicId=${publicId}  refCount=${String(refCount)}`,
@@ -348,9 +406,10 @@ export class ProductImageService {
   private async writeImages(
     productId: Types.ObjectId,
     images: readonly object[],
+    session?: ClientSession,
   ): Promise<ProductLean> {
     const updated = await this.products
-      .findOneAndUpdate({ _id: productId }, { $set: { images } }, { new: true })
+      .findOneAndUpdate({ _id: productId }, { $set: { images } }, { new: true, session: session ?? null })
       .lean<ProductLean>()
       .exec();
 
@@ -359,8 +418,12 @@ export class ProductImageService {
     return updated;
   }
 
-  private async load(productId: Types.ObjectId): Promise<ProductLean> {
-    const product = await this.products.findById(productId).lean<ProductLean>().exec();
+  private async load(productId: Types.ObjectId, session?: ClientSession): Promise<ProductLean> {
+    const product = await this.products
+      .findById(productId)
+      .session(session ?? null)
+      .lean<ProductLean>()
+      .exec();
 
     if (product === null) throw AppException.productNotFound();
     if (product.deletedAt !== null) throw AppException.productDeleted();

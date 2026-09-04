@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { DatabaseModule } from '../../database/database.module';
 import { AuditModule } from '../audit/audit.module';
 import { MediaModule } from '../media/media.module';
 import { Order, OrderSchema } from '../orders/infrastructure/schemas/order.schema';
@@ -80,6 +81,15 @@ import { ProductsController } from './presentation/products.controller';
      * nothing from the catalogue, so this is one-directional.
      */
     MediaModule,
+    /*
+     * For `TransactionService`. `ProductImageService.attach` writes the product
+     * document and increments the media ledger, and those two have to commit
+     * together: the window between them leaves an asset a product REFERENCES at
+     * `refCount: 0`, which is the exact state from which `DELETE /admin/media`
+     * destroys it. `products` and `mediaAssets` are collections in this same
+     * database on this same connection, so one session spans both.
+     */
+    DatabaseModule,
   ],
   controllers: [
     ProductsController,
