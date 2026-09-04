@@ -83,6 +83,65 @@ export class InventoryRepository {
   }
 
   /**
+   * Applies a SIGNED manual adjustment, refusing anything that would drive the
+   * balance negative.
+   *
+   * Authority: INVENTORY-MODEL.md §5.3 — "Resulting `onHand` must be ≥ 0,
+   * enforced by a conditional update".
+   *
+   * ## Why the floor is in the FILTER and not in an `if`
+   *
+   * Same reason as `decrementForSale`, and it is the whole design: a read, a
+   * comparison in the application, and then a write is the legacy TOCTOU shape
+   * — two operators can both pass the check before either writes, and the
+   * second one takes the balance negative. `{ 'stock.onHand': { $gte: -delta } }`
+   * evaluates the precondition inside the same atomic update, so the second one
+   * matches nothing.
+   *
+   * The predicate is only applied when `delta` is negative. A positive
+   * adjustment cannot underflow, and a `$gte` against a negative number would
+   * be a filter that reads as if it were guarding something while guarding
+   * nothing — worse than no filter, because a reader would believe it.
+   *
+   * ## Unlike a sale, this does NOT filter on `isActive` or `deletedAt`
+   *
+   * The same reasoning as `incrementForRestore`. Goods physically exist whether
+   * or not the product is listed; refusing to record a count on a delisted
+   * product would make delisting a way to lose stock silently, and an operator
+   * counting a shelf is describing reality, not asking to sell anything.
+   *
+   * Returns `null` when the update matched nothing — either the product does
+   * not exist, or the floor refused it. The caller distinguishes with
+   * `diagnose`, on the failure path only.
+   */
+  async adjust(
+    productId: Types.ObjectId,
+    delta: number,
+    session: ClientSession,
+  ): Promise<StockDecrement | null> {
+    const filter: Record<string, unknown> = { _id: productId };
+
+    if (delta < 0) {
+      filter['stock.onHand'] = { $gte: -delta };
+    }
+
+    const updated = await this.products
+      .findOneAndUpdate(
+        filter,
+        { $inc: { 'stock.onHand': delta } },
+        { session, returnDocument: 'after', projection: { 'stock.onHand': 1 } },
+      )
+      .lean<{ _id: Types.ObjectId; stock: { onHand: number } }>()
+      .exec();
+
+    if (updated === null) {
+      return null;
+    }
+
+    return { balanceBefore: updated.stock.onHand - delta, balanceAfter: updated.stock.onHand };
+  }
+
+  /**
    * Returns goods to stock. The mirror of `decrementForSale`, sign reversed.
    *
    * Authority: INVENTORY-MODEL.md §5.2 — cancellation and return both increase

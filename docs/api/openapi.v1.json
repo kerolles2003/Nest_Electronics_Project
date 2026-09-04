@@ -4162,6 +4162,393 @@
         ]
       }
     },
+    "/api/v1/admin/inventory": {
+      "get": {
+        "description": "The work list. Ordered by what runs out next, because the list exists to be acted on.\n\n`?lowStock=true` and `?outOfStock=true` are INVENTORY-MODEL.md §7’s two reports as\nfilters rather than as separate endpoints — they are the same list with a different\npredicate, and an operator moves between them constantly.\n\nLow stock is **per product**: `onHand <= lowStockThreshold`, never one global constant.\nA reel of resistors and an oscilloscope do not reorder at the same number. Legacy loaded\nevery product and filtered in JavaScript (Phase 0 P3); this is a database predicate.\n\n`state` is derived server-side so no client re-implements the threshold rule — the legacy\nshape where five call sites computed availability five different ways.",
+        "operationId": "AdminInventoryController_levels_v1",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "1-based page number.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Items per page, 1–100.",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 24,
+              "example": 24,
+              "type": "number"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Matches SKU and English name.",
+            "schema": {
+              "maxLength": 100,
+              "example": "esp32",
+              "type": "string"
+            }
+          },
+          {
+            "name": "lowStock",
+            "required": false,
+            "in": "query",
+            "description": "At or below the product’s OWN threshold. Per-product, not one global constant: a reel of resistors and an oscilloscope do not reorder at the same number.",
+            "schema": {
+              "example": true,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "outOfStock",
+            "required": false,
+            "in": "query",
+            "description": "Exactly zero on hand.",
+            "schema": {
+              "example": true,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "categoryId",
+            "required": false,
+            "in": "query",
+            "description": "The category SUBTREE.",
+            "schema": {
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeInactive",
+            "required": false,
+            "in": "query",
+            "description": "Include unpublished products. Excluded by default because a stock list is a work list, and a draft is not something anybody is about to run out of.",
+            "schema": {
+              "default": false,
+              "example": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockLevelListResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Stock levels, scarcest first",
+        "tags": [
+          "admin · inventory"
+        ]
+      }
+    },
+    "/api/v1/admin/inventory/reconciliation": {
+      "get": {
+        "description": "For every product with ledger history, `Σ quantityDelta` must equal `stock.onHand`.\nINVENTORY-MODEL.md §7 lists this as **\"New. Impossible in legacy.\"** — legacy had no\n`balanceBefore`/`balanceAfter` and no invariant, which is why Phase 0.5 could not explain\na single stock number.\n\nA non-zero `difference` proves an out-of-band mutation: stock moved without an event, or\nan event was written without stock moving. Neither is detectable any other way.\n\n**It reports; it does not correct.** Same rule as the media reconciliation and for the\nsame reason — an automated corrector that misreads state writes a wrong number into the\nonly record anyone could have used to find the right one. The remedy is an `ADJUSTMENT`\nwith a reason, which leaves a trail.\n\n**A caveat that is not a false positive:** a product seeded with stock and no\n`OPENING_BALANCE` event reports a discrepancy equal to its whole balance, because the\nledger genuinely does not account for it. That is the seed’s omission, correctly reported.",
+        "operationId": "AdminInventoryController_reconcile_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Does the ledger still add up to the stock",
+        "tags": [
+          "admin · inventory"
+        ]
+      }
+    },
+    "/api/v1/admin/inventory/{productId}/events": {
+      "get": {
+        "description": "Every event carries `balanceBefore` and `balanceAfter`, which is what makes the ledger\n**self-verifying**: any single entry can be checked without replaying history, and a gap\nbetween one event’s `balanceAfter` and the next one’s `balanceBefore` proves an\nout-of-band mutation. Legacy had neither field.\n\n`actorName` is snapshotted at the time of the movement. Legacy left `created_by` NULL on\nevery sale event (F-MED-2), so no stock movement could be attributed to anybody at all.",
+        "operationId": "AdminInventoryController_history_v1",
+        "parameters": [
+          {
+            "name": "productId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "1-based page number.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Items per page, 1–100.",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 24,
+              "example": 24,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryHistoryResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Movement history for one product, newest first",
+        "tags": [
+          "admin · inventory"
+        ]
+      }
+    },
+    "/api/v1/admin/inventory/{productId}/adjust": {
+      "post": {
+        "description": "The only way stock changes outside an order. `CATALOG-MODEL.md` §4 makes InventoryModule\nthe sole writer of `stock` and the product write DTOs reject the field, so there is no\nsecond door — which is legacy defect M7 closed, where an admin could change stock through\na generic product update with no ledger entry behind it.\n\n**`delta` is a signed movement, not a target.** `-3` removes three; it does not set the\nbalance to three. Preserved from `adjust_stock_v2`, whose semantics were right even\nthough it never once completed successfully in production — zero `adjustment` events\nexist. An absolute value would silently overwrite a sale that landed between the\noperator reading the screen and pressing save; a delta composes with it.\n\n`delta: 0` is a 400 (legacy F-MED-9 permitted a ledger row recording nothing happening).\n\n**The floor is enforced inside the update**, not by a read and a comparison: two\noperators removing stock at the same moment would both pass an application-level check\nand the second would take the balance negative. A refusal is `409` naming what is\nactually there.\n\n**The actor comes from the token.** There is no actor field on this DTO and no request\nshape that could carry one — the legacy `p_admin_id` forgery vector, where the caller\nnamed who had done it. The role and name are read from the database profile rather than\nthe JWT claim, so a token minted before a demotion cannot move stock as an admin.\n\nThe stock change and the ledger entry are written in ONE transaction. Legacy wrote them\nfrom different code paths, which is why they diverged and why nothing could be\nreconciled.",
+        "operationId": "AdminInventoryController_adjust_v1",
+        "parameters": [
+          {
+            "name": "productId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjustStockDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdjustmentResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — `delta` is zero or not an integer, `reason` is under 3 characters, or `type` is not one of RESTOCK / ADJUSTMENT / DAMAGE. UNKNOWN_FIELD — including any attempt to name the actor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PRODUCT_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_STOCK_FOR_ADJUSTMENT — the removal is larger than the balance. `details` names both numbers, because the next action is to post the difference actually counted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Move stock by a signed delta, and ledger it",
+        "tags": [
+          "admin · inventory"
+        ]
+      }
+    },
     "/api/v1/checkout/quote": {
       "post": {
         "description": "Returns the **authoritative** money breakdown for the signed-in customer’s cart, with\nper-line status flags. Every figure is recomputed from live catalogue data on this\nrequest; nothing stored is returned, and the client never adds anything up itself.\n\n### What this is NOT\n\n- **Not a reservation.** No stock is held. Another customer may buy the last unit one\n  millisecond later.\n- **Not a lock, and not a payment authorisation.**\n- **Not a promise that `POST /orders` will succeed.** Placement independently revalidates\n  everything inside a transaction and may still return `409 OUT_OF_STOCK`.\n- **Not persisted.** There is no quote id and nothing to send back. Placement ignores any\n  totals a client might have kept.\n\n### Reading the result\n\n- `canPlaceOrder` — whether placement would be accepted right now. Use it for the button.\n- `pricing.grandTotal` — the cash amount due on delivery. **Never compute this locally.**\n- `pricing.shippingFee` is computed by the server. Pass `addressId` and it is quoted\n  against that address governorate — the same calculation `POST /orders` applies, so the\n  two agree. Omit it before the customer has chosen an address. `discountTotal` is always\n  `0` in this release: no coupon domain exists yet.\n- A `PRICE_CHANGED` line is included at the NEW price — compare `unitPrice` with\n  `previousUnitPrice` to tell the customer before they commit.\n\nPOST rather than GET because the frozen contract shapes this as a body-carrying request.\nIt has **no side effects** and writes nothing.\n\nThe body accepts `addressId` and nothing else. Sending `couponCode` returns\n`400 UNKNOWN_FIELD` rather than being silently ignored, so a client is never left believing\nit applied a discount that was never validated; a raw `governorate` is refused for a second\nreason — the saved address is the authority for it, and accepting free text would let a\nclient shop for a cheaper delivery fee.",
@@ -5870,6 +6257,7 @@
               "PRODUCT_IMAGE_ALREADY_ATTACHED",
               "PRODUCT_IMAGE_NOT_FOUND",
               "PRODUCT_HAS_ORDERS",
+              "INSUFFICIENT_STOCK_FOR_ADJUSTMENT",
               "CONCURRENT_MODIFICATION",
               "ORDER_NOT_CANCELLABLE",
               "INVALID_STATE_TRANSITION",
@@ -9073,6 +9461,312 @@
         },
         "required": [
           "items"
+        ]
+      },
+      "StockLevelDto": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "sku": {
+            "type": "string",
+            "example": "ESP32-WROOM-32"
+          },
+          "slug": {
+            "type": "string",
+            "example": "esp32-devkit-v1"
+          },
+          "name": {
+            "type": "string",
+            "example": "ESP32 DevKit V1"
+          },
+          "onHand": {
+            "type": "number",
+            "example": 42
+          },
+          "lowStockThreshold": {
+            "type": "number",
+            "example": 5
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IN_STOCK",
+              "LOW_STOCK",
+              "OUT_OF_STOCK"
+            ],
+            "description": "Derived once, on the server, so no client re-implements the threshold rule — the legacy shape where five call sites computed availability five ways."
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          },
+          "categoryName": {
+            "type": "string",
+            "example": "Microcontrollers"
+          },
+          "costPrice": {
+            "type": "number",
+            "example": 9800,
+            "nullable": true,
+            "description": "ADMIN ONLY, minor units. Present so a stock-value report needs no second request."
+          }
+        },
+        "required": [
+          "productId",
+          "sku",
+          "slug",
+          "name",
+          "onHand",
+          "lowStockThreshold",
+          "state",
+          "isActive",
+          "categoryName",
+          "costPrice"
+        ]
+      },
+      "StockLevelListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StockLevelDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PaginationMetaDto"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "ReconciliationDiscrepancyDto": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "sku": {
+            "type": "string",
+            "example": "ESP32-WROOM-32"
+          },
+          "onHand": {
+            "type": "number",
+            "example": 42,
+            "description": "What the product document says."
+          },
+          "ledgerSum": {
+            "type": "number",
+            "example": 39,
+            "description": "Σ quantityDelta over every event for this product."
+          },
+          "difference": {
+            "type": "number",
+            "example": 3,
+            "description": "`onHand - ledgerSum`. Non-zero proves an out-of-band mutation: stock moved without an event, or an event was written without stock moving."
+          }
+        },
+        "required": [
+          "productId",
+          "sku",
+          "onHand",
+          "ledgerSum",
+          "difference"
+        ]
+      },
+      "ReconciliationReportDto": {
+        "type": "object",
+        "properties": {
+          "checked": {
+            "type": "number",
+            "example": 84,
+            "description": "Products with any ledger history."
+          },
+          "discrepancies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationDiscrepancyDto"
+            }
+          }
+        },
+        "required": [
+          "checked",
+          "discrepancies"
+        ]
+      },
+      "ReconciliationResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReconciliationReportDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InventoryEventDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "example": "RESTOCK",
+            "enum": [
+              "OPENING_BALANCE",
+              "SALE",
+              "CANCELLATION",
+              "RETURN",
+              "RESTOCK",
+              "ADJUSTMENT",
+              "DAMAGE"
+            ]
+          },
+          "quantityDelta": {
+            "type": "number",
+            "example": -3,
+            "description": "SIGNED. Negative when stock left. A `SALE` is always negative."
+          },
+          "balanceBefore": {
+            "type": "number",
+            "example": 45
+          },
+          "balanceAfter": {
+            "type": "number",
+            "example": 42
+          },
+          "reason": {
+            "type": "string",
+            "example": "Damaged in storage"
+          },
+          "referenceId": {
+            "type": "string",
+            "example": "NE-20260830-0001",
+            "nullable": true,
+            "description": "The order id this movement belongs to, or null for a manual adjustment."
+          },
+          "actorName": {
+            "type": "string",
+            "example": "Mina Sobhy",
+            "nullable": true,
+            "description": "Snapshotted at the time. Legacy left `created_by` NULL on every sale event (F-MED-2), so no movement could be attributed to anyone."
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z"
+          }
+        },
+        "required": [
+          "type",
+          "quantityDelta",
+          "balanceBefore",
+          "balanceAfter",
+          "reason",
+          "referenceId",
+          "actorName",
+          "createdAt"
+        ]
+      },
+      "InventoryHistoryResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryEventDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PaginationMetaDto"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdjustStockDto": {
+        "type": "object",
+        "properties": {
+          "delta": {
+            "type": "number",
+            "example": -3,
+            "description": "A SIGNED, non-zero integer — how much stock MOVES, not what it should become. Preserved from `adjust_stock_v2`, whose semantics were correct even though it never once ran successfully. An absolute value would silently overwrite a concurrent sale; a delta composes with one."
+          },
+          "reason": {
+            "type": "string",
+            "example": "Damaged in storage — water ingress on the top shelf",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Why. Required, and at least 3 characters — preserved from the legacy Zod rule, which the database never enforced. This is the field that makes the ledger readable a year later."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "RESTOCK",
+              "ADJUSTMENT",
+              "DAMAGE"
+            ],
+            "description": "`RESTOCK` — goods arrived. `ADJUSTMENT` — the count was wrong. `DAMAGE` — units were destroyed. Distinct types because they are different business events and reporting has to tell them apart, not because the mechanism differs."
+          }
+        },
+        "required": [
+          "delta",
+          "reason",
+          "type"
+        ]
+      },
+      "AdjustmentResultDto": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "sku": {
+            "type": "string",
+            "example": "ESP32-WROOM-32"
+          },
+          "balanceBefore": {
+            "type": "number",
+            "example": 45
+          },
+          "balanceAfter": {
+            "type": "number",
+            "example": 42
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IN_STOCK",
+              "LOW_STOCK",
+              "OUT_OF_STOCK"
+            ],
+            "description": "The state AFTER the movement, so a client can re-render without asking again."
+          }
+        },
+        "required": [
+          "productId",
+          "sku",
+          "balanceBefore",
+          "balanceAfter",
+          "state"
+        ]
+      },
+      "AdjustmentResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdjustmentResultDto"
+          }
+        },
+        "required": [
+          "data"
         ]
       },
       "CheckoutQuoteDto": {

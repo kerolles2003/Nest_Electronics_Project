@@ -5637,3 +5637,177 @@ calls — after which the count is one short and `reconcile()` reports the asset
 as unreferenced while it is in use. Closing it properly means a transaction
 spanning `products` and `mediaAssets`, and the ledger repository is not written
 to take a session. Recorded, not fixed.
+
+---
+
+# Phase 7 Part 5 — stock moves, and for the first time the ledger can prove it
+
+**Strays reaped before every run.** None found.
+
+## A note on ordering, taken deliberately and stated rather than slipped in
+
+The brief says Parts 3, 4, 5, 6 in order. Part 4's **API** half is done and
+committed — the attach path, `retain()`'s first caller, and the proof that a
+referenced asset cannot be deleted, which is the thing the brief singled out.
+Part 4's **UI** half is not, and it is sitting behind this part rather than in
+front of it, for a concrete reason.
+
+The console's product screen is one form. It carries a stock field, prices in
+major units, Supabase snake_case field names and UUID ids. Re-pointing its image
+picker at the API while the product itself still writes to Supabase would
+produce a screen whose images live in Mongo under an ObjectId the Supabase
+product does not have — coherent in neither direction. And the form cannot be
+re-pointed as a whole without an inventory adjustment endpoint to receive its
+stock field, because `POST /admin/catalog/products` refuses `stock` by design.
+
+So the console migration is one unit, and it needed this part first. That unit
+is next. This is a reordering *within* the parts the brief named, not a
+substitution, and no part has been dropped.
+
+## What is being replaced
+
+The console's inventory screen calls Supabase's `adjust_stock_v2`. Two things
+are true of that function and both are in the frozen record:
+
+1. **`EXECUTE` was granted to `anon`** — F-CRIT-1. Anybody who could reach the
+   database could move stock.
+2. **Zero `adjustment` events exist in production.** It never once completed
+   successfully.
+
+Its *semantics* are preserved here because they were well designed — a signed
+delta, a required reason, a floor at zero. The execution path is new because the
+old one never worked, and every route in the new controller is
+`ADMIN`/`SUPER_ADMIN`.
+
+## `delta` is a movement, not a target
+
+`-3` removes three; it does not set the balance to three. That distinction is
+the reason §5.3 says "PRESERVED from `adjust_stock_v2`, whose semantics were
+correct": an absolute value silently overwrites whatever landed between the
+operator reading the screen and pressing save, and a delta composes with it. The
+test that proves it just posts `+5` twice and expects 10.
+
+`delta: 0` is a 400 — legacy F-MED-9 permitted a ledger row recording nothing
+happening, and the ledger's whole value is that every row is a movement.
+
+## The floor is inside the update, which is the difference between a rule and a hope
+
+```
+{ _id, 'stock.onHand': { $gte: -delta } }
+```
+
+Read-then-compare is the legacy TOCTOU shape: two operators both pass the check
+and the second takes the balance negative. The predicate lives in the same
+atomic update, so the second one matches nothing and gets a 409 naming what is
+actually there — both numbers, because the operator's next action is to post the
+difference they actually counted.
+
+The predicate is applied **only when `delta` is negative**. A positive
+adjustment cannot underflow, and a `$gte` against a negative number would read
+as though it were guarding something while guarding nothing — worse than no
+filter, because a reader would believe it.
+
+Removing exactly the whole balance is allowed, and tested. An off-by-one there
+would make the last unit of every product permanently unremovable.
+
+## Unlike a sale, an adjustment does NOT filter on `isActive`
+
+The same reasoning `incrementForRestore` already uses, and it closed F-HIGH-2.
+Goods physically exist whether or not the product is listed. Refusing to record
+a count on a delisted product would make delisting a way to lose stock silently,
+and an operator counting a shelf is describing reality rather than asking to
+sell anything. Tested directly on a draft product.
+
+## Three types, and three that are refused
+
+`RESTOCK`, `ADJUSTMENT` and `DAMAGE` are accepted. "We received 100 units" and
+"the count was wrong" are different business events and reporting has to tell
+them apart — §5.4's reasoning, not a mechanical difference.
+
+`SALE`, `CANCELLATION` and `RETURN` are **refused**: they are consequences of an
+order, written inside the order's transaction. An operator able to hand-write a
+`SALE` could move stock with no order behind it, and the ledger would stop
+reconciling against `orders`.
+
+`OPENING_BALANCE` is refused for a different reason — §9 makes initial stock a
+seed, "not a migration". An opening balance an operator can post at any time is
+an adjustment wearing another name, and reporting that told them apart would be
+lying.
+
+## The actor cannot be named by the caller
+
+§5.3: "Actor — from the JWT, **never** a request parameter (fixes the legacy
+`p_admin_id` forgery vector)". There is no actor field on the DTO, so sending
+one is a 400 `UNKNOWN_FIELD` — asserted. The role and name come from the
+database profile rather than the JWT claim, so a token minted before a demotion
+cannot move stock as an admin.
+
+Legacy left `created_by` NULL on **every** sale event (F-MED-2), so no stock
+movement in production could be attributed to anybody at all. Every event this
+writes carries a snapshotted actor.
+
+## Both doors are now closed
+
+`CATALOG-MODEL.md` §4 makes InventoryModule the sole writer of `stock` *because*
+every mutation must produce a ledger event. The test asserts both refusals in
+one place: `POST /admin/catalog/products` and `PATCH .../products/:id` each
+answer 400 `UNKNOWN_FIELD` for `stock`. That is legacy defect M7 closed from
+both sides, and it is what makes "every movement in the system is ledgered" a
+statement rather than a hope.
+
+## Reconciliation — §7's "New. Impossible in legacy."
+
+`Σ quantityDelta` per product must equal `stock.onHand`. A difference proves an
+out-of-band mutation: stock moved without an event, or an event was written
+without stock moving. Nothing else detects either.
+
+The test that matters reaches **past the application** to the collection and
+`$inc`s the stock directly — because nothing in the application can produce the
+condition, and a report nobody can make fire is a report nobody should trust.
+The discrepancy comes back as `{ onHand: 17, ledgerSum: 10, difference: 7 }`.
+
+**It reports; it does not correct**, and that is asserted too — the stock is
+still 17 afterwards. Same rule as the media reconciliation and the same reason:
+an automated corrector that misreads state writes a wrong number into the only
+record anyone could have used to find the right one.
+
+**A caveat that is not a false positive:** a product seeded with stock and no
+`OPENING_BALANCE` event reports a discrepancy equal to its whole balance,
+because the ledger genuinely does not account for it. That is the seed's
+omission, correctly reported, and it is documented on the endpoint.
+
+## One index added, and the comment that forbade it updated rather than ignored
+
+`inventory-event.schema.ts` said there was "deliberately NO `{productId,
+createdAt}` index" because "movement history per product is an admin screen that
+does not exist". The screen exists now — `GET /admin/inventory/:productId/events`
+— so the reason for the absence has ended rather than been overruled. The rule
+it was applying is intact and restated: an index nothing reads is pure write
+cost, the legacy defect where a GIN index recorded 0 scans against 1,282
+sequential ones.
+
+Descending on `createdAt` because that is the only order a history is read in,
+with `_id` closing the key so a page boundary is stable when two events share a
+timestamp — which they do, because every line of one order is written in a
+single `insertMany`.
+
+## Why a second service rather than methods on `InventoryService`
+
+`commitSale` and `restoreStock` take a session **from their caller**, because
+both are steps inside an order's transaction and must commit or abort with it.
+An adjustment is its own unit of work and **owns** its transaction. Merging them
+would produce methods that sometimes open a transaction and sometimes join one,
+decided by whether an argument was null — which is precisely the ambiguity that
+lets a ledger write end up outside the transaction that moved the stock. That
+divergence is what made legacy's ledger decorative.
+
+## Verification
+
+33 new tests, all passing on the first run. Regression: `test/infrastructure`,
+`test/orders`, `test/checkout` — 13 suites, 288 passing, which covers the
+transaction path and the index-health probe that would notice the new index.
+Zero residue. `type-check` and `lint` clean, OpenAPI regenerated, drift gate
+green.
+
+**Browser-unverified:** the console's inventory screen still calls Supabase.
+Re-pointing it lands with the console migration unit.

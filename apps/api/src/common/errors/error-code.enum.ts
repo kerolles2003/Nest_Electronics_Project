@@ -194,6 +194,21 @@ export enum ErrorCode {
    */
   PRODUCT_HAS_ORDERS = 'PRODUCT_HAS_ORDERS',
 
+  /**
+   * 409. A negative adjustment would have driven `stock.onHand` below zero.
+   *
+   * Distinct from `OUT_OF_STOCK`, which answers a CUSTOMER whose checkout could
+   * not be satisfied. This answers an operator, and it means something
+   * different: not "we cannot sell you this" but "the number you are trying to
+   * remove is larger than the number we have". `details` carries both, because
+   * the operator's next action is to post the difference they actually counted.
+   *
+   * INVENTORY-MODEL.md §5.3: "Resulting `onHand` must be >= 0, enforced by a
+   * conditional update" — so this is raised by the update matching nothing, not
+   * by a read-then-compare, and two operators cannot both pass it.
+   */
+  INSUFFICIENT_STOCK_FOR_ADJUSTMENT = 'INSUFFICIENT_STOCK_FOR_ADJUSTMENT',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

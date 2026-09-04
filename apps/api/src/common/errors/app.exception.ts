@@ -586,6 +586,32 @@ export class AppException extends HttpException {
     );
   }
 
+  // --- Inventory ------------------------------------------------------------
+
+  /**
+   * Refusing a negative adjustment that would take the balance below zero.
+   *
+   * Both numbers are in the message because the operator's next action is to
+   * post the difference they actually counted, and they cannot work it out from
+   * a refusal that says only "not enough".
+   */
+  static insufficientStockForAdjustment(available: number, delta: number): AppException {
+    return new AppException(
+      ErrorCode.INSUFFICIENT_STOCK_FOR_ADJUSTMENT,
+      HttpStatus.CONFLICT,
+      'That adjustment would take stock below zero.',
+      [
+        {
+          field: 'delta',
+          message:
+            `There are ${String(available)} in stock and the adjustment removes ` +
+            `${String(Math.abs(delta))}. Stock cannot go negative.`,
+          code: ErrorCode.INSUFFICIENT_STOCK_FOR_ADJUSTMENT,
+        },
+      ],
+    );
+  }
+
   // --- Media ----------------------------------------------------------------
 
   /**

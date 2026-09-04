@@ -128,10 +128,13 @@ export const InventoryEventSchema = SchemaFactory.createForClass(InventoryEvent)
  * index. The partial filter is the difference between an index that keeps
  * working when Inventory grows and one that has to be dropped.
  *
- * There is deliberately NO `{ productId, createdAt }` index. Movement history
- * per product is an admin screen that does not exist, and an index nothing
- * reads is pure write cost — the exact legacy defect where a GIN index recorded
- * 0 scans against 1,282 sequential scans.
+ * A second index arrives below. The comment that used to stand here said there
+ * was "deliberately NO `{ productId, createdAt }` index" because "movement
+ * history per product is an admin screen that does not exist". The screen
+ * exists now — `GET /admin/inventory/:productId/events` — so the reason for the
+ * absence has ended rather than been overruled. The rule it was applying is
+ * intact: an index nothing reads is pure write cost, which is the legacy defect
+ * where a GIN index recorded 0 scans against 1,282 sequential ones.
  */
 InventoryEventSchema.index(
   { 'reference.id': 1, productId: 1, type: 1 },
@@ -140,4 +143,18 @@ InventoryEventSchema.index(
     name: 'inventory_event_reference_unique',
     partialFilterExpression: { 'reference.id': { $exists: true } },
   },
+);
+
+/**
+ * Movement history for one product, newest first (INVENTORY-MODEL.md §7).
+ *
+ * Added with the endpoint that reads it, and not before. Descending on
+ * `createdAt` because that is the only order a history is ever read in, and a
+ * descending index serves it without a sort stage; `_id` closes the key so a
+ * page boundary is stable when two events share a timestamp — which they do,
+ * because every line of one order is written in a single `insertMany`.
+ */
+InventoryEventSchema.index(
+  { productId: 1, createdAt: -1, _id: -1 },
+  { name: 'inventory_event_product_history' },
 );

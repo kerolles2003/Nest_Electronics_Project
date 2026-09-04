@@ -1,9 +1,14 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AuditModule } from '../audit/audit.module';
 import { Product, ProductSchema } from '../catalog/infrastructure/schemas/product.schema';
+import { DatabaseModule } from '../../database/database.module';
+import { UsersModule } from '../users/users.module';
+import { InventoryAdminService } from './application/inventory-admin.service';
 import { InventoryService } from './application/inventory.service';
 import { InventoryRepository } from './infrastructure/repositories/inventory.repository';
 import { InventoryEvent, InventoryEventSchema } from './infrastructure/schemas/inventory-event.schema';
+import { AdminInventoryController } from './presentation/admin-inventory.controller';
 
 /**
  * Stock and its ledger.
@@ -17,9 +22,13 @@ import { InventoryEvent, InventoryEventSchema } from './infrastructure/schemas/i
  * the one compiled model on the shared connection, so `indexes:sync` still sees
  * exactly one `products` collection.
  *
- * NO CONTROLLER. `/admin/inventory` — stock levels, manual adjustment, the
- * ledger view and the reconciliation report — is a separate surface with its own
- * authorization and DTOs, and nothing in checkout needs it.
+ * `AdminInventoryController` is `/admin/inventory` — stock levels, manual
+ * adjustment, the ledger view and the reconciliation report. The comment that
+ * used to stand here said this module had NO controller because that surface
+ * "is separate, with its own authorization and DTOs, and nothing in checkout
+ * needs it". The second half is still true and is why the admin service is a
+ * separate class: `InventoryService` takes a session from its caller because it
+ * is a step inside an order's transaction, while an adjustment owns its own.
  *
  * No `InventoryRepositoryPort` yet. PORTS-AND-CONTRACTS.md §3 justifies one
  * under J2, "the ledger invariant and stock guard must be testable without
@@ -34,8 +43,14 @@ import { InventoryEvent, InventoryEventSchema } from './infrastructure/schemas/i
       { name: Product.name, schema: ProductSchema },
       { name: InventoryEvent.name, schema: InventoryEventSchema },
     ]),
+    // An adjustment is its own unit of work, so this module now opens
+    // transactions rather than only joining its callers'.
+    DatabaseModule,
+    AuditModule,
+    UsersModule,
   ],
-  providers: [InventoryService, InventoryRepository],
+  controllers: [AdminInventoryController],
+  providers: [InventoryService, InventoryAdminService, InventoryRepository],
   exports: [InventoryService],
 })
 export class InventoryModule {}
