@@ -75,6 +75,18 @@ export enum AuditAction {
   // ---- Authorization changes (§3) ---------------------------------------
   USER_ROLE_CHANGED = 'USER_ROLE_CHANGED',
 
+  /**
+   * An account was soft-deleted by a SUPER_ADMIN.
+   *
+   * Additive. §3 lists destructive operations as audited and this is one; there
+   * was no code for it because nothing could delete an account. Recording it
+   * under `USER_ROLE_CHANGED` was the alternative and would be worse than
+   * having no row: every future query on `{action, createdAt}` asking "what
+   * role changes happened" would return deletions as well, and the answer would
+   * be wrong in a way that reads as correct.
+   */
+  USER_DELETED = 'USER_DELETED',
+
   // ---- Configuration (§3) ------------------------------------------------
   SHIPPING_RATE_CHANGED = 'SHIPPING_RATE_CHANGED',
 }

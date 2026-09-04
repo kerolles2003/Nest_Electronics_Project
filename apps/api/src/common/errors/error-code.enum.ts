@@ -209,6 +209,27 @@ export enum ErrorCode {
    */
   INSUFFICIENT_STOCK_FOR_ADJUSTMENT = 'INSUFFICIENT_STOCK_FOR_ADJUSTMENT',
 
+  /**
+   * 409. An operator tried to change their own role, or delete their own
+   * account.
+   *
+   * AUTHORIZATION-MODEL.md §3: "A `SUPER_ADMIN` cannot demote or delete
+   * themselves — the last super-admin must always exist." The rule is broader
+   * than the reason: a self-promotion is the one role change with no reviewer,
+   * and refusing both directions costs nothing and removes the whole class.
+   */
+  CANNOT_MODIFY_OWN_ACCOUNT = 'CANNOT_MODIFY_OWN_ACCOUNT',
+
+  /**
+   * 409. The last remaining `SUPER_ADMIN` would have been demoted or deleted.
+   *
+   * A shop with no owner cannot appoint one — there is no route that grants the
+   * role except one that requires it. This refusal is counted from the database
+   * rather than assumed, because an account list nobody checked is exactly how
+   * a system arrives in that state.
+   */
+  LAST_SUPER_ADMIN = 'LAST_SUPER_ADMIN',
+
   /** The resource changed between the read and the write. Retrying is safe. */
   CONCURRENT_MODIFICATION = 'CONCURRENT_MODIFICATION',
 

@@ -585,6 +585,371 @@
         ]
       }
     },
+    "/api/v1/admin/customers": {
+      "get": {
+        "description": "Each row carries its order count and its lifetime spend, computed in ONE aggregation for\nthe whole page rather than two queries per row — the shape that made the legacy customer\nscreen slow enough to notice.\n\nThe two numbers follow different rules on purpose. `orderCount` counts every order the\naccount placed, whatever became of it. `totalSpent` counts only what was PAID, which\nunder COD means DELIVERED — a cancelled order is not spending, and neither is one still\nout with a courier.\n\nSearch matches email, name, and phone by digits. Accounts that have never ordered are in\nthe list: an operator looking for a customer who has not bought anything yet is a\ncompletely ordinary thing, and aggregating first would have excluded all of them.",
+        "operationId": "AdminCustomersController_list_v1",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "description": "1-based page number.",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "Items per page, 1–100.",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 24,
+              "example": 24,
+              "type": "number"
+            }
+          },
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "Matches email, full name, and phone by digits. Substring, not a text index — an operator typing part of a name expects a mid-token match, which tokenised search cannot give them. Escaped before it reaches the database.",
+            "schema": {
+              "maxLength": 100,
+              "example": "sobhy",
+              "type": "string"
+            }
+          },
+          {
+            "name": "role",
+            "required": false,
+            "in": "query",
+            "description": "Filter by role. The list is named for customers because that is almost all of it, but staff accounts are in it too and this is how they are found.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "ADMIN",
+                "SUPER_ADMIN"
+              ]
+            }
+          },
+          {
+            "name": "includeDeleted",
+            "required": false,
+            "in": "query",
+            "description": "Include deleted accounts.",
+            "schema": {
+              "default": false,
+              "example": false,
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCustomerListResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Every account, newest first",
+        "tags": [
+          "admin · customers"
+        ]
+      }
+    },
+    "/api/v1/admin/customers/{id}": {
+      "get": {
+        "description": "The address book is on the detail and not on the list, because a list of accounts each carrying up to ten addresses is a page of data nobody reads. `passwordHash` is absent from this type by construction — see the DTO.",
+        "operationId": "AdminCustomersController_detail_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCustomerResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Staff only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One account, with its address book",
+        "tags": [
+          "admin · customers"
+        ]
+      },
+      "delete": {
+        "description": "**`SUPER_ADMIN` only.** Sets `deletedAt` and increments `tokenVersion`, so the account\nstops being able to authenticate immediately rather than in a quarter of an hour.\n\nA soft-deleted account can never log in, and the check happens AFTER password\nverification so the response cannot be used to enumerate accounts.\n\n**Their orders are untouched.** An order is an immutable commercial record carrying its\nown customer snapshot, so it still reads correctly after the account is gone — which is\nthe whole reason the snapshot exists rather than a join.\n\nYou cannot delete your own account, and you cannot delete the last SUPER_ADMIN.",
+        "operationId": "AdminCustomersController_remove_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCustomerResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — SUPER_ADMIN only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND — no such account, or it is already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CANNOT_MODIFY_OWN_ACCOUNT. LAST_SUPER_ADMIN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete an account (soft)",
+        "tags": [
+          "admin · customers"
+        ]
+      }
+    },
+    "/api/v1/admin/customers/{id}/role": {
+      "patch": {
+        "description": "**`SUPER_ADMIN` only** — AUTHORIZATION-MODEL.md §3. An ADMIN gets 403 here and 200 on\nevery other admin route, which is the separation legacy declared in three places and\nenforced in none.\n\n**Every access token the account holds stops working immediately.** `role` is a JWT claim,\ncarried so the guard needs no per-request lookup — legacy looked it up on EVERY request\nand made `profiles_pkey` the hottest index in the database at 2,719 scans. The cost of\nthat design is that a demoted admin would keep a working admin token for up to fifteen\nminutes; incrementing `tokenVersion` is the escape hatch the schema documents for exactly\nthis case, and it happens in the SAME update as the role change so there is no window\nbetween them.\n\nThree refusals: you cannot change your own role (the one role change with no reviewer);\nyou cannot demote the last SUPER_ADMIN (§3 — \"the last super-admin must always exist\",\nand no endpoint can grant the role without already holding it); and setting the role an\naccount already has writes no audit row, because a row recording that nothing changed is\nnoise in a log kept for two years.",
+        "operationId": "AdminCustomersController_changeRole_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[0-9a-f]{24}$",
+              "example": "652f1a9b3c4d5e6f7a8b9c0d",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeRoleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCustomerResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR / UNKNOWN_FIELD.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — SUPER_ADMIN only. An ADMIN may read this list and change nothing in it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CANNOT_MODIFY_OWN_ACCOUNT — you cannot change your own role. LAST_SUPER_ADMIN — promote somebody else first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Change an account’s role",
+        "tags": [
+          "admin · customers"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "description": "Creates a `CUSTOMER` account and issues an email-verification challenge.\n\n**No session is returned.** The account must be verified before it can sign in, so the\nclient should show a \"check your email\" state rather than navigating to a guarded route.\n\nThe `role` field does not exist on this DTO. Sending one returns `400 UNKNOWN_FIELD`.\n\nRate limited to 3 requests per hour per IP.",
@@ -6258,6 +6623,8 @@
               "PRODUCT_IMAGE_NOT_FOUND",
               "PRODUCT_HAS_ORDERS",
               "INSUFFICIENT_STOCK_FOR_ADJUSTMENT",
+              "CANNOT_MODIFY_OWN_ACCOUNT",
+              "LAST_SUPER_ADMIN",
               "CONCURRENT_MODIFICATION",
               "ORDER_NOT_CANCELLABLE",
               "INVALID_STATE_TRANSITION",
@@ -6583,6 +6950,297 @@
         },
         "required": [
           "data"
+        ]
+      },
+      "AdminCustomerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "email": {
+            "type": "string",
+            "example": "maker@example.com"
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Mina Sobhy"
+          },
+          "phone": {
+            "type": "string",
+            "example": "01012345678",
+            "nullable": true,
+            "description": "The ACCOUNT phone. Frequently null — registration does not ask for one."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "ADMIN",
+              "SUPER_ADMIN"
+            ]
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "example": true,
+            "description": "Whether the address has been confirmed."
+          },
+          "lastLoginAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z",
+            "nullable": true
+          },
+          "deletedAt": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "orderCount": {
+            "type": "number",
+            "example": 4,
+            "description": "EVERY order this account placed, whatever became of it — \"has this person ordered before\" means exactly that, and a count that hid cancellations would disagree with the order list on the same screen."
+          },
+          "totalSpent": {
+            "type": "number",
+            "example": 187500,
+            "description": "Lifetime spend in minor units, counted at DELIVERY. Under COD the courier collects at the door, so an order that has not been delivered has not been paid for — see `orders/domain/revenue.ts`, which is the one definition this and the dashboard share."
+          },
+          "lastOrderAt": {
+            "type": "string",
+            "example": "2026-09-01T11:00:00.000Z",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-08-01T09:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "fullName",
+          "phone",
+          "role",
+          "emailVerified",
+          "lastLoginAt",
+          "deletedAt",
+          "orderCount",
+          "totalSpent",
+          "lastOrderAt",
+          "createdAt"
+        ]
+      },
+      "PaginationMetaDto": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "number",
+            "example": 1
+          },
+          "limit": {
+            "type": "number",
+            "example": 24
+          },
+          "total": {
+            "type": "number",
+            "example": 137,
+            "description": "Total matching items across all pages."
+          },
+          "totalPages": {
+            "type": "number",
+            "example": 6
+          },
+          "hasNext": {
+            "type": "boolean",
+            "example": true
+          },
+          "hasPrev": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "totalPages",
+          "hasNext",
+          "hasPrev"
+        ]
+      },
+      "AdminCustomerListResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminCustomerDto"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PaginationMetaDto"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "CustomerAddressDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "Home"
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Mina Sobhy"
+          },
+          "phone": {
+            "type": "string",
+            "example": "01012345678"
+          },
+          "street": {
+            "type": "string",
+            "example": "12 Sherif Street, Apartment 4"
+          },
+          "city": {
+            "type": "string",
+            "example": "Downtown"
+          },
+          "governorate": {
+            "type": "string",
+            "example": "Cairo"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "label",
+          "fullName",
+          "phone",
+          "street",
+          "city",
+          "governorate",
+          "isDefault"
+        ]
+      },
+      "AdminCustomerDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "652f1a9b3c4d5e6f7a8b9c0d"
+          },
+          "email": {
+            "type": "string",
+            "example": "maker@example.com"
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Mina Sobhy"
+          },
+          "phone": {
+            "type": "string",
+            "example": "01012345678",
+            "nullable": true,
+            "description": "The ACCOUNT phone. Frequently null — registration does not ask for one."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "ADMIN",
+              "SUPER_ADMIN"
+            ]
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "example": true,
+            "description": "Whether the address has been confirmed."
+          },
+          "lastLoginAt": {
+            "type": "string",
+            "example": "2026-09-03T09:14:00.000Z",
+            "nullable": true
+          },
+          "deletedAt": {
+            "type": "string",
+            "example": null,
+            "nullable": true
+          },
+          "orderCount": {
+            "type": "number",
+            "example": 4,
+            "description": "EVERY order this account placed, whatever became of it — \"has this person ordered before\" means exactly that, and a count that hid cancellations would disagree with the order list on the same screen."
+          },
+          "totalSpent": {
+            "type": "number",
+            "example": 187500,
+            "description": "Lifetime spend in minor units, counted at DELIVERY. Under COD the courier collects at the door, so an order that has not been delivered has not been paid for — see `orders/domain/revenue.ts`, which is the one definition this and the dashboard share."
+          },
+          "lastOrderAt": {
+            "type": "string",
+            "example": "2026-09-01T11:00:00.000Z",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-08-01T09:00:00.000Z"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerAddressDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "fullName",
+          "phone",
+          "role",
+          "emailVerified",
+          "lastLoginAt",
+          "deletedAt",
+          "orderCount",
+          "totalSpent",
+          "lastOrderAt",
+          "createdAt",
+          "addresses"
+        ]
+      },
+      "AdminCustomerResponseDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminCustomerDetailDto"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ChangeRoleDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "ADMIN",
+              "SUPER_ADMIN"
+            ],
+            "description": "The role to set. Changing your own is refused, and so is demoting the last SUPER_ADMIN."
+          }
+        },
+        "required": [
+          "role"
         ]
       },
       "RegisterDto": {
@@ -7194,44 +7852,6 @@
           "rating",
           "availability",
           "isFeatured"
-        ]
-      },
-      "PaginationMetaDto": {
-        "type": "object",
-        "properties": {
-          "page": {
-            "type": "number",
-            "example": 1
-          },
-          "limit": {
-            "type": "number",
-            "example": 24
-          },
-          "total": {
-            "type": "number",
-            "example": 137,
-            "description": "Total matching items across all pages."
-          },
-          "totalPages": {
-            "type": "number",
-            "example": 6
-          },
-          "hasNext": {
-            "type": "boolean",
-            "example": true
-          },
-          "hasPrev": {
-            "type": "boolean",
-            "example": false
-          }
-        },
-        "required": [
-          "page",
-          "limit",
-          "total",
-          "totalPages",
-          "hasNext",
-          "hasPrev"
         ]
       },
       "TermFacetDto": {

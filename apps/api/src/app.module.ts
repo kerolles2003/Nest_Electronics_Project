@@ -104,7 +104,20 @@ import { ProvidersModule } from './providers/providers.module';
     // authentication, which a bare APP_GUARD registration makes impossible.
     AppThrottlerGuard,
     JwtAuthGuard,
-    RolesGuard,
+    /*
+     * `RolesGuard` is deliberately NOT re-declared here, unlike the two above.
+     *
+     * It depends on `CredentialRepository` to compare the token version against
+     * the account, and AuthModule provides that repository WITHOUT exporting it
+     * — AUTHORIZATION-MODEL.md §10 keeps credential access inside AuthModule,
+     * and the module docstring says so explicitly. Declaring `RolesGuard` here
+     * as well would construct a SECOND instance in this module's injector,
+     * where that dependency is not visible, and it would shadow the working one.
+     *
+     * `useExisting` below resolves the token through AuthModule's export, so
+     * there is exactly one instance and it has what it needs. A test can still
+     * replace it by that token, which is what the note above is about.
+     */
     { provide: APP_GUARD, useExisting: AppThrottlerGuard },
     { provide: APP_GUARD, useExisting: JwtAuthGuard },
     { provide: APP_GUARD, useExisting: RolesGuard },

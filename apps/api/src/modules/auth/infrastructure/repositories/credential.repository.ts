@@ -221,6 +221,32 @@ export class CredentialRepository {
     }
   }
 
+  /**
+   * The account's CURRENT token version, or `null` if it is gone or disabled.
+   *
+   * Authority: docs/architecture/AUTHORIZATION-MODEL.md §2 — "The guard
+   * compares `tv` against the user record **only** for privileged operations,
+   * so the common path stays lookup-free."
+   *
+   * This is that lookup, and it is the narrowest one that answers the question:
+   * one indexed `_id` fetch of a single integer, with `deletedAt` in the FILTER
+   * rather than in the projection so a disabled account resolves to `null`
+   * without the caller having to remember to check it.
+   *
+   * It exists here rather than on `UsersService` because it is a CREDENTIAL
+   * question — "is this token still good" — and §10 puts credential fields
+   * behind this repository. `UsersService` deals in profiles.
+   */
+  async currentTokenVersion(userId: Types.ObjectId): Promise<number | null> {
+    const row = await this.model
+      .findOne({ _id: userId, deletedAt: null })
+      .select({ tokenVersion: 1 })
+      .lean<{ tokenVersion: number }>()
+      .exec();
+
+    return row?.tokenVersion ?? null;
+  }
+
   /** How many accounts hold this role. Used to refuse a silent second super-admin. */
   async countByRole(role: Role): Promise<number> {
     return this.model.countDocuments({ role, deletedAt: null }).exec();

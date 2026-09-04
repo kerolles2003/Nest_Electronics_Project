@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AuditModule } from '../audit/audit.module';
+import { Order, OrderSchema } from '../orders/infrastructure/schemas/order.schema';
 import { AddressesService } from './application/addresses.service';
+import { CustomersAdminService } from './application/customers-admin.service';
 import { UsersService } from './application/users.service';
 import { UserRepository } from './infrastructure/repositories/user.repository';
 import { User, UserSchema } from './infrastructure/schemas/user.schema';
 import { AddressesController } from './presentation/addresses.controller';
+import { AdminCustomersController } from './presentation/admin-customers.controller';
 import { UsersController } from './presentation/users.controller';
 
 /**
@@ -32,14 +36,32 @@ import { UsersController } from './presentation/users.controller';
  * and reversing that would make UsersModule depend on AuthModule and close a
  * cycle.
  *
- * Still deliberately absent: change-password, the admin customer list and role
- * management. Each brings its own DTOs, invariants and authorization tests, and
- * none is reachable from the current surface.
+ * `AdminCustomersController` is the admin customer list and role management,
+ * which the comment here used to list as deliberately absent because neither
+ * "is reachable from the current surface". Both are now. The two SUPER_ADMIN-only
+ * operations in AUTHORIZATION-MODEL.md §3's table that concern accounts —
+ * change a role, delete a user — live there.
+ *
+ * It registers the `Order` model for READS ONLY: an account's order count and
+ * lifetime spend. Importing OrdersModule would close a cycle, because
+ * OrdersModule already imports this one to resolve the address a checkout
+ * names. Registering another module's model on the shared connection is the
+ * precedent InventoryModule sets; Mongoose resolves it to the one compiled
+ * model, and nothing here writes an order.
+ *
+ * Still deliberately absent: change-password. It brings its own DTOs and
+ * invariants and belongs with the credential surface AuthModule owns.
  */
 @Module({
-  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
-  controllers: [AddressesController, UsersController],
-  providers: [UsersService, AddressesService, UserRepository],
+  imports: [
+    MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
+      { name: Order.name, schema: OrderSchema },
+    ]),
+    AuditModule,
+  ],
+  controllers: [AddressesController, UsersController, AdminCustomersController],
+  providers: [UsersService, AddressesService, CustomersAdminService, UserRepository],
   exports: [UsersService, AddressesService, MongooseModule],
 })
 export class UsersModule {}

@@ -586,6 +586,56 @@ export class AppException extends HttpException {
     );
   }
 
+  // --- Accounts -------------------------------------------------------------
+
+  static cannotChangeOwnRole(): AppException {
+    return new AppException(
+      ErrorCode.CANNOT_MODIFY_OWN_ACCOUNT,
+      HttpStatus.CONFLICT,
+      'You cannot change your own role.',
+      [
+        {
+          field: 'role',
+          message:
+            'A role change with no reviewer is the one nobody can undo. Ask another ' +
+            'super-admin to make the change.',
+          code: ErrorCode.CANNOT_MODIFY_OWN_ACCOUNT,
+        },
+      ],
+    );
+  }
+
+  static cannotDeleteOwnAccount(): AppException {
+    return new AppException(
+      ErrorCode.CANNOT_MODIFY_OWN_ACCOUNT,
+      HttpStatus.CONFLICT,
+      'You cannot delete your own account.',
+    );
+  }
+
+  /**
+   * The shop must always have an owner.
+   *
+   * There is no route that grants `SUPER_ADMIN` except one that requires it, so
+   * a shop that loses its last super-admin cannot appoint another.
+   */
+  static lastSuperAdmin(): AppException {
+    return new AppException(
+      ErrorCode.LAST_SUPER_ADMIN,
+      HttpStatus.CONFLICT,
+      'That is the last super-admin, and the shop must always have one.',
+      [
+        {
+          field: 'role',
+          message:
+            'Promote another account to SUPER_ADMIN first. No endpoint can grant the role ' +
+            'without already holding it, so a shop with none could never appoint one.',
+          code: ErrorCode.LAST_SUPER_ADMIN,
+        },
+      ],
+    );
+  }
+
   // --- Inventory ------------------------------------------------------------
 
   /**

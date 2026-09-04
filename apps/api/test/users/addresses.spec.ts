@@ -1185,18 +1185,42 @@ describe('concurrency', () => {
 
 describe('index usage', () => {
   /**
-   * ZERO indexes were added for this domain, and that is the finding rather
+   * ZERO indexes were added FOR THIS DOMAIN, and that is the finding rather
    * than an omission. Every address query narrows to ONE user document by `_id`
    * first; the embedded array is then scanned inside a document already in
    * memory, where no index could help. MONGODB-DESIGN.md §13 lists
    * `addresses(user_id)` among the indexes deliberately NOT reproduced,
    * precisely because embedding removes the need for it.
+   *
+   * ## Why this assertion is now two assertions
+   *
+   * It used to compare the whole collection's index list against
+   * `['_id_', 'user_email_unique']`, which was a fine proxy while those were
+   * the only two. `user_role_recent` and `user_phone` arrived with the admin
+   * customer list in Part 6 — the `users` schema had always said those indexes
+   * "arrive with their queries", and the query arrived.
+   *
+   * Loosening the assertion to accommodate them would have thrown away what it
+   * was for. So it now says both things separately, and each can fail on its
+   * own: **no index mentions `addresses`**, which is this domain's finding and
+   * cannot be weakened by anything another domain adds; and **the collection's
+   * full index set is exactly this**, which still catches an index nobody
+   * intended.
    */
-  it('adds no index to the users collection', async () => {
+  it('adds no index for the address domain', async () => {
+    const indexes = await users.listIndexes();
+    const addressIndexes = indexes.filter((index) =>
+      Object.keys(index.key as Record<string, unknown>).some((field) => field.startsWith('addresses')),
+    );
+
+    expect(addressIndexes).toEqual([]);
+  });
+
+  it('has exactly the indexes the users collection is meant to have', async () => {
     const indexes = await users.listIndexes();
     const names = indexes.map((index) => index.name as string).sort();
 
-    expect(names).toEqual(['_id_', 'user_email_unique']);
+    expect(names).toEqual(['_id_', 'user_email_unique', 'user_phone', 'user_role_recent']);
   });
 
   /** Walks an explain plan and collects every stage and index it touches. */

@@ -5877,3 +5877,63 @@ eye. Without that control the new test would be one more assertion that passes
 for reasons nobody has established.
 
 42 tests in `test/orders/admin-order-queue.spec.ts`, all passing.
+
+---
+
+# Phase 7 Part 6a — the people list, and the separation legacy never enforced
+
+**Strays reaped before every run.** Checked before each test execution; none found.
+
+## What is being solved
+
+`AUTHORIZATION-MODEL.md` §3 records that legacy "declared both roles but
+`is_admin()` and `requireAdmin()` treated them **identically** — the distinction
+existed in three places and was enforced in none." The table specifies four
+operations that are `SUPER_ADMIN` only; two live here: **change a user's role**
+and **delete a user**. They are enforced via `@Roles(Role.SUPER_ADMIN)` on the
+controller handlers.
+
+## The people list (`GET /admin/customers`)
+
+- **Credential fields excluded by construction:** Projections explicitly omit
+  `passwordHash` and salt, verified against serialized responses.
+- **Search:** Matches email, name (substring regex, escaped against regex injection),
+  and phone by digits (when >= 4 digits).
+- **Accounts with zero orders included:** Aggregation joins after pagination so
+  new accounts that haven't ordered yet are not excluded.
+- **Lifetime spend counted at DELIVERY:** Under Cash on Delivery, delivery IS the
+  payment event (`orders/domain/revenue.ts`). Spend is recognized when
+  `payment.status = PAID`. Cancelled or in-flight orders contribute to `orderCount`
+  but not `totalSpent`. Refunded orders leave the spend total naturally.
+
+## Role changes & immediate token invalidation (`PATCH /admin/customers/:id/role`)
+
+- **SUPER_ADMIN only.** ADMIN caller receives 403.
+- **Immediate revocation via `tokenVersion`:** In the same update,
+  `tokenVersion` is incremented. `RolesGuard` compares `tv` against the database
+  record for privileged routes (ADMIN / SUPER_ADMIN) per `AUTHORIZATION-MODEL.md` §2,
+  instantly cutting off access without waiting for 15-minute JWT expiry.
+- **Refusals:** Cannot modify own account role (no self-promotion/demotion without
+  review; 409 `CANNOT_MODIFY_OWN_ACCOUNT`). Cannot demote the last SUPER_ADMIN
+  (409 `LAST_SUPER_ADMIN`). No audit row written on no-op.
+- **Audit:** Emits `USER_ROLE_CHANGED` audit log.
+
+## Soft delete (`DELETE /admin/customers/:id`)
+
+- **SUPER_ADMIN only.**
+- Sets `deletedAt` and increments `tokenVersion`. Prevents subsequent login and
+  immediately revokes privileged access.
+- **Customer orders preserved:** Orders embed their customer snapshot and are
+  unaffected.
+- Refuses deleting own account or the last SUPER_ADMIN.
+- Emits `USER_DELETED` audit log.
+
+## Verification
+
+- 24 new tests in `test/users/admin-customers.spec.ts`, all passing.
+- 10 tests in `test/auth/roles-guard.spec.ts`, proving token version invalidation
+  and that unprivileged/customer routes stay lookup-free.
+- Full regression on `test/auth` and `test/users` (10 suites, 255 tests passed,
+  0 failed, zero residue).
+- `openapi:export` updated contract, drift gate green. `type-check` and `lint` clean.
+- **Browser-unverified:** The admin console customers page still reads Supabase.

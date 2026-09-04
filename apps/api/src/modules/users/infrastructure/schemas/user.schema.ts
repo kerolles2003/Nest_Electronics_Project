@@ -294,10 +294,29 @@ export const UserSchema = SchemaFactory.createForClass(User);
  * not by a read-then-write race in the service.
  *
  * MONGODB-DESIGN.md §3 also lists `{ role, createdAt }`, `{ phone }` sparse and
- * a text index on name/email. All three serve the admin customer list and admin
- * search, which do not exist yet. Creating them now would pay the write cost of
- * indexes nothing can read — precisely the legacy defect where a GIN index
- * recorded 0 scans against 1,282 sequential scans. They arrive with their
- * queries.
+ * a text index on name/email, all three for the admin customer list. That list
+ * exists now, so the first two arrive with it — the rule the old comment stated
+ * was "they arrive with their queries", and this is the query arriving.
+ *
+ * The TEXT index deliberately does not. The admin search is an escaped
+ * substring match, the same as the order queue and the catalogue, because an
+ * operator typing part of a name expects a mid-token hit and a tokenised index
+ * cannot give them one. A text index would therefore serve no query in the
+ * system, which is exactly the legacy defect where a GIN index recorded 0 scans
+ * against 1,282 sequential ones.
  */
 UserSchema.index({ email: 1 }, { unique: true, name: 'user_email_unique' });
+
+/**
+ * The default order of the admin customer list — newest accounts first, with
+ * the role filter applied. `_id` closes the key so a page boundary is stable
+ * when two accounts were created in the same millisecond, which a seed does.
+ */
+UserSchema.index({ role: 1, createdAt: -1, _id: -1 }, { name: 'user_role_recent' });
+
+/**
+ * Phone lookup, SPARSE because `phone` is null on most accounts — registration
+ * does not ask for one. A non-sparse index here would store an entry per null
+ * and answer no query any faster.
+ */
+UserSchema.index({ phone: 1 }, { name: 'user_phone', sparse: true });
