@@ -6822,3 +6822,91 @@ unnecessary `as SpecRow[]` cast.
 - **Still browser-unverified**, and this is precisely the class of defect a
   browser pass would have caught: nothing about it is visible to a type checker
   or a build.
+
+---
+
+# Part 7g — The browser pass, and what it found
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+## Full API regression, after everything above
+
+```
+Test Suites: 1 skipped, 56 passed, 56 of 57 total
+Tests:       15 skipped, 1305 passed, 1320 total
+nest_electronics_scratch_api is exactly as this run found it
+```
+
+The skipped suite is the real-Cloudinary one, skipped by default. **1305 passed,
+0 failed, zero residue.**
+
+## The admin Playwright suite: 32 passed, 1 failed
+
+`pnpm --filter admin test:e2e:main` starts the API from `dist` and the console in
+dev mode against a scratch database, with a hydration canary before every test
+body.
+
+### What this actually verified of this session's work
+
+**The dashboard, in a real browser.** `signInAsAdmin` lands on `/`, so every one
+of the nine auth and identity specs renders the rewritten dashboard — the window
+picker, the "Orders placed in the last 30 days" caption, and the Recent Activity
+panel calling the **new audit endpoint**. A server-side throw would have failed
+them; a client-side crash would have failed the canary. Neither happened.
+
+So the dashboard comes OFF the browser-unverified list. Everything else stays on
+it: **products, the product form, the image uploader, inventory, categories,
+brands and the audit-log screen have no specs and were not opened in a browser.**
+
+### Failure 1 — a pre-existing residue gap in the suite's own teardown
+
+```
+The admin-e2e suite left 1 thing(s) behind:
+  · auditLogs: 15 document(s), prepared with 0 (+15)
+```
+
+`global-teardown.ts` removes users, orders, carts, refresh tokens and
+idempotency keys, and reverses stock by replaying the inventory events. It never
+mentions `auditLogs` — and the order transitions every spec drives are audited.
+The cleanliness assertion counts **every** collection, so the run fails on its
+own residue.
+
+**Pre-existing, and not caused by this session:** the suite has driven audited
+order transitions since it was written, and nothing in this session's diff
+touches what it creates. Left unfixed because fixing another suite's teardown was
+not in this chunk, and recorded here rather than absorbed.
+
+### Failure 2 — a dead session is left in the browser
+
+`admin-session-renewal.spec.ts › a session that cannot be renewed › does not
+leave a dead session in the browser` fails, consistently (re-run alone: same
+failure, not flake). The refresh cookie still holds `not.a.valid.token` after
+the console has sent the operator to sign in.
+
+**Also pre-existing.** `git diff 5d9fb3b..HEAD` over
+`lib/api/session.ts`, `lib/api/renewal.ts`, `lib/api/identity.ts`,
+`app/session/renew/route.ts` and `proxy.ts` is **empty** — the only file on that
+surface this session touched is `client.ts`, and only to add `apiUpload` and a
+`'PUT'` union member.
+
+The mechanism, traced rather than guessed:
+
+- both cookies are set to a malformed value;
+- `GET /auth/me` answers `401 UNAUTHENTICATED` — not `TOKEN_EXPIRED` — so
+  `readIdentity` returns `unauthenticated`;
+- `requireAdmin` redirects to `/login` on that branch **without clearing the
+  cookies**. The renewal route does clear them, but this path never reaches it.
+
+The consequence is bounded but real. `proxy.ts` gates on cookie *presence* only
+and says so, with the role check server-side — so this is not an authorization
+bypass. It is a stale credential left in the browser and a wasted round trip on
+every subsequent navigation, which is exactly what the test's own comment
+describes.
+
+**Not fixed here, and the reason matters:** the obvious fix — clear the session
+in `requireAdmin` — is the trap this codebase documents everywhere. Cookies
+cannot be written during a render, which is why renewal lives in a route handler
+at all. Doing it properly means a second route handler that clears and
+redirects. That is a change to the auth path, unrelated to this chunk, on the
+most security-sensitive surface in the console. It is the owner's call, not a
+change to slip into a catalogue commit.
