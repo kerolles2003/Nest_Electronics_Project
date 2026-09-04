@@ -159,48 +159,6 @@ export async function getDashboardStats(window?: DashboardWindowKey) {
   };
 }
 
-export async function getProductStats() {
-  const { supabase } = await getAdminServices()
-
-  const { count: total } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null)
-
-  const { count: active } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null)
-    .eq('is_active', true)
-    .gt('stock_quantity', 0)
-
-  const { count: inactive } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null)
-    .eq('is_active', false)
-
-  const { count: outOfStock } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null)
-    .eq('stock_quantity', 0)
-
-  const { count: lowStock } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null)
-    .gt('stock_quantity', 0)
-    .lte('stock_quantity', 5)
-
-  return {
-    total: total ?? 0,
-    active: active ?? 0,
-    inactive: inactive ?? 0,
-    lowStock: lowStock ?? 0,
-    outOfStock: outOfStock ?? 0,
-  }
-}
 
 /**
  * Recent ADMIN actions.

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { apiFetch } from './client';
+import { apiFetch, apiUpload } from './client';
 import type {
   AdminCustomerSummary,
   AdminDashboardStats,
@@ -8,18 +8,26 @@ import type {
   AdminShippingRate,
   AdjustmentResult,
   AdjustmentType,
+  AdminBrand,
   AdminCategory,
+  AdminProduct,
+  AdminProductSort,
+  AdminProductState,
   AuthUser,
+  CreateProductBody,
   DashboardWindowKey,
   Envelope,
   InventoryEvent,
   OrderQueueStats,
   OrderStatus,
+  HardDeleteResult,
+  MediaAsset,
   OrderSummary,
   PagedEnvelope,
   ReconciliationReport,
   SessionTokens,
   StockLevel,
+  UpdateProductBody,
 } from './types';
 
 /**
@@ -291,6 +299,172 @@ export function listAdminCategories(
   const suffix = params.includeDeleted === true ? '?includeDeleted=true' : '';
 
   return apiFetch(`/admin/catalog/categories${suffix}`);
+}
+
+/** Every brand, INCLUDING inactive ones. Soft-deleted excluded unless asked for. */
+export function listAdminBrands(
+  params: { includeDeleted?: boolean } = {},
+): Promise<Envelope<AdminBrand[]>> {
+  const suffix = params.includeDeleted === true ? '?includeDeleted=true' : '';
+
+  return apiFetch(`/admin/catalog/brands${suffix}`);
+}
+
+// --- catalogue products -----------------------------------------------------
+
+export interface AdminProductParams {
+  page?: number;
+  limit?: number;
+  q?: string;
+  state?: AdminProductState;
+  /** EXACT category, not the subtree — unlike the inventory list. */
+  categoryId?: string;
+  brandId?: string;
+  lowStock?: boolean;
+  sort?: AdminProductSort;
+}
+
+/**
+ * The catalogue as an operator sees it: drafts included, deleted rows excluded
+ * unless `state=deleted` asks for them.
+ */
+export function listAdminProducts(
+  params: AdminProductParams = {},
+): Promise<PagedEnvelope<AdminProduct>> {
+  const query = new URLSearchParams();
+
+  if (params.page !== undefined) query.set('page', String(params.page));
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.q !== undefined && params.q.trim() !== '') query.set('q', params.q.trim());
+  if (params.state !== undefined) query.set('state', params.state);
+  if (params.categoryId !== undefined && params.categoryId !== '') {
+    query.set('categoryId', params.categoryId);
+  }
+  if (params.brandId !== undefined && params.brandId !== '') query.set('brandId', params.brandId);
+  if (params.lowStock === true) query.set('lowStock', 'true');
+  if (params.sort !== undefined) query.set('sort', params.sort);
+
+  const suffix = query.toString();
+  return apiFetch(`/admin/catalog/products${suffix === '' ? '' : `?${suffix}`}`);
+}
+
+/** One product in ANY state — a soft-deleted one resolves, because restore is reached from its page. */
+export function getAdminProduct(id: string): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}`);
+}
+
+/** Created UNPUBLISHED by default: a product with no images and no stock does not belong in search results. */
+export function createProduct(body: CreateProductBody): Promise<Envelope<AdminProduct>> {
+  return apiFetch('/admin/catalog/products', { method: 'POST', body });
+}
+
+/** PARTIAL. An absent key means "leave it"; an explicit null clears a nullable field. */
+export function updateProduct(
+  id: string,
+  body: UpdateProductBody,
+): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}`, { method: 'PATCH', body });
+}
+
+/** Publishing is its own action, separately audited — never a boolean on an edit. */
+export function publishProduct(id: string): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}/publish`, { method: 'POST' });
+}
+
+export function unpublishProduct(id: string): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}/unpublish`, { method: 'POST' });
+}
+
+/** Soft delete: recoverable, keeps its slug, hidden everywhere public. */
+export function softDeleteProduct(id: string): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}`, { method: 'DELETE' });
+}
+
+export function restoreProduct(id: string): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${id}/restore`, { method: 'POST' });
+}
+
+/**
+ * Permanent. SUPER_ADMIN only, refused for a product any order refers to, and
+ * it destroys the images nothing else is showing.
+ */
+export function hardDeleteProduct(id: string): Promise<Envelope<HardDeleteResult>> {
+  return apiFetch(`/admin/catalog/products/${id}/permanent`, { method: 'DELETE' });
+}
+
+// --- product images ---------------------------------------------------------
+
+/**
+ * Attaches an ALREADY-UPLOADED asset to a product.
+ *
+ * Only `publicId` and `alt` travel. Width, height, format, bytes and version
+ * all come from the ledger server-side: the browser is never the authority for
+ * media metadata, or a client could make a product page reserve the wrong space
+ * or point a URL at a generation the CDN has replaced.
+ */
+export function attachProductImage(
+  productId: string,
+  body: { publicId: string; alt?: string | null },
+): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${productId}/images`, { method: 'POST', body });
+}
+
+/**
+ * Removes an image from a product and releases its reference.
+ *
+ * It never destroys the asset: one that falls to zero references is a CANDIDATE
+ * for cleanup, and one another product still shows keeps its count.
+ * `publicId` is a query parameter because it contains slashes.
+ */
+export function detachProductImage(
+  productId: string,
+  publicId: string,
+): Promise<Envelope<AdminProduct>> {
+  const query = new URLSearchParams({ publicId });
+
+  return apiFetch(`/admin/catalog/products/${productId}/images?${query.toString()}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * Reorders, re-captions and re-primaries in ONE write.
+ *
+ * The request must name exactly the images the product already has. That is
+ * what keeps this operation incapable of moving a reference count — attach and
+ * detach are the only two that touch the ledger.
+ */
+export function arrangeProductImages(
+  productId: string,
+  images: { publicId: string; alt?: string | null; isPrimary?: boolean }[],
+): Promise<Envelope<AdminProduct>> {
+  return apiFetch(`/admin/catalog/products/${productId}/images`, {
+    method: 'PUT',
+    body: { images },
+  });
+}
+
+// --- media ------------------------------------------------------------------
+
+/**
+ * Uploads one image and returns its provider-relative identifier.
+ *
+ * The server sees every byte: size, MIME allow-list, magic-byte sniff, decode,
+ * EXIF strip, long-edge cap, real dimensions. The original filename is
+ * discarded and the identifier is generated server-side.
+ *
+ * Uploading does NOT attach. A fresh asset sits at `refCount: 0` until
+ * `attachProductImage` retains it, which is why the two are separate calls.
+ */
+export function uploadMedia(form: FormData): Promise<Envelope<MediaAsset>> {
+  return apiUpload('/admin/media', form);
+}
+
+/** Destroys an asset — refused with a 409 while anything still references it. */
+export function destroyMedia(publicId: string): Promise<void> {
+  const query = new URLSearchParams({ publicId });
+
+  return apiFetch(`/admin/media?${query.toString()}`, { method: 'DELETE' });
 }
 
 // --- inventory --------------------------------------------------------------

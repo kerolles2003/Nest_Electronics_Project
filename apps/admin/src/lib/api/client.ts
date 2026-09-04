@@ -60,7 +60,7 @@ function baseUrl(): string {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   headers?: Record<string, string>;
   /** Send the bearer token. Default true. */
@@ -175,6 +175,55 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   if (result.status >= 400) throw toApiError(result.status, result.body);
 
   return result.body as T;
+}
+
+/**
+ * Performs one MULTIPART call — the upload path, and the only one.
+ *
+ * ## Why this is separate from `apiFetch` rather than an option on it
+ *
+ * Because the two differ in the one place that matters: `apiFetch` sets
+ * `Content-Type: application/json` and serialises the body. A multipart request
+ * must NOT have a `Content-Type` set by hand — `fetch` writes it itself,
+ * including the boundary token it generated, and a header written here would
+ * name a boundary that does not match the body. The request would arrive
+ * unparseable and the API would report "no file part", which is a confusing way
+ * to be told about a header.
+ *
+ * Everything else is deliberately identical: same base URL, same bearer, same
+ * `no-store`, same error translation, and the same rule that this module never
+ * writes a cookie. The tokens stay in httpOnly cookies the browser cannot read,
+ * so an upload is a server action posting bytes onward — never a browser
+ * talking to the API directly with a token in its hand.
+ */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  const session = await readSession();
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+
+  if (session?.accessToken !== undefined) {
+    headers['Authorization'] = `Bearer ${session.accessToken}`;
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${baseUrl()}${path}`, {
+      method: 'POST',
+      headers,
+      body: form,
+      cache: 'no-store',
+    });
+  } catch (cause) {
+    throw toNetworkError(cause);
+  }
+
+  const text = await response.text();
+  const body: unknown = text.length === 0 ? null : safeJson(text);
+
+  if (response.status >= 400) throw toApiError(response.status, body);
+
+  return body as T;
 }
 
 /**

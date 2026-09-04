@@ -6412,3 +6412,113 @@ find one they hid.
 - **Browser-unverified.** No human or Playwright session has driven this screen.
   The adjust path in particular writes real stock and has not been exercised
   end-to-end from a browser.
+
+---
+
+# Part 7b — The catalogue and the media uploader, on the API
+
+**Strays reaped before every run.** Checked before the build; 0 orphaned runners found.
+
+## Four things the old product form could do that this one refuses to
+
+| Refused | Why |
+|---|---|
+| **Set stock** | `stock` is a 400 UNKNOWN_FIELD on a product write. InventoryModule is the sole writer because every movement must produce a ledger entry — a product form that could set a balance is **legacy defect M7** exactly. Stock is shown read-only with a link to the screen that can move it, and the refusal is explained where somebody would look for the field |
+| **Publish on save** | `isActive` is not accepted on a write; `POST /publish` is separately audited. "Who made this visible to customers" is a different question from "who edited the description", and a boolean inside an update cannot answer it |
+| **Attach images at create time** | an upload is filed under the entity it belongs to, so it needs a product id — which does not exist until the first save. The form says so rather than holding files in memory across a navigation and failing halfway |
+| **Edit the SKU** | immutable after creation (§2): it is the warehouse identifier, printed on labels and quoted to suppliers |
+
+## What was deleted rather than repointed
+
+- **`productSchema` (Zod).** It described the LEGACY row — `stock_quantity`,
+  `base_price` as a float in pounds, `is_active`. Translating twice is being
+  wrong in one of the translations. The API validates and returns a per-field
+  400, and the form now marks the input that was wrong instead of printing a
+  sentence at the top of a long form.
+- **`logAdminAction` from the catalogue actions.** The API writes the audit
+  record inside the same transaction as the write. A console-side audit call is
+  a second write that can fail AFTER the catalogue changed — the exact unaudited
+  change the trail exists to make impossible.
+- **`AttributeEditor` and `/api/attributes`.** A three-table Supabase EAV system
+  with **zero assignments** — a picker offering a vocabulary nothing had ever
+  used. Replaced by `ProductSpecsEditor` over the API's flat `specs[]`.
+  Free-form, because `CatalogModule` records why there is no key dictionary:
+  *"the canonical key dictionary is owner data nobody has supplied; deriving one
+  from seeded products would be inventing a taxonomy and calling it frozen."*
+- **`lib/upload/validate-upload.ts`.** Client-side file checking before a
+  Supabase Storage upload — a courtesy at best, since anything not going through
+  that component skipped it. The API sniffs magic bytes, strips EXIF, caps the
+  long edge and reads the real dimensions; the browser is never the authority.
+- **`getProductStats`, `getInventoryStats`, `getInventoryTransactions`** — dead
+  Supabase readers.
+
+## Uploading is not attaching, and the order is the whole design
+
+`POST /admin/media` stores the bytes and opens a ledger row at `refCount: 0`.
+`POST /admin/catalog/products/:id/images` is what RETAINS it. Two calls, in that
+order, because `refCount === 0` is the exact state from which
+`DELETE /admin/media` destroys the object.
+
+A failure between them leaves an asset at zero references that nothing points
+at — an ordinary orphan the reconciliation report lists. **That is the safe
+direction**, and the console deliberately does NOT clean it up: destroying an
+asset because one request failed is how an automated deleter that misreads state
+loses a photograph (MEDIA-MODEL.md §9.3). The operator is told the file was
+uploaded but not attached, and where it will show up.
+
+Removing an image **detaches**, never destroys. A file another product also
+shows keeps its count above zero and stays undeletable — legacy defect **W4** in
+its original form: two products sharing one storage object, and deleting from
+either broke the other. The manager says this on screen.
+
+Reorder and set-primary are ONE `PUT` carrying the whole array. That is where
+**K9** (reorder was an update per image, so an interruption left an order that
+was neither the old nor the new) and **K10** (primary was unset-then-set, so an
+interruption left a product with no primary and every grid rendering a
+placeholder) both die.
+
+## Money, and a rule kept in one place
+
+Prices are typed in EGP and stored in piastres, converted once in
+`product.actions.ts` at the edge — not in the form, where a money conversion
+inside a re-render is a rounding bug waiting for a keystroke, and not in the
+API, which must never guess what unit it was handed. `null` is preserved as
+distinct from `0`: clearing a sale price ends the sale; `0` would claim the
+thing is free.
+
+## The slug check, and the third answer
+
+`/api/check-slug` already fails closed and answers `available: null` when it
+cannot reach the API. The form now renders that third state as **unknown** —
+neither a tick nor a cross. Treating it as "free" is the defect the replaced
+Supabase route had, and the form trusted it, so an operator filled in a whole
+product and lost it to a unique-index violation on save. Treating it as "taken"
+would block a save for a reason that may not exist.
+
+The check is also keyed to the slug it was an answer *about*, so a reply that
+arrives after two more keystrokes cannot be shown as current.
+
+## Two React corrections made on the way
+
+Both were flagged by `react-hooks/set-state-in-effect` and both were real:
+
+- the slug no longer follows the name through an **effect** that mirrors state
+  into state (two renders per keystroke, and a visible moment where the slug did
+  not match the name); it is derived in the change handler.
+- the slug-check effect now owns the **request only**. Every `setState` runs in
+  a timer or promise callback, and the status is derived from whether the answer
+  in hand is for the slug currently typed.
+
+## Verification
+
+- `tsc --noEmit` clean; ESLint 0 errors across `apps/admin/src`.
+- Turbopack production build: **18/18 routes** — one fewer than before, because
+  `/api/attributes` is gone.
+- The `UnwiredScreenWarning` is now **absent from every product screen and from
+  the uploader**, which is what makes it a to-do rather than a decoration.
+- **Still Supabase, and NOT yet bannered: `/categories` and `/brands`**, plus
+  their shared `category-brand.actions.ts`. They are the last catalogue screens
+  and are the next commit.
+- **Browser-unverified.** Nothing here has been driven in a browser: not the
+  create/edit round trip, not the publish action, and in particular not the
+  upload path, which posts real bytes to a real media pipeline.

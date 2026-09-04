@@ -318,6 +318,193 @@ export interface AdminCategory {
   updatedAt: string;
 }
 
+export interface AdminBrand {
+  id: string;
+  slug: string;
+  name: AdminLocalizedText;
+  description: AdminLocalizedText | null;
+  website: string | null;
+  isActive: boolean;
+  productCount: number;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// --- catalogue products -----------------------------------------------------
+
+/**
+ * The three states CATALOG-MODEL.md §9 defines.
+ *
+ * Absent from a query, the API includes drafts and EXCLUDES soft-deleted rows:
+ * a draft is work in progress and is what the screen is for, while a deleted
+ * product mixed into the working list is how somebody edits a row no customer
+ * can reach and does not notice for a week.
+ */
+export const PRODUCT_STATES = ['published', 'draft', 'deleted'] as const;
+
+export type AdminProductState = (typeof PRODUCT_STATES)[number];
+
+export const PRODUCT_SORTS = [
+  'newest',
+  'oldest',
+  'name_asc',
+  'price_asc',
+  'price_desc',
+  'stock_asc',
+  'updated',
+] as const;
+
+export type AdminProductSort = (typeof PRODUCT_SORTS)[number];
+
+export interface AdminSnapshotRef {
+  id: string;
+  slug: string;
+  name: AdminLocalizedText;
+}
+
+export interface AdminProductSpec {
+  key: string;
+  label: string;
+  value: string;
+  unit: string | null;
+  filterable: boolean;
+  sortOrder: number;
+}
+
+export interface AdminProductImage {
+  publicId: string;
+  version: number;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+  alt: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+}
+
+/**
+ * Money as INTEGER minor units, not a formatted string.
+ *
+ * The public DTO formats money for display; an editor round-trips it. Passing a
+ * value through a display format and back is where a currency symbol, a
+ * thousands separator or a rounding rule gets its chance to change the number.
+ */
+export interface AdminProductPricing {
+  basePrice: number;
+  salePrice: number | null;
+  /** MAINTAINED as `salePrice ?? basePrice`. The write endpoints reject it. */
+  effectivePrice: number;
+  /** ADMIN ONLY — absent from every public DTO by construction. */
+  costPrice: number | null;
+}
+
+export interface AdminProduct {
+  id: string;
+  sku: string;
+  slug: string;
+  name: AdminLocalizedText;
+  shortDescription: AdminLocalizedText | null;
+  description: AdminLocalizedText | null;
+  category: AdminSnapshotRef;
+  brand: AdminSnapshotRef | null;
+  pricing: AdminProductPricing;
+  currency: string;
+  /** READ-ONLY here. Stock moves only through the inventory endpoints. */
+  stock: { onHand: number; lowStockThreshold: number };
+  images: AdminProductImage[];
+  specs: AdminProductSpec[];
+  ratingAverage: number;
+  ratingCount: number;
+  salesCount: number;
+  isActive: boolean;
+  isFeatured: boolean;
+  deletedAt: string | null;
+  seoTitle: string | null;
+  seoDescription: string | null;
+  /** Grams. */
+  weight: number | null;
+  /** Millimetres. */
+  dimensions: { length: number; width: number; height: number } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What a create accepts.
+ *
+ * Note the absences, each of which is the feature: no `stock` (InventoryModule
+ * is the sole writer, and a product write that could set it is legacy defect M7
+ * exactly), no `images` (attaching is reference-counted and has its own
+ * endpoint), no `effectivePrice` (maintained), no `currency` (there is one).
+ * Sending any of them is a 400 UNKNOWN_FIELD rather than a silently ignored
+ * key.
+ */
+export interface CreateProductBody {
+  sku: string;
+  slug: string;
+  name: { en: string; ar?: string | null };
+  shortDescription?: { en: string; ar?: string | null } | null;
+  description?: { en: string; ar?: string | null } | null;
+  categoryId: string;
+  brandId?: string | null;
+  basePrice: number;
+  salePrice?: number | null;
+  costPrice?: number | null;
+  specs?: AdminProductSpecInput[];
+  seo?: { title?: string | null; description?: string | null } | null;
+  weight?: number | null;
+  dimensions?: { length: number; width: number; height: number } | null;
+  isActive?: boolean;
+  isFeatured?: boolean;
+}
+
+export interface AdminProductSpecInput {
+  key: string;
+  label: string;
+  value: string;
+  unit?: string | null;
+  filterable?: boolean;
+  sortOrder?: number;
+}
+
+/**
+ * What an edit accepts. `sku` is absent because it is IMMUTABLE after creation:
+ * it is the warehouse identifier, printed on labels and quoted to suppliers.
+ * `isActive` is absent because publishing is its own separately audited action.
+ */
+export type UpdateProductBody = Omit<CreateProductBody, 'sku' | 'isActive'>;
+
+export interface HardDeleteResult {
+  sku: string;
+  slug: string;
+  imagesDestroyed: string[];
+  imagesKept: string[];
+}
+
+export interface SlugAvailability {
+  slug: string;
+  available: boolean;
+  suggestion: string | null;
+}
+
+// --- media ------------------------------------------------------------------
+
+export interface MediaAsset {
+  /**
+   * Provider-relative. There is NO `url` here and there never will be: storing
+   * a rendered URL turns a CDN change into a data migration. Build the delivery
+   * URL from this and `version` — `lib/images.ts` does it in one place.
+   */
+  publicId: string;
+  version: number;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
 // --- inventory --------------------------------------------------------------
 
 /**
