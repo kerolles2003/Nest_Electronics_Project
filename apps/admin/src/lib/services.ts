@@ -1,6 +1,4 @@
 import { createClient } from '@/lib/supabase'
-import { SupabaseCategoryProvider, SupabaseBrandProvider, SupabaseProductProvider } from '@nest/providers'
-import { ProductService } from '@nest/services'
 import { cache } from 'react'
 import { tryApi } from '@/lib/api/client'
 import * as api from '@/lib/api/endpoints'
@@ -25,18 +23,22 @@ import type { DashboardWindowKey } from '@/lib/api/types'
  * so the service-role key is no longer read, needed, or present in
  * `.env.example`.
  *
- * ## Everything below is still Supabase, deliberately
+ * ## What is LEFT of Supabase in this file, and it is nearly nothing
  *
- * Products, categories, brands, coupons, inventory, reviews, customers and the
- * dashboard statistics all still read from Supabase. That is Phase 7, and
- * migrating them here would have meant moving eight screens in the change that
- * moves authentication — the scope is drawn at the seam, not through the
- * middle of it.
+ * Orders went first (D-6). Then products, categories, brands, inventory and the
+ * dashboard statistics, each with its screen, and each deleted here rather than
+ * left dormant — a repository still wired to a table nobody reads is a
+ * duplicate waiting to be picked up by mistake.
  *
- * ORDERS are gone from this file entirely — the provider, the service and
- * `getOrderStats` were all deleted rather than left dormant. Supabase order
- * rows are discarded (D-6) and nothing in this console reads them any more.
- * See `lib/api/endpoints.ts` and `lib/api/order-stats.ts`.
+ * Gone with them: `SupabaseCategoryProvider`, `SupabaseBrandProvider`,
+ * `SupabaseProductProvider` and `ProductService`. The admin no longer imports
+ * `@nest/providers` or `@nest/services` at all.
+ *
+ * What remains is `getAdminServices()`, which hands out one thing — the raw
+ * client — to exactly three screens: **coupons, reviews and the audit log**.
+ * The first two are Phase 8 domains and are rebuilt there. The audit log has an
+ * API-side model but no admin endpoint yet, so it reads a table that is empty
+ * going forward; `getRecentActivity` below says why.
  */
 
 export { requireAdmin } from '@/lib/api/identity'
@@ -51,38 +53,26 @@ const getCachedClient = cache(async () => createClient())
 /*  Cached Service Factory                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The raw client, and nothing else.
+ *
+ * It used to return a `ProductService` built over three Supabase repositories
+ * as well. All four are gone with the screens that used them: the catalogue,
+ * the taxonomy and inventory are the API's now, and a repository still wired to
+ * a table nobody reads is a duplicate waiting to be picked up by mistake.
+ *
+ * Three callers remain — coupons, reviews and the audit log — and each takes
+ * `supabase` directly.
+ */
 const buildServices = cache(async () => {
   const supabase = await getCachedClient()
-  const categoryRepo = new SupabaseCategoryProvider(supabase as any)
-  const brandRepo = new SupabaseBrandProvider(supabase as any)
-  const productRepo = new SupabaseProductProvider(supabase as any)
-  const productService = new ProductService(productRepo, categoryRepo, brandRepo)
-  /*
-   * NO `orderService`. `SupabaseOrderProvider` and `OrderService` were
-   * constructed here and are gone: orders are the API's now, and a service
-   * still wired to the legacy tables is exactly the dormant duplicate this
-   * phase was told not to leave behind.
-   */
-  return { supabase, categoryRepo, brandRepo, productRepo, productService }
+
+  return { supabase }
 })
 
 export async function getAdminServices() {
   return buildServices()
 }
-
-/* ------------------------------------------------------------------ */
-/*  Cached Lookups (categories & brands rarely change)                */
-/* ------------------------------------------------------------------ */
-
-export const getCachedCategories = cache(async () => {
-  const { productService } = await getAdminServices()
-  return productService.getCategoryTree()
-})
-
-export const getCachedBrands = cache(async () => {
-  const { productService } = await getAdminServices()
-  return productService.getAllBrands()
-})
 
 /* ------------------------------------------------------------------ */
 /*  Combined Stats Queries (single round trip per table)              */

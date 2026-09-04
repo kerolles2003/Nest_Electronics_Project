@@ -6583,3 +6583,82 @@ restore in every respect that matters:
 - Drift gate: additive change detected, `openapi:export` re-run, artifact
   committed, `openapi:check` **OK**.
 - `tsc --noEmit` and ESLint clean; zero database residue.
+
+---
+
+# Part 7d — Categories and brands, and the last catalogue Supabase call
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+## Three things the operator now sees that the Supabase screens hid
+
+**A rename is a subtree operation.** Renaming a category rewrites its own
+`path`/`depth`, every descendant's, the `category` snapshot on every product in
+the subtree, and the fifteen-minute cache. The Supabase version updated one
+row — so every product card kept showing the old name indefinitely, because
+nothing else ever rewrote it. The dialog says what the save will do *before* it
+does it.
+
+**A reparent can be illegal.** A category cannot become its own parent or move
+underneath one of its own descendants: a cycle makes `path[]` unwritable and
+every tree read afterwards either loops or drops the branch. The picker
+*excludes* those options — and the depth limit ones — rather than offering a
+choice the API will reject, and says why underneath.
+
+**A delete is refused, not cascaded.** `409 CATEGORY_NOT_EMPTY` names how many
+products and how many live subcategories still point at it. The message is shown
+**verbatim**, because a generic "could not delete" throws away the work list it
+contains. The confirmation states the rule before the click.
+
+Brands are the mirror image and the screen says so: deleting a brand **un-brands
+its products** rather than refusing, because a brand is optional on a product and
+a product without one is a legitimate state — whereas a product without a
+category is not. The confirmation gives the count of products that will lose
+their brand, and states plainly that **restoring does not re-brand them**.
+
+## Deleted rows are shown, not hidden
+
+`?includeDeleted=true` on both screens. A deleted taxonomy row keeps its slug
+reserved, so it is not gone — it is *holding a name* — and hiding it leaves an
+operator unable to work out why the slug they want is refused. They render
+greyed with a Restore action (Part 7c).
+
+## The tree is not rebuilt on the client
+
+The API returns a FLAT list, shallowest-first, each row carrying `parentId`,
+`path` and `depth`. Indentation is `depth`. No `children` array is assembled
+here — that would be reconstructing what the server already resolved, and
+`path.includes(id)` is what makes "is this a descendant of me" a membership test
+rather than a walk.
+
+## What was dropped, and why it is not a loss
+
+**The brand logo.** The old screen had a `logo_url` pointing at Supabase
+Storage. The API's brand has no logo: media is reference-counted through the
+media pipeline, and a brand logo would need its own attach/detach endpoints that
+do not exist. A text field holding a URL nothing serves is worse than no field.
+
+## The last catalogue Supabase call is gone
+
+`getAdminServices()` used to hand out a `ProductService` built over
+`SupabaseCategoryProvider`, `SupabaseBrandProvider` and
+`SupabaseProductProvider`. All four are deleted along with `getCachedCategories`
+and `getCachedBrands` — **`apps/admin/src` no longer imports `@nest/providers`
+or `@nest/services` anywhere.** It now hands out one thing, the raw client, to
+exactly three screens: coupons, reviews (Phase 8 domains) and the audit log.
+
+`UnwiredScreenWarning` is **deleted**. Nothing in the console writes into a
+database nothing reads any more, so the banner has no subject — which is what it
+was built to be: a to-do with a deadline, not a decoration.
+
+## Verification
+
+- `tsc --noEmit` clean; ESLint **0 errors** across `apps/admin/src`.
+- Turbopack production build: 18/18 routes.
+- **Deferred to the Part 7 KEEP/REMOVE pass:** `@nest/providers`,
+  `@nest/services` and `@nest/repositories` are still workspace dependencies in
+  `apps/admin/package.json` and still listed in `transpilePackages`, though
+  nothing imports them. Removing them touches the lockfile and belongs with the
+  rest of the decommission.
+- **Browser-unverified.** Neither screen has been driven in a browser: not the
+  create/edit round trip, not a reparent, not a delete or a restore.

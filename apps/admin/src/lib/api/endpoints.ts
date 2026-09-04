@@ -14,6 +14,8 @@ import type {
   AdminProductSort,
   AdminProductState,
   AuthUser,
+  CreateBrandBody,
+  CreateCategoryBody,
   CreateProductBody,
   DashboardWindowKey,
   Envelope,
@@ -27,6 +29,8 @@ import type {
   ReconciliationReport,
   SessionTokens,
   StockLevel,
+  UpdateBrandBody,
+  UpdateCategoryBody,
   UpdateProductBody,
 } from './types';
 
@@ -308,6 +312,51 @@ export function listAdminBrands(
   const suffix = params.includeDeleted === true ? '?includeDeleted=true' : '';
 
   return apiFetch(`/admin/catalog/brands${suffix}`);
+}
+
+export function createCategory(body: CreateCategoryBody): Promise<Envelope<AdminCategory>> {
+  return apiFetch('/admin/catalog/categories', { method: 'POST', body });
+}
+
+/**
+ * Edit or REPARENT. Three things move when one category does and the API moves
+ * all three: the subtree's own `path`/`depth`, every product's category
+ * snapshot, and the cached category list. Cycles and the depth limit are
+ * checked against the deepest descendant, not against this category.
+ */
+export function updateCategory(
+  id: string,
+  body: UpdateCategoryBody,
+): Promise<Envelope<AdminCategory>> {
+  return apiFetch(`/admin/catalog/categories/${id}`, { method: 'PATCH', body });
+}
+
+/** Soft. Refused with 409 CATEGORY_NOT_EMPTY while products or live children point at it. */
+export function deleteCategory(id: string): Promise<Envelope<AdminCategory>> {
+  return apiFetch(`/admin/catalog/categories/${id}`, { method: 'DELETE' });
+}
+
+/** Comes back INACTIVE, and only if its parent is not still deleted. */
+export function restoreCategory(id: string): Promise<Envelope<AdminCategory>> {
+  return apiFetch(`/admin/catalog/categories/${id}/restore`, { method: 'POST' });
+}
+
+export function createBrand(body: CreateBrandBody): Promise<Envelope<AdminBrand>> {
+  return apiFetch('/admin/catalog/brands', { method: 'POST', body });
+}
+
+export function updateBrand(id: string, body: UpdateBrandBody): Promise<Envelope<AdminBrand>> {
+  return apiFetch(`/admin/catalog/brands/${id}`, { method: 'PATCH', body });
+}
+
+/** Soft — and it UN-BRANDS its products rather than refusing. */
+export function deleteBrand(id: string): Promise<Envelope<AdminBrand>> {
+  return apiFetch(`/admin/catalog/brands/${id}`, { method: 'DELETE' });
+}
+
+/** Comes back INACTIVE. It does NOT re-brand the products the deletion un-branded. */
+export function restoreBrand(id: string): Promise<Envelope<AdminBrand>> {
+  return apiFetch(`/admin/catalog/brands/${id}/restore`, { method: 'POST' });
 }
 
 // --- catalogue products -----------------------------------------------------

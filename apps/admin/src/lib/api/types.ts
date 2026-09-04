@@ -331,6 +331,34 @@ export interface AdminBrand {
   updatedAt: string;
 }
 
+/**
+ * What a category write accepts.
+ *
+ * `path` and `depth` are absent because they are COMPUTED from `parentId`. A
+ * caller-supplied ancestor chain is one that can disagree with the parent, and
+ * every subtree query would then answer from the disagreement.
+ */
+export interface CreateCategoryBody {
+  slug: string;
+  name: { en: string; ar?: string | null };
+  description?: { en: string; ar?: string | null } | null;
+  parentId?: string | null;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
+export type UpdateCategoryBody = Partial<CreateCategoryBody>;
+
+export interface CreateBrandBody {
+  slug: string;
+  name: { en: string; ar?: string | null };
+  description?: { en: string; ar?: string | null } | null;
+  website?: string | null;
+  isActive?: boolean;
+}
+
+export type UpdateBrandBody = Partial<CreateBrandBody>;
+
 // --- catalogue products -----------------------------------------------------
 
 /**

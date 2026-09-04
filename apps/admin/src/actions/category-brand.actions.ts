@@ -1,296 +1,241 @@
-'use server'
+'use server';
 
-import { createClient } from '@/lib/supabase'
-import { requireAdminActor } from '@/lib/api/identity'
-import { logAdminAction } from '@/lib/audit/log-action'
-import { logger } from '@/lib/logger'
-import { revalidatePath } from 'next/cache'
-import { z } from 'zod'
+import { revalidatePath } from 'next/cache';
+import { tryApi } from '@/lib/api/client';
+import * as api from '@/lib/api/endpoints';
+import { operatorMessage } from '@/lib/api/errors';
+import { requireAdminActor } from '@/lib/api/identity';
+import type { AdminBrand, AdminCategory } from '@/lib/api/types';
 
-/* ------------------------------------------------------------------ */
-/*  Zod Schemas                                                         */
-/* ------------------------------------------------------------------ */
+/**
+ * Categories and brands, through the API.
+ *
+ * ## Two rules the console no longer has to remember
+ *
+ * **A rename is not just a rename.** Renaming a category rewrites its own
+ * `path`/`depth` and every descendant's, rewrites the `category` snapshot on
+ * every product in the subtree, and invalidates the fifteen-minute cache. The
+ * Supabase version updated one row, so every product card kept showing the old
+ * name until something else happened to rewrite it — and nothing else did.
+ *
+ * **A reparent can be illegal.** A category cannot become its own parent or
+ * move underneath one of its own descendants: a cycle makes `path[]`
+ * unwritable, and every tree read afterwards either loops or silently drops the
+ * branch. The API checks that, and checks the depth limit against the DEEPEST
+ * descendant rather than against the category being moved. None of that was
+ * checked before.
+ *
+ * ## Deleting is refused rather than cascading
+ *
+ * `409 CATEGORY_NOT_EMPTY` while products or live subcategories still point at
+ * it, with both counts in the message so the refusal is a work list. A cascade
+ * was rejected at the API: it would soft-delete a subtree in one click with no
+ * way for the operator to know what went with it, and every product left behind
+ * would be filed under a category that renders nowhere.
+ *
+ * A brand deletion is the opposite and deliberately so: it UN-BRANDS its
+ * products rather than refusing, because a brand is optional on a product and a
+ * product without one is a legitimate state.
+ */
 
-const categorySchema = z.object({
-  name_en: z.string().min(1, 'Name is required').max(255),
-  name_ar: z.string().max(255).nullable().optional(),
-  slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, numbers, and hyphens only').max(200),
-  parent_id: z.string().uuid().nullable().optional(),
-  sort_order: z.number().int().min(0).default(0),
-  image_url: z.string().url().nullable().optional(),
-  is_active: z.boolean().default(true),
-})
+export interface TaxonomyActionResult<T> {
+  ok: boolean;
+  error?: string;
+  fieldErrors?: Record<string, string>;
+  entity?: T;
+}
 
-const brandSchema = z.object({
-  name_en: z.string().min(1, 'Name is required').max(255),
-  name_ar: z.string().max(255).nullable().optional(),
-  slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, numbers, and hyphens only').max(200),
-  logo_url: z.string().url().nullable().optional(),
-  is_active: z.boolean().default(true),
-})
+export type CategoryActionResult = TaxonomyActionResult<AdminCategory>;
+export type BrandActionResult = TaxonomyActionResult<AdminBrand>;
 
-/* ------------------------------------------------------------------ */
-/*  Category Actions                                                    */
-/* ------------------------------------------------------------------ */
+export interface CategoryInput {
+  slug: string;
+  nameEn: string;
+  nameAr: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  parentId: string;
+  sortOrder: string;
+  isActive: boolean;
+}
 
-export async function createCategoryAction(formData: FormData) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+export interface BrandInput {
+  slug: string;
+  nameEn: string;
+  nameAr: string;
+  descriptionEn: string;
+  descriptionAr: string;
+  website: string;
+  isActive: boolean;
+}
 
-  const raw = {
-    name_en: formData.get('name_en') as string,
-    name_ar: (formData.get('name_ar') as string) || null,
-    slug: formData.get('slug') as string,
-    parent_id: (formData.get('parent_id') as string) || null,
-    sort_order: parseInt(formData.get('sort_order') as string, 10) || 0,
-    image_url: (formData.get('image_url') as string) || null,
-    is_active: formData.get('is_active') === 'true',
+function orNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? '';
+
+  return trimmed === '' ? null : trimmed;
+}
+
+function fieldErrorsFrom(error: {
+  readonly details?: readonly { readonly field?: string | null; readonly message: string }[];
+}): Record<string, string> {
+  const errors: Record<string, string> = {};
+
+  for (const detail of error.details ?? []) {
+    const field = detail.field ?? '';
+
+    if (field !== '' && errors[field] === undefined) errors[field] = detail.message;
   }
 
-  const parsed = categorySchema.safeParse(raw)
-  if (!parsed.success) {
-    const messages = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
-    return { success: false, error: messages }
-  }
+  return errors;
+}
 
-  try {
-    const { data, error } = await (supabase as any)
-      .from('categories')
-      .insert(parsed.data)
-      .select('id')
-      .single()
-
-    if (error || !data) {
-      return { success: false, error: error?.message ?? 'Failed to create category' }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'category:create',
-      entityType: 'category',
-      entityId: data.id,
-      changes: parsed.data,
-    })
-
-    revalidatePath('/admin/categories')
-    logger.info(`Category created: id=${data.id} name=${parsed.data.name_en} by=${admin.id}`)
-    return { success: true, categoryId: data.id }
-  } catch (e) {
-    logger.error('createCategoryAction failed', e)
-    return { success: false, error: 'Internal server error' }
+/**
+ * Every screen that shows a category or brand name.
+ *
+ * A rename rewrites product snapshots, so the product list and the dashboard
+ * are stale too — not only the taxonomy screen the operator is looking at.
+ */
+function revalidateTaxonomy(): void {
+  for (const path of ['/categories', '/brands', '/products', '/inventory', '/']) {
+    revalidatePath(path);
+    revalidatePath(`/admin${path === '/' ? '' : path}`);
   }
 }
 
-export async function updateCategoryAction(formData: FormData) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+function categoryBody(input: CategoryInput) {
+  const sortOrder = Number.parseInt(input.sortOrder, 10);
 
-  const id = formData.get('id') as string
-  if (!id) return { success: false, error: 'Category ID is required' }
-
-  const raw = {
-    name_en: formData.get('name_en') as string,
-    name_ar: (formData.get('name_ar') as string) || null,
-    slug: formData.get('slug') as string,
-    parent_id: (formData.get('parent_id') as string) || null,
-    sort_order: parseInt(formData.get('sort_order') as string, 10) || 0,
-    is_active: formData.get('is_active') === 'true',
-    image_url: (formData.get('image_url') as string) || null,
-  }
-
-  const parsed = categorySchema.safeParse(raw)
-  if (!parsed.success) {
-    const messages = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
-    return { success: false, error: messages }
-  }
-
-  try {
-    const { error } = await (supabase as any)
-      .from('categories')
-      .update({
-        ...parsed.data,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'category:update',
-      entityType: 'category',
-      entityId: id,
-      changes: parsed.data,
-    })
-
-    revalidatePath('/admin/categories')
-    logger.info(`Category updated: id=${id} name=${parsed.data.name_en} by=${admin.id}`)
-    return { success: true }
-  } catch (e) {
-    logger.error('updateCategoryAction failed', e)
-    return { success: false, error: 'Internal server error' }
-  }
+  return {
+    slug: input.slug.trim(),
+    name: { en: input.nameEn.trim(), ar: orNull(input.nameAr) },
+    description:
+      orNull(input.descriptionEn) === null
+        ? null
+        : { en: input.descriptionEn.trim(), ar: orNull(input.descriptionAr) },
+    // '' means "make it a root", which is a real instruction and not an
+    // omission — so it maps to an explicit null rather than being dropped.
+    parentId: orNull(input.parentId),
+    ...(Number.isFinite(sortOrder) ? { sortOrder } : {}),
+    isActive: input.isActive,
+  };
 }
 
-export async function softDeleteCategoryAction(id: string) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+export async function createCategoryAction(input: CategoryInput): Promise<CategoryActionResult> {
+  await requireAdminActor();
 
-  try {
-    const { error } = await (supabase as any)
-      .from('categories')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
+  const res = await tryApi(() => api.createCategory(categoryBody(input)));
 
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'category:delete',
-      entityType: 'category',
-      entityId: id,
-    })
-
-    revalidatePath('/admin/categories')
-    logger.info(`Category soft-deleted: id=${id} by=${admin.id}`)
-    return { success: true }
-  } catch (e) {
-    logger.error('softDeleteCategoryAction failed', e)
-    return { success: false, error: 'Internal server error' }
+  if (!res.ok) {
+    return { ok: false, error: operatorMessage(res.error), fieldErrors: fieldErrorsFrom(res.error) };
   }
+
+  revalidateTaxonomy();
+
+  return { ok: true, entity: res.data.data };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Brand Actions                                                       */
-/* ------------------------------------------------------------------ */
+export async function updateCategoryAction(
+  id: string,
+  input: CategoryInput,
+): Promise<CategoryActionResult> {
+  await requireAdminActor();
 
-export async function createBrandAction(formData: FormData) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+  const res = await tryApi(() => api.updateCategory(id, categoryBody(input)));
 
-  const raw = {
-    name_en: formData.get('name_en') as string,
-    name_ar: (formData.get('name_ar') as string) || null,
-    slug: formData.get('slug') as string,
-    logo_url: (formData.get('logo_url') as string) || null,
-    is_active: formData.get('is_active') === 'true',
+  if (!res.ok) {
+    return { ok: false, error: operatorMessage(res.error), fieldErrors: fieldErrorsFrom(res.error) };
   }
 
-  const parsed = brandSchema.safeParse(raw)
-  if (!parsed.success) {
-    const messages = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
-    return { success: false, error: messages }
-  }
+  revalidateTaxonomy();
 
-  try {
-    const { data, error } = await (supabase as any)
-      .from('brands')
-      .insert(parsed.data)
-      .select('id')
-      .single()
-
-    if (error || !data) {
-      return { success: false, error: error?.message ?? 'Failed to create brand' }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'brand:create',
-      entityType: 'brand',
-      entityId: data.id,
-      changes: parsed.data,
-    })
-
-    revalidatePath('/admin/brands')
-    logger.info(`Brand created: id=${data.id} name=${parsed.data.name_en} by=${admin.id}`)
-    return { success: true, brandId: data.id }
-  } catch (e) {
-    logger.error('createBrandAction failed', e)
-    return { success: false, error: 'Internal server error' }
-  }
+  return { ok: true, entity: res.data.data };
 }
 
-export async function updateBrandAction(formData: FormData) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+export async function deleteCategoryAction(id: string): Promise<CategoryActionResult> {
+  await requireAdminActor();
 
-  const id = formData.get('id') as string
-  if (!id) return { success: false, error: 'Brand ID is required' }
+  const res = await tryApi(() => api.deleteCategory(id));
 
-  const raw = {
-    name_en: formData.get('name_en') as string,
-    name_ar: (formData.get('name_ar') as string) || null,
-    slug: formData.get('slug') as string,
-    logo_url: (formData.get('logo_url') as string) || null,
-    is_active: formData.get('is_active') === 'true',
-  }
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
 
-  const parsed = brandSchema.safeParse(raw)
-  if (!parsed.success) {
-    const messages = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
-    return { success: false, error: messages }
-  }
+  revalidateTaxonomy();
 
-  try {
-    const { error } = await (supabase as any)
-      .from('brands')
-      .update({
-        ...parsed.data,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'brand:update',
-      entityType: 'brand',
-      entityId: id,
-      changes: parsed.data,
-    })
-
-    revalidatePath('/admin/brands')
-    logger.info(`Brand updated: id=${id} name=${parsed.data.name_en} by=${admin.id}`)
-    return { success: true }
-  } catch (e) {
-    logger.error('updateBrandAction failed', e)
-    return { success: false, error: 'Internal server error' }
-  }
+  return { ok: true, entity: res.data.data };
 }
 
-export async function softDeleteBrandAction(id: string) {
-  const admin = await requireAdminActor()
-  const supabase = await createClient()
+export async function restoreCategoryAction(id: string): Promise<CategoryActionResult> {
+  await requireAdminActor();
 
-  try {
-    const { error } = await (supabase as any)
-      .from('brands')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
+  const res = await tryApi(() => api.restoreCategory(id));
 
-    if (error) {
-      return { success: false, error: error.message }
-    }
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
 
-    await logAdminAction({
-      adminId: admin.id,
-      action: 'brand:delete',
-      entityType: 'brand',
-      entityId: id,
-    })
+  revalidateTaxonomy();
 
-    revalidatePath('/admin/brands')
-    logger.info(`Brand soft-deleted: id=${id} by=${admin.id}`)
-    return { success: true }
-  } catch (e) {
-    logger.error('softDeleteBrandAction failed', e)
-    return { success: false, error: 'Internal server error' }
+  return { ok: true, entity: res.data.data };
+}
+
+function brandBody(input: BrandInput) {
+  return {
+    slug: input.slug.trim(),
+    name: { en: input.nameEn.trim(), ar: orNull(input.nameAr) },
+    description:
+      orNull(input.descriptionEn) === null
+        ? null
+        : { en: input.descriptionEn.trim(), ar: orNull(input.descriptionAr) },
+    website: orNull(input.website),
+    isActive: input.isActive,
+  };
+}
+
+export async function createBrandAction(input: BrandInput): Promise<BrandActionResult> {
+  await requireAdminActor();
+
+  const res = await tryApi(() => api.createBrand(brandBody(input)));
+
+  if (!res.ok) {
+    return { ok: false, error: operatorMessage(res.error), fieldErrors: fieldErrorsFrom(res.error) };
   }
+
+  revalidateTaxonomy();
+
+  return { ok: true, entity: res.data.data };
+}
+
+export async function updateBrandAction(id: string, input: BrandInput): Promise<BrandActionResult> {
+  await requireAdminActor();
+
+  const res = await tryApi(() => api.updateBrand(id, brandBody(input)));
+
+  if (!res.ok) {
+    return { ok: false, error: operatorMessage(res.error), fieldErrors: fieldErrorsFrom(res.error) };
+  }
+
+  revalidateTaxonomy();
+
+  return { ok: true, entity: res.data.data };
+}
+
+export async function deleteBrandAction(id: string): Promise<BrandActionResult> {
+  await requireAdminActor();
+
+  const res = await tryApi(() => api.deleteBrand(id));
+
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
+
+  revalidateTaxonomy();
+
+  return { ok: true, entity: res.data.data };
+}
+
+export async function restoreBrandAction(id: string): Promise<BrandActionResult> {
+  await requireAdminActor();
+
+  const res = await tryApi(() => api.restoreBrand(id));
+
+  if (!res.ok) return { ok: false, error: operatorMessage(res.error) };
+
+  revalidateTaxonomy();
+
+  return { ok: true, entity: res.data.data };
 }
