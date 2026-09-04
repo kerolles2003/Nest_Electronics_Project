@@ -41,6 +41,35 @@ import { SCRATCH_DATABASE, SCRATCH_SUITE } from './origin';
  * A teardown that swallows its own errors is how residue accumulates unnoticed
  * for weeks — which is precisely what happened while this file did not exist.
  * If cleanup cannot run, the run fails and says so.
+ *
+ * ## It deletes audit records, and that is NOT a hole in their immutability
+ *
+ * This is worth writing down where somebody will meet it, because it reads at
+ * first glance like a contradiction.
+ *
+ * `AUDIT-MODEL.md` §5 rule 4 makes `auditLogs` append-only and §8 says write,
+ * update and delete are available to **nobody**. The API keeps that: there is
+ * no route to create, modify or remove a record — `test/audit/admin-audit-log.spec.ts`
+ * asserts it as the ABSENCE of POST, PATCH and DELETE, not as a permission
+ * check — and a two-year TTL is the only thing the application ever lets remove
+ * one.
+ *
+ * That guarantee is about **the application surface**. It is what stops an
+ * audited principal suppressing their own trail through the system they are
+ * audited by. It was never a claim that the bytes on disk are physically
+ * indelible, and it could not be: a DBA with a mongo shell has always been able
+ * to drop the collection, as has anyone with the backup.
+ *
+ * This script is that second kind of access, deliberately and narrowly: it
+ * connects to a **scratch database** with an operator's credentials and removes
+ * the records THIS SUITE just caused, so the next run starts from the state
+ * preparation recorded. It does not run against production, it does not go
+ * through the API, and nothing in the application can reach it.
+ *
+ * **Nobody should read this file as permission to build a delete path.** If a
+ * feature ever seems to need one, the answer is the TTL or a new field — not an
+ * endpoint. The distinction is: the application may never forget; an operator
+ * with direct access to a disposable database may reset it.
  */
 
 /**
@@ -154,10 +183,30 @@ function readUri() {
     ? { deletedCount: 0 }
     : await db.collection('refreshTokens').deleteMany({ userId: operator._id });
 
+  /*
+   * THE AUDIT RECORDS THIS RUN CAUSED.
+   *
+   * Every lifecycle transition the suite drives is audited — correctly — and
+   * nothing removed the records, so the cleanliness assertion failed on fifteen
+   * rows of the suite's own making. See the note at the top of this file for
+   * why deleting them here does not contradict the immutability the API
+   * enforces: this is an operator on a scratch database, not a delete path.
+   *
+   * SCOPED BY ACTOR, never a blanket delete. The suite's rows are the ones its
+   * own accounts and the seeded operator wrote; anything else in this database
+   * was not put there by this run and is not this script's to remove.
+   */
+  const actors = operator === null ? ids : [...ids, operator._id];
+
+  const audits = actors.length === 0
+    ? { deletedCount: 0 }
+    : await db.collection('auditLogs').deleteMany({ 'actor.id': { $in: actors } });
+
   // Counts only. No email address, no id, no connection string.
   console.log(
     'admin e2e teardown: removed ' + ids.length + ' user(s), ' + orders + ' order(s), ' +
       sessions.deletedCount + ' operator session(s), ' +
+      audits.deletedCount + ' audit record(s), ' +
       'reversed ' + restocked + ' stock movement(s)',
   );
   await mongoose.disconnect();

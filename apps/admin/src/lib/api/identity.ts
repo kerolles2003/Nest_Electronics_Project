@@ -52,8 +52,28 @@ export function isStaff(role: Role): boolean {
  */
 export type IdentityOutcome =
   | { readonly status: 'ok'; readonly identity: AdminIdentity }
-  /** No session, a rejected session, or an account that may not be here. */
+  /**
+   * No session at all, or a real session belonging to somebody who may not be
+   * here. Both are terminal: there is nothing to renew and nothing to clear.
+   */
   | { readonly status: 'unauthenticated' }
+  /**
+   * A credential was presented and the API REFUSED it — revoked, malformed,
+   * from another deployment. It is not expired (that is its own status) and it
+   * is not absent; it is unusable.
+   *
+   * Split out from `unauthenticated` for one reason: this is the only case
+   * where cookies are left in the browser that can never work again. A page
+   * render cannot clear them — writing a cookie during render is the error this
+   * whole module is arranged around — so `requireAdmin` sends the browser
+   * through the renewal route, which is allowed to, and which already clears on
+   * a renewal that fails.
+   *
+   * The DESTINATION is still `/login`, identical to `unauthenticated`. The
+   * split is about what happens on the way, not about telling the two apart in
+   * the URL — that would be the oracle `requireAdmin` avoids.
+   */
+  | { readonly status: 'rejected' }
   /**
    * The access token expired. The session is probably still good and the
    * operator has done nothing wrong; it needs renewing, which a page render is
@@ -93,7 +113,13 @@ export async function readIdentity(): Promise<IdentityOutcome> {
      */
     if (result.error.kind === 'expired') return { status: 'expired' };
 
-    return { status: 'unauthenticated' };
+    /*
+     * The API was asked and said no. There IS a credential in the browser —
+     * `readSession()` returned one at the top of this function — and it cannot
+     * be made to work. That is `rejected`, and it is the case that has to clear
+     * up after itself.
+     */
+    return { status: 'rejected' };
   }
 
   const user = result.data.data;
@@ -108,6 +134,13 @@ export async function readIdentity(): Promise<IdentityOutcome> {
    *
    * This is still only about RENDERING. The API's `RolesGuard` refuses a
    * non-staff token on every `admin/*` route regardless of what this returns.
+   */
+  /*
+   * Deliberately `unauthenticated` and NOT `rejected`. The credential is
+   * perfectly good — it simply is not for this console — so it must not be sent
+   * through the renewal route, which would succeed, rotate a working refresh
+   * token as a side effect of somebody opening the wrong URL, and hand the
+   * account a fresh pair it still cannot use here.
    */
   if (!isStaff(user.role)) return { status: 'unauthenticated' };
 
@@ -170,6 +203,24 @@ export async function requireAdmin(): Promise<AdminIdentity | null> {
 
   if (outcome.status === 'expired') await renewOrGiveUp();
 
+  /*
+   * A credential the API refuses is cleared on the way out, through the ONE
+   * route allowed to write cookies.
+   *
+   * `app/session/renew` already does exactly this: it reads the session, asks
+   * the API to renew it, gets `null` back for a credential that cannot be
+   * renewed, calls `clearSession()` and redirects to `/login`. Nothing new had
+   * to be built — the case simply never reached it, because `requireAdmin`
+   * redirected straight past.
+   *
+   * `next` is `/login` rather than the page that was asked for, and that is the
+   * loop guard: whatever the route decides, the browser lands on a PUBLIC path.
+   * A success on this branch would mean the API changed its mind between two
+   * calls, and even then the operator lands on the sign-in page rather than
+   * back here.
+   */
+  if (outcome.status === 'rejected') redirect(renewalUrl('/login'));
+
   if (outcome.status === 'unauthenticated') {
     /*
      * One destination for both "no session" and "not staff".
@@ -178,6 +229,9 @@ export async function requireAdmin(): Promise<AdminIdentity | null> {
      * oracle: `/unauthorized` for a valid non-staff session confirms to
      * somebody holding a customer token that the address they guessed is a real
      * console. `/login` is the honest instruction in both cases.
+     *
+     * Neither of them goes through the renewal route: one has no cookies to
+     * clear, and the other's cookies are a working session for somewhere else.
      */
     redirect('/login');
   }
@@ -230,10 +284,18 @@ export async function requireAdminActor(): Promise<AdminIdentity> {
    * `renewOrGiveUp` never returns — it redirects either way — but an async
    * function typed `Promise<never>` does not narrow control flow for the
    * compiler the way a synchronous `never` does. Handling `unavailable` above
-   * leaves `unauthenticated` as the only case that can reach the last line,
-   * which is both true and checkable.
+   * leaves the terminal cases for the last line, which is both true and
+   * checkable.
    */
   if (outcome.status === 'expired') await renewOrGiveUp();
+
+  /*
+   * Same clearing hop as `requireAdmin`, for the same reason. A server action
+   * CAN write cookies, so this one could clear them itself — but then the rule
+   * "the session is cleared in one place" would have two, and the second would
+   * be the one nobody remembers when the shape of a session changes.
+   */
+  if (outcome.status === 'rejected') redirect(renewalUrl('/login'));
 
   redirect('/login');
 }

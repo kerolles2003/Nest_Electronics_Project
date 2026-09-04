@@ -44,9 +44,16 @@ export default async function CustomersPage(props: {
     created_at: c.createdAt,
   }));
 
-  const orderMap: Record<string, { count: number; total: number }> = {};
+  /*
+   * `formattedTotalSpent`, not `totalSpent`. The second is minor units — the
+   * API's own description says so — and this map used to carry it into a cell
+   * that printed `EGP {total}`, so every row showed a hundred times the real
+   * figure. The server already formats it; taking the number instead was the
+   * whole defect.
+   */
+  const orderMap: Record<string, { count: number; spent: string }> = {};
   for (const c of customerItems) {
-    orderMap[c.id] = { count: c.orderCount, total: c.totalSpent };
+    orderMap[c.id] = { count: c.orderCount, spent: c.formattedTotalSpent };
   }
 
   const dStats = dashboardRes.ok ? dashboardRes.data.data : null;

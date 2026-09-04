@@ -17,9 +17,24 @@ interface Customer {
   created_at: string;
 }
 
+/**
+ * What one customer has spent, as the SERVER formatted it.
+ *
+ * `total` used to be `totalSpent` — a number the API documents as *"lifetime
+ * spend in MINOR UNITS"* — printed as `EGP {total.toLocaleString()}`. Every row
+ * on this screen showed a hundred times the real figure: fifty pounds as
+ * "EGP 5,000".
+ *
+ * It is the same defect the stat strip above the table had, found the same way
+ * and one commit apart, which is why there is now a test that scans for the
+ * shape rather than a resolution to be careful. `AdminCustomerSummary` carries
+ * `formattedTotalSpent` for exactly this, and that is what crosses the boundary
+ * now — a string, so there is nothing left to divide by anything.
+ */
 interface CustomerOrderStats {
   count: number;
-  total: number;
+  /** Pre-formatted by the server, e.g. `"325.00 EGP"`. */
+  spent: string;
 }
 
 interface CustomersTableProps {
@@ -194,7 +209,7 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                 </tr>
               ) : (
                 initialCustomers.map((customer) => {
-                  const stats = orderMap[customer.id] ?? { count: 0, total: 0 };
+                  const stats = orderMap[customer.id] ?? { count: 0, spent: '—' };
                   return (
                     <tr key={customer.id} className="hover:bg-muted/20 transition-colors">
                       <td className="px-5 py-3">
@@ -222,8 +237,9 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                         <span className="text-sm font-bold text-foreground tabular-nums">{stats.count}</span>
                       </td>
                       <td className="px-5 py-3 text-right">
+                        {/* The server's own string. Never an amount and a symbol. */}
                         <span className="text-sm font-bold text-foreground tabular-nums">
-                          EGP {stats.total.toLocaleString('en-EG')}
+                          {stats.spent}
                         </span>
                       </td>
                       <td className="px-5 py-3 text-right">

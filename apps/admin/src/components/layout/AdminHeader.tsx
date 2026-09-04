@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bell, Search, ChevronRight, Home, Command, ShoppingBag, PackageOpen, UserPlus, Check, Settings, Shield, LogOut } from 'lucide-react';
+import { Bell, Search, ChevronRight, Home, Command, Check, Settings, Shield, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import { logoutAction } from '@/actions/admin-auth.actions';
 import type { AdminIdentity } from '@/lib/api/identity';
@@ -25,11 +25,29 @@ interface Notification {
   read: boolean;
 }
 
-const mockNotifications: Notification[] = [
-  { id: 1, title: 'New order #1024 — 2,450 EGP', time: '5 min ago', icon: <ShoppingBag className="h-3.5 w-3.5" />, read: false },
-  { id: 2, title: 'Low stock alert: iPhone 15 Charger', time: '1 hour ago', icon: <PackageOpen className="h-3.5 w-3.5" />, read: false },
-  { id: 3, title: 'New customer registered', time: '3 hours ago', icon: <UserPlus className="h-3.5 w-3.5" />, read: true },
-];
+/**
+ * EMPTY, and the emptiness is the feature.
+ *
+ * This array held three fabricated notifications rendered as real ones, with an
+ * unread badge counting them: *"New order #1024 — 2,450 EGP"* for an order that
+ * does not exist, *"Low stock alert: iPhone 15 Charger"* for a product that is
+ * not in the catalogue, and a customer who never registered.
+ *
+ * That is the same defect the docstring below this line spends four paragraphs
+ * refusing — a console that states things it has not been told, on a screen an
+ * operator uses to decide what to do next. An invented low-stock alert is worse
+ * than an invented name: somebody may act on it.
+ *
+ * It was found by the money-formatting guard
+ * (`apps/api/test/infrastructure/money-formatting.spec.ts`), which was looking
+ * for a hand-written "EGP" beside a raw amount and found one inside a lie.
+ *
+ * There is no notification feed to point this at. `AUDIT-MODEL.md` §9 reserves
+ * alerting and nothing implements it, so the honest state is none — which this
+ * component already renders correctly ("All caught up"). When a feed exists,
+ * this becomes a fetch; until then it stays an empty array and shows nothing.
+ */
+const NO_NOTIFICATIONS: readonly Notification[] = [];
 
 /**
  * ## The identity is the server's, or it is nothing
@@ -55,7 +73,7 @@ export function AdminHeader({ identity }: { identity: AdminIdentity | null }) {
   const pathname = usePathname();
   const segments = pathname.split('/').filter(Boolean);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications] = useState<Notification[]>(mockNotifications);
+  const notifications = NO_NOTIFICATIONS;
   const notificationRef = useRef<HTMLDivElement>(null);
   const unreadCount = notifications.filter((n) => !n.read).length;
 

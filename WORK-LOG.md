@@ -6910,3 +6910,134 @@ at all. Doing it properly means a second route handler that clears and
 redirects. That is a change to the auth path, unrelated to this chunk, on the
 most security-sensitive surface in the console. It is the owner's call, not a
 change to slip into a catalogue commit.
+
+---
+
+# Part 7h — Three rulings, one guard, and a finding traced to the end
+
+**Strays reaped before every run.** 0 orphaned runners found.
+
+## 1. The e2e teardown now removes the audit records it caused
+
+`auditLogs` was the one collection the admin suite created and never cleaned, so
+the cleanliness assertion failed on fifteen rows of its own making.
+
+Scoped **by actor** — the suite's own accounts plus the seeded operator — never
+a blanket delete, because anything else in that database was not put there by
+this run.
+
+The apparent contradiction is written down where somebody will meet it, in the
+teardown's own docstring: **the immutability guarantee is about the application
+surface.** No endpoint creates, modifies or removes an audit record, and
+`test/audit/admin-audit-log.spec.ts` asserts that as the *absence of a route*.
+That is what stops an audited principal suppressing their own trail through the
+system that audits them. It was never a claim that the bytes are physically
+indelible — a DBA with a mongo shell could always drop the collection, as could
+anyone with the backup. This script is that second kind of access, narrowly: an
+operator, on a **scratch** database, resetting it to the state preparation
+recorded. The comment ends by saying plainly that **nobody should read it as
+permission to build a delete path.**
+
+Verified: `admin e2e teardown: removed 12 user(s), 11 order(s), 38 operator
+session(s), 15 audit record(s), reversed 12 stock movement(s)` — and no
+`--assert-clean` failure.
+
+## 2. The dead session — the cheap route was checked first, and the answer is not what the test's name suggests
+
+**The existing route can take the case, and no second handler is needed.**
+Proved at the header level rather than argued: driving
+`GET /admin/session/renew?next=/login` with the two broken cookies returns
+
+```
+HTTP/1.1 303 See Other
+location: /admin/login
+set-cookie: nest_admin_at=; Path=/; Max-Age=0; HttpOnly; SameSite=lax
+set-cookie: nest_admin_rt=; Path=/; Max-Age=0; HttpOnly; SameSite=lax
+```
+
+and a client jar driven through the same chain comes out holding only the
+30-second renewal marker. The route clears correctly.
+
+**And `requireAdmin` already reaches it for this case.** Probing the API
+directly: a malformed bearer answers `401 TOKEN_INVALID`, and
+`errors.ts` deliberately maps `TOKEN_EXPIRED` *and* `TOKEN_INVALID` to
+`expired` — so this path already went `page -> renewOrGiveUp -> /session/renew`,
+which is confirmed in the run log:
+
+```
+POST /api/v1/auth/refresh -> 400 VALIDATION_ERROR
+GET /session/renew?next=%2Forders 303 in 284ms
+```
+
+So the missing hop was never the defect.
+
+**What the defect actually is.** `requireAdmin` runs inside a **streamed**
+render. `curl` against `/admin/orders` with the broken cookies returns **`200`**,
+not a redirect — the shell has already flushed, so `redirect()` cannot be an
+HTTP redirect and is delivered in-band for the client runtime to act on. The
+clearing response is therefore issued during a client-side navigation, and in
+that path the browser keeps the cookie. The test name says "does not leave a
+dead session in the browser"; the mechanism is "a guard inside a streamed render
+cannot clear a cookie on the way out".
+
+That is a Next streaming interaction, not a missing route, and the honest fix is
+somewhere that can still write headers — which is `proxy.ts`, the one place this
+codebase argues at length against putting session work. **Not taken. Reported.**
+
+**What did change:** `readIdentity` now separates a credential the API
+*rejected* from "no session" and "not staff". Only the first goes through the
+clearing route; the second has nothing to clear, and the third's cookies are a
+working session for somewhere else and must not be rotated as a side effect of
+opening the wrong URL. This closes the other 401 codes — a revoked or reused
+refresh token — which previously went straight to `/login` with the dead
+credential intact. It does **not** fix the named test, for the reason above, and
+no test covers it yet.
+
+## 3. Both extra endpoints approved — recorded, no change
+
+## 4. The 100× money bug is now a class with a mechanism
+
+`apps/api/test/infrastructure/money-formatting.spec.ts`, in the shape of the
+secret-hygiene guard: a scan, a canary that plants a real violation in a real
+scanned root and requires the real scan to find it, a vacuity check, and an
+allow-list **validated in both directions** — every finding must be allowed, and
+**every allowance must still match a real line**, so a reworded line takes its
+exemption with it instead of leaving a hole.
+
+**It found a second live instance on its first run**, exactly as the last two
+guards did:
+
+- `CustomersTable.tsx` printed `EGP {totalSpent.toLocaleString()}` in **every
+  customer row** — and the DTO's own text calls `totalSpent` *"lifetime spend in
+  minor units"*. The same hundredfold error as the stat card above it, one
+  commit apart. Fixed by carrying the server's `formattedTotalSpent`.
+- And, inside a hit it was not looking for: `AdminHeader` shipped three
+  **fabricated notifications** rendered as real, with an unread badge — *"New
+  order #1024 — 2,450 EGP"* for an order that does not exist, a low-stock alert
+  for a product not in the catalogue. Four paragraphs below that array, the same
+  file explains why a fabricated identity is unacceptable. An invented low-stock
+  alert is worse than an invented name: somebody may act on it. Deleted; the
+  component already renders "All caught up" honestly.
+
+The first version of the rule missed `ProductTable.money()`, whose currency sits
+on the closing line of a multi-line template. **The stale-allowance check caught
+it** — the exemption written for it stopped matching — which is precisely the
+rot that check exists to find, on the first run.
+
+One hit is exempted as **reported, not fixed**: the storefront PDP re-derives
+what `Money.formatted` already says and rounds with `Math.round`, so 149.99 EGP
+renders as "150 EGP". That file carries uncommitted work this session was told
+not to touch, so the exemption names it as a to-do with an owner rather than a
+blessing.
+
+## 5. The pattern this engagement keeps finding
+
+**Every defect of consequence here was invisible to the type checker and to the
+build, and visible only to something that checked actual behaviour.** React
+never booting; seven vacuous assertions; an index-dependent invariant; an audit
+trail written into a room with no door; `revalidatePath` handed URLs instead of
+routes; a hundredfold money error where `number` is `number`; three fabricated
+notifications that compiled perfectly. Green types and a green build are
+evidence that the code is *well formed*, never that it is *right* — and the
+three mechanical guards in this repository have each caught a real defect on
+their first run.
