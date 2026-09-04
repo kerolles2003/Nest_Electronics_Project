@@ -1,6 +1,7 @@
 import { requireAdmin, getAdminServices, getCachedCategories, getCachedBrands, getInventoryStats, getInventoryTransactions } from '@/lib/services';
 import { Suspense } from 'react';
 import { InventoryTable } from '@/components/inventory/InventoryTable';
+import { UnwiredScreenWarning } from '@/components/system/UnwiredScreenWarning';
 import type { Product } from '@nest/types';
 
 function mapInventoryProduct(raw: any): Product {
@@ -99,6 +100,8 @@ export default async function InventoryPage(props: {
 
   return (
     <div className="space-y-5">
+      <UnwiredScreenWarning screen="inventory" />
+
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Inventory</h1>
         <p className="text-sm text-muted-foreground mt-1">Monitor and manage marketplace stock levels.</p>

@@ -2,6 +2,7 @@ import { requireAdmin, getAdminServices, getCachedCategories, getCachedBrands, g
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { ProductTable } from '@/components/products/ProductTable';
+import { UnwiredScreenWarning } from '@/components/system/UnwiredScreenWarning';
 import { Plus } from 'lucide-react';
 import type { Product } from '@nest/types';
 
@@ -92,6 +93,8 @@ export default async function ProductsPage(props: {
 
   return (
     <div className="space-y-5">
+      <UnwiredScreenWarning screen="products" />
+
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Products</h1>

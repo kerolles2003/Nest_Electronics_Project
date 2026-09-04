@@ -6034,3 +6034,69 @@ Guarded by `@Roles(Role.ADMIN, Role.SUPER_ADMIN)` with `@Header('Cache-Control',
 - Turbopack production build of `apps/admin` succeeded (19/19 routes compiled).
 - TypeScript and ESLint 100% clean across API and Admin.
 
+
+---
+
+# Part 6d — A banner on every screen that writes into nowhere
+
+**Strays reaped before every run.** Checked before the build; 0 orphaned runners found.
+
+## The defect this closes
+
+The console is **half migrated**, and the half that is not migrated writes to a
+database nothing reads.
+
+| Screen | Writes to | Read by |
+|---|---|---|
+| Dashboard, orders, customers, shipping rates | NestJS API / Mongo | storefront, Flutter, dashboard |
+| **Products, product media, inventory** | **Supabase** | **nothing** |
+
+A product created in the admin today is accepted without an error, is re-read
+from Supabase by the very screen that created it, and therefore **reappears in
+the table** — while being invisible to every customer and absent from every
+number on the dashboard. That is `F-09` returning in a **worse** form than the
+original: the original was two catalogues that disagreed; this is one catalogue
+plus three screens that write into nowhere and look like they worked.
+
+The Part 6c wiring made it worse rather than better. The dashboard now shows
+real Mongo figures, so the console *reads* as migrated and nothing on screen
+contradicts the row the products table is showing back.
+
+## What landed
+
+`components/system/UnwiredScreenWarning.tsx` — one non-dismissible `role="alert"`
+banner, red, above the fold, stating the consequence in the operator's terms
+rather than the engineer's ("Products saved here do not reach the store"), with
+the reason and the instruction not to enter real catalogue data.
+
+Placed on the four screens that can write, one banner each:
+
+- `/products` (the list — `app/(dashboard)/products/page.tsx`)
+- `/products/new`
+- `/products/[id]/edit`
+- `/inventory`
+- the media half, inside `ProductImageUpload` — it has no page of its own, so
+  the banner sits at the top of the uploader itself
+
+The form screens are bannered as well as the list because the list is not the
+only way in: a bookmark or a deep link reaches `/products/new` directly, and the
+banner's whole job is to be unmissable.
+
+## Why a banner and not a disabled screen
+
+Disabling would be the safer engineering answer and the wrong product answer
+while the wiring is days away: the operator still needs to read what is already
+there. The screen stays readable; the consequence is stated where it cannot be
+scrolled past.
+
+**Every usage is a to-do with a deadline.** `grep -r UnwiredScreenWarning` names
+exactly the screens still to wire; when the last one is wired the component is
+deleted, not left behind.
+
+## Verification
+
+- Stray process check before the run: 0 orphaned runners.
+- `tsc --noEmit` clean.
+- ESLint: 0 errors (6 pre-existing warnings, none in the new file).
+- Turbopack production build: 19/19 routes compiled.
+- **Browser-unverified** — the banner has not been seen rendered in a browser.

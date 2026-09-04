@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { X, Upload, Image as ImageIcon, Star, GripVertical, Loader2 } from 'lucide-react';
 import { Button } from '@nest/ui';
 import { deleteProductImageAction, reorderProductImagesAction, setPrimaryImageAction } from '@/actions/product.actions';
+import { UnwiredScreenWarning } from '@/components/system/UnwiredScreenWarning';
 
 interface ProductImage {
   id: string;
@@ -235,6 +236,8 @@ export function ProductImageUpload({ productId, initialImages = [], onImagesChan
       onDragEnter={handleDropZoneDragEnter}
       onDragLeave={handleDropZoneDragLeave}
     >
+      <UnwiredScreenWarning screen="media" />
+
       {/* Validation Error */}
       {validationError && (
         <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-center gap-2">
