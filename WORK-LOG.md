@@ -7263,3 +7263,99 @@ in that case; the `<img>` existing and completing is, and that is what makes
 imports it, where `import.meta` is a syntax error and the whole suite fails to
 load. Both callers run from `apps/storefront`, so the working directory is the
 one thing they agree on.
+
+## `qa-layout.spec.ts`: seven findings as assertions, and one test that was wrong
+
+The untracked spec holds seven tests. Four passed on the first run of this
+session — the sideways scroll at 360px, the chrome's links resolving, the
+`packages/ui` classes producing CSS, and no catalogue image left at zero
+opacity. The brief said two findings had been "written as tests but never
+fixed", and offered fixing them or converting each to a documented `test.fail()`
+tripwire. Running them first turned out to matter, because **three** failed and
+none of the three wanted a tripwire.
+
+### `:253` — the test was wrong and the code was right
+
+It counted `drawer.querySelectorAll('a[href], button, …')` and expected zero.
+**`inert` does not remove elements from the DOM.** It removes them from the tab
+order and the accessibility tree, and leaves the nodes exactly where they were —
+so that count is ten whether the fix is present or absent. The drawer has had
+`inert` throughout; the test failed against correct code, and had been recorded
+in this log as a pre-existing defect on that evidence.
+
+A `test.fail()` here would have been worse than useless: it would have marked
+working code as broken and then gone red the day somebody "fixed" it.
+
+The finding was about **tabbing**, so tabbing is what is asserted now: focus is
+walked from the top of the document and must never land inside the drawer. That
+is false without `inert` — nothing else prevents it — and true with it, which is
+the property a guard has to have. Three premises are asserted first (the drawer
+exists, it is off-screen, it holds more than five controls) so the walk cannot
+pass vacuously.
+
+### `:291` — a real defect, in the bar rather than in the buttons
+
+Six controls under 44px, and the header icons were not among them: the earlier
+fixes had landed. What remained was the header logo at 130x40, and all five
+`MobileBottomNav` links at **72x37 inside a 56px bar**. The bar laid its links
+out with `items-center`, so each sized to its 37px of content and left 19px of
+itself tappable by nothing — the five most-used controls on a phone, each 7px
+short, in a bar that was already big enough. `items-stretch` changes no drawn
+pixel, because each link centres its own icon and label.
+
+### `:92` — `/cart` was an untitled document for the whole of its first paint
+
+Not in the original crawl's data, because the crawler screenshots a settled
+page. `CartView` has an `<h1>` in each of its three real states and none in its
+loading state, and that is where the page spends its first second every single
+time, since `useCart()` fetches after hydration. A crawler that does not wait, a
+heading list, and "jump to first heading" all saw a page with no heading at all.
+
+### None of the three became a tripwire
+
+The brief's reasoning for offering one — *"a permanently failing test trains
+people to ignore red"* — is exactly why: `:253` had already been read as a
+standing defect for a session and a half on the strength of a test that could
+never have passed.
+
+### The spec, run three times
+
+| Run | Result |
+|---|---|
+| Before any of this session's fixes | 4 passed, 3 failed — `:92` landmarks (`/cart: 0 <h1>`), `:253` inert (expected 0, received 10), `:291` 44px (six controls, listed by label and size) |
+| After the three fixes | 6 passed, 1 failed — `:92` **timed out** at 90s on `page.goto('/forgot-password')`, the thirteenth cold Turbopack compile in one test |
+| `:92` alone, with a 240s budget | **passed** in 2.3m |
+
+The last row is why the test now sets its own timeout. Ninety seconds is a
+budget for a test, not for fifteen first-visits to a dev server on a machine
+with half a gigabyte free, and a red that depends on how warm the compiler
+happens to be is exactly the kind this file exists to avoid.
+
+## The QA pass's own output: it never wrote one, but it left the data
+
+Five source comments — in `Footer.tsx`, `HeroBanner.tsx`,
+`products/(listing)/page.tsx` and twice in `products/[slug]/page.tsx` — point at
+"the QA report" as where a deferred decision was recorded. **No such file
+existed anywhere in the repository.** The pass was interrupted before it wrote
+either the defect list or the ranked critique it had been asked for.
+
+It had, however, done the work. `apps/storefront/qa-shots/` holds **123
+screenshots and a `report.json` of 120 records** — 24 screens across 360, 390,
+768, 1024 and 1440 — each carrying `bodyScrollsSideways`, the overflowing
+elements with coordinates, `smallTargets` with measured sizes, `h1s`, `mains`,
+`imagesBroken`, `imagesInvisible` and `imagesWithoutAlt`. That directory is
+**gitignored**, so the evidence exists on this machine and nowhere else.
+
+`apps/storefront/QA-FINDINGS.md` is now that report: sixteen fixed findings and
+ten open ones ranked by what they cost a customer, with the aggregate of the 120
+records tabulated so the conclusions survive the directory that will not.
+
+Two things in the aggregate are worth repeating here:
+
+- **`<main>` was correct on all 120 records.** Half of that test never had
+  anything to catch, and saying so is part of reporting it honestly.
+- **`imagesInvisible` was zero on every record** — and that is the trap, not the
+  reassurance. The crawl ran with no Cloudinary cloud name, so there was no
+  product image to be invisible. The defect it was looking for was real and
+  present; the instrument could not see it. It is the same shape as the
+  ninety-six passing browser tests that had never rendered a product image.

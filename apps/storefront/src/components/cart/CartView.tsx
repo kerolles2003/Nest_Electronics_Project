@@ -24,10 +24,25 @@ export function CartView() {
   const { cart, busy, error, setQuantity, remove } = useCart();
 
   if (cart === null) {
+    /*
+     * The heading is here too, and that is the point.
+     *
+     * All three branches below have an `<h1>`; this one did not, so for as long
+     * as the cart was loading — which is the whole of the first paint, since
+     * `useCart()` fetches after hydration — `/cart` was a document with **no
+     * heading at all**. A crawler that does not wait, a heading list, and a
+     * screen reader's "jump to first heading" all saw an untitled page, and it
+     * is the state the page spends its first second in every single time.
+     */
     return (
-      <p className="py-16 text-center text-foreground-muted" aria-busy="true">
-        Loading your cart…
-      </p>
+      <div className="py-16 text-center">
+        <h1 className="mb-3 text-3xl font-black uppercase tracking-tight text-foreground">
+          Your cart
+        </h1>
+        <p className="text-foreground-muted" aria-busy="true">
+          Loading your cart…
+        </p>
+      </div>
     );
   }
 

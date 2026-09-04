@@ -23,7 +23,17 @@ export function MobileBottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-background/95 border-t border-[var(--color-border)] safe-area-bottom backdrop-blur-xl" aria-label="Mobile navigation">
-      <div className="flex items-center h-14">
+      {/*
+        `items-stretch`, not `items-center`.
+
+        The bar is 56px tall and each link's CONTENT is 37px, so `items-center`
+        sized every link to its content and left 19px of the bar tappable by
+        nothing — the five most-used controls on a phone, each 7px under the
+        44px `DESIGN.md` 8 asks for, inside a bar that was already big enough.
+        Stretching them changes no pixel that is drawn: each link centres its
+        own icon and label with `justify-center`.
+      */}
+      <div className="flex items-stretch h-14">
         <Link
           href={ROUTES.home}
           className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 transition-all duration-150 active:scale-95 ${

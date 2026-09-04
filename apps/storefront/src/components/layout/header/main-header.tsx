@@ -17,7 +17,8 @@ export function MainHeader({ categories }: MainHeaderProps) {
       <div className="container-marketplace flex items-center justify-between gap-5">
         <div className="flex items-center shrink-0">
           <MobileMenu categories={categories} />
-          <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
+          {/* `min-h-11`: the mark and the wordmark stack to 40px, and this is a link. */}
+          <Link href="/" className="flex min-h-11 items-center gap-2.5 shrink-0 group">
             <div className="relative">
               <div className="w-10 h-10 bg-primary rounded-sm flex items-center justify-center">
                 <Cpu className="w-5 h-5 text-primary-foreground" />
