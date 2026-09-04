@@ -76,6 +76,18 @@
   --color-woodmart-bg: #f8f8f8;
   --color-topbar: #1a1a2e;
   --color-topbar-foreground: rgba(255, 255, 255, 0.85);
+  /**
+   * Secondary text on the dark bars.
+   *
+   * The footer had none, so it reached for the LIGHT palette's
+   * `--color-foreground-muted` (#6b7280) on a #1a1a2e background — 3.4:1, below
+   * AA — while its headings and the word "NEST" used `--color-foreground`,
+   * which IS #1a1a2e. The brand name and all three column headings were drawn
+   * in the background colour: contrast 1:1, invisible.
+   *
+   * White at 62% composites to roughly 6:1 on that background.
+   */
+  --color-topbar-muted: rgba(255, 255, 255, 0.62);
   --color-header-main: #1a1a2e;
   --color-header-foreground: #ffffff;
   --color-category-bar: #e14a5c;

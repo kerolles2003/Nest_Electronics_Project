@@ -7041,3 +7041,49 @@ notifications that compiled perfectly. Green types and a green build are
 evidence that the code is *well formed*, never that it is *right* — and the
 three mechanical guards in this repository have each caught a real defect on
 their first run.
+
+---
+
+# Part 8a — Closing out the storefront QA pass
+
+An interrupted QA and polish pass left sixteen storefront files and one
+`packages/config` file uncommitted, plus one untracked spec. It had been sitting
+there across several sessions, and it had already cost three things: a
+misattribution, a config reconstruction that produced non-comparable test runs,
+and no clear baseline for anything.
+
+The instruction was to close it out, not to extend it. Every change is now
+**finished**, **reverted**, or **committed with a named tripwire**. Nothing is
+left ambiguous, and the reasoning for each is below.
+
+The stash `qa-polish WIP` was confirmed present before anything was touched, and
+is untouched — it still holds the pass's original state, including the four home
+components it had deleted.
+
+## The four home components were already restored
+
+`BlogSection`, `CategoryCircles`, `PromoBanner` and `RecommendedProducts` are
+deleted **in the stash** and present in the working tree, identical to `HEAD`.
+The restore and the note happened in `56cb030`, which also wrote
+`src/components/home/README.md` — a table of which six components the home page
+renders and which four are unwired scaffold, with what each of the four would
+need before it could be imported. Nothing was wired. Nothing needed doing here.
+
+## The site chrome linked to six pages that do not exist
+
+`/about`, `/brands`, `/faq`, `/returns`, `/shipping` and `/vendors` have never
+been routes — the route inventory is twenty-three pages and none of them is any
+of these. `/brands/[slug]` exists; `/brands` does not. Because the six sat in
+`TOP_NAV_LINKS`, `MAIN_NAV_LINKS` and the footer, **each was a 404 in the chrome
+of every one of those twenty-three pages**.
+
+`packages/config` is a workspace dependency of `apps/admin` and is in its
+`transpilePackages`, but nothing under `apps/admin/src` imports from it —
+`TOP_NAV_LINKS` and `MAIN_NAV_LINKS` are read by three storefront files and
+nothing else. Removing them touches one app.
+
+`t1-chrome.spec.ts` asserted `getByRole('link', { name: 'Brands' })` was visible,
+and that assertion **passed for as long as the defect existed**: it proved an
+anchor was rendered, never that it led anywhere. It now asserts the four dead
+hrefs have count zero, so putting one back without its page fails in the suite
+rather than in a customer's browser.

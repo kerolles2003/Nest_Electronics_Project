@@ -88,5 +88,25 @@ test('the footer renders without reading anything', async ({ page }) => {
   const footer = page.locator('footer');
   await expect(footer).toBeVisible();
   await expect(footer.getByRole('link', { name: 'Categories' })).toBeVisible();
-  await expect(footer.getByRole('link', { name: 'Brands' })).toBeVisible();
+  await expect(footer.getByRole('link', { name: 'Products' })).toBeVisible();
+
+  /*
+   * "Brands" USED to be asserted here, and that is the point.
+   *
+   * `/brands` has never been a route — only `/brands/[slug]` exists — so this
+   * assertion was passing on a link that returned a 404 from the footer of
+   * every page on the site. It sat beside `/faq`, `/shipping` and `/returns`,
+   * which were the same. The test proved the anchor was rendered; nothing
+   * proved it led anywhere.
+   *
+   * The four links are gone, and the check is inverted so that restoring one
+   * without its page fails here rather than in a customer's browser. When a
+   * page IS written, the link comes back and its entry leaves this list.
+   */
+  for (const href of ['/brands', '/faq', '/shipping', '/returns']) {
+    await expect(
+      footer.locator(`a[href="${href}"]`),
+      `${href} is linked from the footer and is not a page.`,
+    ).toHaveCount(0);
+  }
 });
