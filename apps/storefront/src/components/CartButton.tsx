@@ -25,7 +25,9 @@ export function CartButton() {
   return (
     <button
       onClick={openCart}
-      className="group flex items-center gap-2 rounded-sm px-1.5 py-1 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      // `min-h-11 min-w-11` — DESIGN.md 8 asks for a 44x44 tap area and this
+      // was 32x28 on a phone, where the label beside the icon is hidden.
+      className="group flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-sm px-1.5 py-1 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       aria-label={known ? `Open cart, ${String(totalQuantity)} items` : 'Open cart'}
     >
       <div className="relative flex items-center justify-center">

@@ -132,7 +132,18 @@ export function HeroBanner({ categories }: HeroBannerProps) {
             </div>
           </div>
 
-          <div className="absolute bottom-5 left-6 z-20 flex gap-2 md:left-auto md:right-8">
+          {/*
+            The dot is 6px tall; the BUTTON is not.
+
+            These were 8x6 and 40x6 hit areas — the smallest controls on the
+            site, on the largest element, on a touch device. The bar is now a
+            child of a 44px-tall button with horizontal padding, so the visual
+            is unchanged and the target is thumb-sized vertically. Making them
+            44px WIDE as well would space the dots four times further apart,
+            which is a change to the hero's design rather than a fix, and is
+            raised in the QA report instead.
+          */}
+          <div className="absolute bottom-1 left-4 z-20 flex md:left-auto md:right-6">
             {slides.map((_, index) => (
               <button
                 key={index}
@@ -140,12 +151,16 @@ export function HeroBanner({ categories }: HeroBannerProps) {
                   setCurrentSlide(index);
                   setIsPaused(true);
                 }}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  index === currentSlide ? 'w-10 bg-primary' : 'w-2 bg-white/30 hover:bg-white/60'
-                }`}
+                className="flex h-11 items-center px-2"
                 aria-current={index === currentSlide ? 'true' : undefined}
                 aria-label={`Go to slide ${index + 1}`}
-              />
+              >
+                <span
+                  className={`block h-1.5 rounded-full transition-all duration-300 ${
+                    index === currentSlide ? 'w-10 bg-primary' : 'w-2 bg-white/30 hover:bg-white/60'
+                  }`}
+                />
+              </button>
             ))}
           </div>
         </div>

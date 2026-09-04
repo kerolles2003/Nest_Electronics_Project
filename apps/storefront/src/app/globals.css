@@ -435,12 +435,21 @@ body {
   }
 }
 
+/**
+ * A header icon control.
+ *
+ * 2.75rem, not 2rem. DESIGN.md 8 requires a 44x44 tap area for every
+ * interactive element, and the three controls that use this class — wishlist,
+ * account, cart — are the most-tapped things on the site. They were 32x28.
+ * The ICON is unchanged; only the hit area grew, so nothing looks different
+ * except the spacing between them.
+ */
 .nav-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.75rem;
+  height: 2.75rem;
   border-radius: 0.25rem;
   color: var(--color-foreground-muted);
   transition: background-color var(--transition-fast), color var(--transition-fast);

@@ -25,7 +25,8 @@ export function UserMenu() {
     return (
       <Link
         href={ROUTES.login}
-        className="px-1.5 py-1 hover:bg-white/10 rounded-sm transition-colors flex items-center gap-2 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        // 44px minimum: this was 32x28, and on a phone it is an icon alone.
+        className="min-h-11 min-w-11 justify-center px-1.5 py-1 hover:bg-white/10 rounded-sm transition-colors flex items-center gap-2 group focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         <User className="w-5 h-5 group-hover:text-primary transition-colors" strokeWidth={1.7} />
         <div className="hidden sm:block text-left">
@@ -38,7 +39,7 @@ export function UserMenu() {
 
   return (
     <div className="relative group">
-      <button className="px-1.5 py-1 hover:bg-white/10 rounded-sm transition-colors flex items-center gap-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+      <button className="min-h-11 min-w-11 justify-center px-1.5 py-1 hover:bg-white/10 rounded-sm transition-colors flex items-center gap-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
         <div className="w-7 h-7 rounded-sm bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-black group-hover:bg-primary-hover transition-colors">
           {user.initials}
         </div>

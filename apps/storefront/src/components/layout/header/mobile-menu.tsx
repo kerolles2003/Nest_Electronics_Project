@@ -29,6 +29,24 @@ export function MobileMenu({ categories }: MobileMenuProps) {
     };
   }, [isOpen]);
 
+  /*
+   * Escape closes it.
+   *
+   * There was no keyboard way out at all: the drawer covers the page, the
+   * overlay only responds to a click, and nothing listened for a key. On a
+   * phone that is invisible; with a keyboard it is a dead end.
+   */
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); };
+  }, [isOpen]);
+
   const toggleCategory = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -79,9 +97,9 @@ export function MobileMenu({ categories }: MobileMenuProps) {
 
   return (
     <>
-      <button 
+      <button
         onClick={() => setIsOpen(true)}
-        className="p-2 -ml-2 mr-2 text-current hover:text-primary transition-colors lg:hidden"
+        className="flex h-11 w-11 -ml-2 mr-1 items-center justify-center text-current hover:text-primary transition-colors lg:hidden"
         aria-label="Open menu"
       >
         <Menu className="w-6 h-6" />
@@ -96,7 +114,22 @@ export function MobileMenu({ categories }: MobileMenuProps) {
       )}
 
       {/* Drawer */}
-      <div 
+      {/*
+        `inert` while closed, which is the whole fix.
+
+        The drawer is always in the DOM and merely translated off-screen, so its
+        eleven links and buttons stayed in the tab order on EVERY page: a
+        keyboard user tabbing off the logo fell into an invisible menu, and a
+        screen reader announced a navigation that was not on screen. `inert`
+        removes it from both the tab order and the accessibility tree in one
+        attribute — `aria-hidden` alone would have fixed only the second half
+        and left the focus trap.
+      */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu"
+        inert={!isOpen}
         className={cn(
           "fixed top-0 left-0 z-50 h-full w-[300px] bg-background border-r border-border shadow-xl transform transition-transform duration-300 ease-in-out lg:hidden flex flex-col",
           isOpen ? "translate-x-0" : "-translate-x-full"
@@ -104,9 +137,10 @@ export function MobileMenu({ categories }: MobileMenuProps) {
       >
         <div className="flex items-center justify-between p-4 border-b border-border">
           <span className="font-heading font-bold text-lg uppercase tracking-wider text-foreground">Menu</span>
-          <button 
+          <button
             onClick={() => setIsOpen(false)}
-            className="p-2 -mr-2 text-foreground-muted hover:text-foreground transition-colors"
+            aria-label="Close menu"
+            className="flex h-11 w-11 -mr-2 items-center justify-center text-foreground-muted hover:text-foreground transition-colors"
           >
             <X className="w-5 h-5" />
           </button>

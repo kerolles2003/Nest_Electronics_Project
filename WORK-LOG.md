@@ -7087,3 +7087,24 @@ and that assertion **passed for as long as the defect existed**: it proved an
 anchor was rendered, never that it led anywhere. It now asserts the four dead
 hrefs have count zero, so putting one back without its page fails in the suite
 rather than in a customer's browser.
+
+## The three most-tapped controls on the site were 32x28
+
+`DESIGN.md` 8 asks for a 44x44 tap area on every interactive element. The
+header's wishlist, account and cart controls — the ones a phone customer reaches
+for most — shared a `.nav-icon-btn` rule that made them 32x32, and `CartButton`
+and `UserMenu` were 32x28. The hero's slide dots were worse: 8x6 and 40x6, the
+smallest controls on the site sitting on its largest element.
+
+The icons are unchanged in every case; only the hit areas grew. The hero dot is
+now a 6px bar inside a 44px-tall button, so the visual is identical. Making the
+dots 44px *wide* as well would space them four times further apart, which is a
+change to the hero's design rather than a fix, and is left alone.
+
+The mobile drawer had two separate defects, both invisible on a phone and both
+fatal with a keyboard. It is always in the DOM and merely translated off-screen,
+so its eleven links and buttons **stayed in the tab order on every page** — a
+keyboard user tabbing off the logo fell into an invisible menu — and once there,
+nothing listened for Escape, so there was no way out. `inert` while closed
+removes it from the tab order and the accessibility tree in one attribute;
+`aria-hidden` would have fixed only the second half and left the focus trap.
