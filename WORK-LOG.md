@@ -7108,3 +7108,22 @@ keyboard user tabbing off the logo fell into an invisible menu — and once ther
 nothing listened for Escape, so there was no way out. `inert` while closed
 removes it from the tab order and the accessibility tree in one attribute;
 `aria-hidden` would have fixed only the second half and left the focus trap.
+
+## Every link on the wishlist page was dead
+
+The wishlist store kept product **ids**, and `/wishlist` linked each one to
+`/products/<id>`. Products resolve by slug only — `GET /products/:slug` with an
+ObjectId is a 404 — so every row on that page was a dead end, and the row had
+nothing else to show either, because an id is not a name: it rendered
+*"Product #664f1a2b"* with the full id underneath.
+
+A slug is the same one token, is what the route wants, and is already on every
+`ProductCardDTO`, so this costs no request and adds no feature. The storage key
+is bumped to `-v2`: entries saved under the old key are ids, and silently
+reinterpreting an id as a slug would turn a stale wishlist into a page of 404s,
+which is the bug being fixed.
+
+The panel above the list also promised something the system cannot do — *"Sign
+in to sync your wishlist across devices"*. There is no wishlist endpoint;
+server-side wishlists are Phase 8. It now says what is true: saved in this
+browser only.

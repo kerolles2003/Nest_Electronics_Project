@@ -38,32 +38,44 @@ export default function WishlistPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/*
+            What this panel used to say: "Sign in to sync your wishlist across
+            devices and access it anywhere."
+
+            That is not true and cannot become true by signing in. There is no
+            wishlist endpoint; server-side wishlists are Phase 8. Telling a
+            customer that an account will carry their saved items, and then
+            losing the list the moment they clear their browser, is a promise
+            the system has no way to keep.
+          */}
           <div className="border rounded-xl bg-card p-6">
             <p className="text-muted-foreground text-center">
-              Sign in to sync your wishlist across devices and access it anywhere.
+              Saved in this browser only. Clearing your browser data clears this
+              list, and it will not follow you to another device.
             </p>
           </div>
 
           <div className="border rounded-xl divide-y">
-            {items.map((productId) => (
-              <div key={productId} className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-4">
-                  <Heart className="w-5 h-5 text-destructive fill-destructive" />
-                  <div>
-                    <Link
-                      href={ROUTES.product(productId)}
-                      className="font-medium hover:text-primary transition-colors"
-                    >
-                      Product #{productId.slice(0, 8)}
-                    </Link>
-                    <p className="text-xs text-muted-foreground">
-                      ID: {productId}
-                    </p>
-                  </div>
+            {items.map((slug) => (
+              <div key={slug} className="flex items-center justify-between gap-4 p-4">
+                <div className="flex min-w-0 items-center gap-4">
+                  <Heart className="w-5 h-5 shrink-0 text-destructive fill-destructive" />
+                  {/*
+                    A working link at last. The store used to hold product ids
+                    and this linked to `/products/<id>`, which is a 404 —
+                    products resolve by slug only. Every row on this page was a
+                    dead end.
+                  */}
+                  <Link
+                    href={ROUTES.product(slug)}
+                    className="truncate font-medium hover:text-primary transition-colors"
+                  >
+                    {slug}
+                  </Link>
                 </div>
                 <button
-                  onClick={() => removeItem(productId)}
-                  className="text-sm text-muted-foreground hover:text-destructive transition-colors"
+                  onClick={() => removeItem(slug)}
+                  className="shrink-0 text-sm text-muted-foreground hover:text-destructive transition-colors"
                 >
                   Remove
                 </button>

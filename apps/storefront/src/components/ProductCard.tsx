@@ -19,7 +19,7 @@ import { useUIStore } from '@/stores/ui-store';
  * an id and a quantity, and the server answers with what that costs.
  *
  * The wishlist is still a browser store. Server-side wishlists arrive in Phase
- * 8; until then it is a private list of ids with nothing to get wrong.
+ * 8; until then it is a private list of slugs in one browser.
  */
 export function ProductCard(props: UIProductCardProps) {
   const [isAdding, setIsAdding] = useState(false);
@@ -39,7 +39,9 @@ export function ProductCard(props: UIProductCardProps) {
   const { add } = useCart();
   const openCart = useUIStore((state) => state.openCart);
   const toggleWishlist = useWishlistStore((state) => state.toggleItem);
-  const hasWishlist = useWishlistStore((state) => state.hasItem(props.product.id));
+  // Keyed by SLUG, because that is what `/wishlist` has to link to and an id
+  // does not resolve: `GET /products/:slug` with an ObjectId is a 404.
+  const hasWishlist = useWishlistStore((state) => state.hasItem(props.product.slug));
 
   const { addToast } = useToast();
 
@@ -55,7 +57,7 @@ export function ProductCard(props: UIProductCardProps) {
   };
 
   const handleWishlist = (): void => {
-    toggleWishlist(props.product.id);
+    toggleWishlist(props.product.slug);
     addToast(
       hasWishlist
         ? `${props.product.name} removed from wishlist`
