@@ -21,6 +21,7 @@ interface OrderFacetResult {
   readonly delivered: Array<{ readonly amount: number; readonly count: number }>;
   readonly pipeline: Array<{ readonly amount: number; readonly count: number }>;
   readonly byStatus: Array<{ readonly _id: OrderStatus; readonly count: number }>;
+  readonly customersWithOrders: Array<{ readonly count: number }>;
 }
 
 interface LowStockProductDoc {
@@ -59,7 +60,7 @@ export class DashboardAdminService {
   async getStats(locale: Locale = DEFAULT_LOCALE): Promise<AdminDashboardStatsDto> {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const [orderAggregation, productCounts, lowStockDocs, customerCounts, uniqueOrderCustomerIds] =
+    const [orderAggregation, productCounts, lowStockDocs, customerCounts] =
       await Promise.all([
         this.orders
           .aggregate<OrderFacetResult>([
@@ -97,6 +98,11 @@ export class DashboardAdminService {
                       count: { $sum: 1 },
                     },
                   },
+                ],
+                customersWithOrders: [
+                  { $match: { userId: { $ne: null } } },
+                  { $group: { _id: '$userId' } },
+                  { $count: 'count' },
                 ],
               },
             },
@@ -140,10 +146,14 @@ export class DashboardAdminService {
             })
             .exec(),
         ]),
-        this.orders.distinct('userId', { userId: { $ne: null } }),
       ]);
 
-    const facet = orderAggregation[0] ?? { delivered: [], pipeline: [], byStatus: [] };
+    const facet = orderAggregation[0] ?? {
+      delivered: [],
+      pipeline: [],
+      byStatus: [],
+      customersWithOrders: [],
+    };
 
     // 1. Revenue
     const deliveredRow = facet.delivered[0];
@@ -195,10 +205,11 @@ export class DashboardAdminService {
 
     // 4. Customers
     const [totalCustomers, newThisWeek] = customerCounts;
+    const withOrdersCount = facet.customersWithOrders[0]?.count ?? 0;
     const customers: DashboardCustomersDto = {
       total: totalCustomers,
       newThisWeek,
-      withOrdersCount: uniqueOrderCustomerIds.length,
+      withOrdersCount,
     };
 
     return {

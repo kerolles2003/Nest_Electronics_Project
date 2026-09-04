@@ -171,6 +171,7 @@ export default async function AdminPage() {
       sub: stats.revenue
         ? `${stats.revenue.deliveredCount} paid · ${stats.revenue.pipeline.formatted} pipeline`
         : 'Counted at delivery',
+      caption: 'Net of returns: recognised at delivery, removed retroactively if returned.',
     },
     {
       label: 'Total Orders',
@@ -260,6 +261,9 @@ export default async function AdminPage() {
                   <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
                   <p className="text-2xl font-bold tracking-tight text-foreground mt-1 font-heading">{displayValue}</p>
                   <p className="text-[11px] text-foreground-subtle mt-1 truncate font-medium">{stat.sub}</p>
+                  {stat.caption && (
+                    <p className="text-[10px] text-muted-foreground/80 mt-1 leading-tight">{stat.caption}</p>
+                  )}
                 </div>
               </div>
             </div>
