@@ -54,6 +54,14 @@ What the gate cannot catch — a narrowed enum, a tightened validator, a change 
 *means* — is listed in `INTEGRATION.md` under "What the gate does NOT catch". A green gate is the
 absence of one specific class of mistake, not a compatibility guarantee.
 
+## One route is not migrated
+
+`/blog` still reads **Supabase**, not the API, and serves **five broken images**. It is deferred
+to Phase 8: there is no post model, no CMS and no author in the API to move it to, so migrating
+it means designing a content domain first. Every other customer-facing route reads the API.
+Mentioned here because you will find it otherwise and reasonably conclude something is broken —
+it is, and it is known.
+
 ## Everything else
 
 `PLAN.md`, `HANDOFF.md` and `WORK-LOG.md` are the **build record of this engagement, not

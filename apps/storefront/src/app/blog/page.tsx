@@ -1,3 +1,18 @@
+/**
+ * `/blog` — NOT migrated. Deferred to Phase 8.
+ *
+ * Every other customer-facing route reads the NestJS API. This one still reads
+ * Supabase through `getServices()`, because there is no post model, no CMS and
+ * no author in the API to move it to — migrating it means designing a content
+ * domain first, which is a feature and not a migration.
+ *
+ * What you will see if you open it: the QA crawl found **five broken images**
+ * here at every viewport width, and they are still broken. The route renders,
+ * the copy is real, the pictures are not.
+ *
+ * So: this file is not an example of how routes in this application fetch data.
+ * `products/[slug]/page.tsx` is. Do not copy this one.
+ */
 import { getServices } from "@/lib/services";
 import { searchParamsCache } from "./search-params";
 import { BlogFilters } from "@nest/types";
