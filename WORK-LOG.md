@@ -7740,3 +7740,85 @@ suites, and neither failure is a code defect.
 Both are pre-existing, both were exposed rather than caused by the first CI run,
 and both are outside a publication task. Recorded here so the next person starts
 from the names rather than from a red badge.
+
+---
+
+# Part 9 — making CI honest
+
+Two red suites, six tests. Both turned out to be real defects with misleading
+symptoms, and **the first thing to correct is my own last entry**: I wrote that
+the runner "cannot load the native one at all". That was wrong, and the log
+above it contains the disproof — four lines reading
+`[MediaService] image processing: sharp native backend` from the same CI run.
+Native sharp loaded perfectly on the runner. What was missing was the WASM
+fallback the suite compares it *against*.
+
+## 1. sharp — the error named the wrong runtime, and I believed it
+
+`Could not load the "sharp" module using the linux-x64 runtime` is emitted by
+sharp's loader after it has tried four paths in order: two build-directory paths,
+`@img/sharp-<platform>/sharp.node`, and `@img/sharp-wasm32/sharp.node`. The
+failure came from the child process the spec starts with native `require`s
+blocked on purpose — so the native failure is the test *working*. The message
+named `linux-x64` because that is the host platform, not because the host
+platform was the problem.
+
+Two of the four errors were shown and two were suppressed:
+
+```js
+// sharp/dist/sharp.cjs
+errors.forEach((err) => {
+  if (!err.code.endsWith("MODULE_NOT_FOUND")) { help.push(...); }
+});
+```
+
+The two shown were the deliberate blocks (`ERR_DLOPEN_FAILED: blocked by the
+test`). The one that said what was actually wrong — `MODULE_NOT_FOUND` for
+`@img/sharp-wasm32/sharp.node` — was filtered out of its own error message.
+
+### The cause: an optional dependency reachable only through skipped parents
+
+`sharp@0.35.4` **no longer lists `@img/sharp-wasm32` in its own optional
+dependencies** (0.34.5 did). It now lists `@img/sharp-webcontainers-wasm32` and
+`@img/sharp-freebsd-wasm32`, both `cpu: [wasm32]` — while its loader still falls
+back to `require("@img/sharp-wasm32/sharp.node")`. This repository had already
+noticed and declared the package itself, as an *optional* dependency of
+`apps/api`. That declaration is what broke.
+
+Reduced to a three-file workspace and confirmed:
+
+| graph | `pnpm install` | `pnpm install --frozen-lockfile` |
+| --- | --- | --- |
+| importer optional dep alone | installed | **installed** |
+| + `sharp@0.35.4` in the tree | installed | **SKIPPED** |
+
+Same lockfile, same pnpm, same machine. `@img/sharp-wasm32@0.35.4` is a child of
+two packages that are correctly skipped on an x64 host, and pnpm's **headless
+(frozen) installer lets that inherited skip win over the importer's own optional
+dependency**; the full installer does not. `pnpm 9.15.9` and `10.18.3` behave the
+same way, so it is not a version to bump past.
+
+CI installs frozen, always. So CI never had the WASM backend.
+
+**And the developer machine only had it by accident.** `D:\eng-mina\nest-electronics`
+has `@img/sharp-wasm32` on disk from a full `pnpm install` on 2 September, before
+the dependency graph moved; a fresh clone of this repository installed frozen
+does not, and I confirmed that on the clone this work is being done in. The local
+green was a stale `node_modules`, not a working configuration. **A new developer
+cloning today would have hit these three failures on their first run.**
+
+### The fix, and the proof
+
+`@img/sharp-wasm32` moved from `optionalDependencies` to `dependencies` in
+`apps/api/package.json`. It carries no `os`, `cpu` or `libc` constraint, so
+requiring it costs nine megabytes and breaks no platform, and "this project
+always carries the WASM fallback" is the honest statement — the API does not
+start without it on a machine enforcing Smart App Control.
+
+Verified under the CI condition, not a proxy for it: `node_modules` deleted, then
+`pnpm install --frozen-lockfile`. Present, and absent from pnpm's `skipped:` list.
+
+`sharp-backend.spec.ts` gained a precondition that fails **loudly and by name**
+rather than letting sharp mis-report it. Proved by making it fail on purpose —
+both resolution paths removed, `4 failed, 2 passed`, the new test first and
+saying what is wrong, what it looked for, where, and what to do.

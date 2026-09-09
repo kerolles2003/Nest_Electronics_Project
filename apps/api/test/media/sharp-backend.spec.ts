@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import sharp from 'sharp';
 import {
   describeSharpBackend,
@@ -18,12 +18,25 @@ import { processUploadedImage } from '../../src/modules/media/application/image-
  *
  * ## Why the project carries both
  *
- * `@img/sharp-wasm32` is an optional dependency of this package. It exists for
- * a machine where the NATIVE addon cannot be loaded at all — Windows Smart App
- * Control refuses unsigned native code, and without a fallback the API does not
- * start. sharp's own loader reaches for it only after the native `require`
- * throws, so adding it cannot move production off the native build; that
- * ordering is asserted below by observing what actually loaded.
+ * `@img/sharp-wasm32` is a dependency of this package. It exists for a machine
+ * where the NATIVE addon cannot be loaded at all — Windows Smart App Control
+ * refuses unsigned native code, and without a fallback the API does not start.
+ * sharp's own loader reaches for it only after the native `require` throws, so
+ * carrying it cannot move production off the native build; that ordering is
+ * asserted below by observing what actually loaded.
+ *
+ * It is a REQUIRED dependency rather than an optional one, and that is a fix
+ * rather than a preference. sharp 0.35 dropped `@img/sharp-wasm32` from its own
+ * optional dependencies (it now lists `@img/sharp-webcontainers-wasm32` and
+ * `@img/sharp-freebsd-wasm32`, both `cpu: [wasm32]`), while its loader still
+ * falls back to `require('@img/sharp-wasm32/sharp.node')`. Declared as OPTIONAL
+ * here, the package became reachable only as a child of those two — which are
+ * correctly skipped on an x64 host — and `pnpm install --frozen-lockfile`
+ * inherited that skip and never installed it. A full `pnpm install` did install
+ * it, which is why this suite passed on a developer machine whose node_modules
+ * predated the change, and failed on CI, which always installs frozen. The
+ * package carries no `os`, `cpu` or `libc` constraint, so requiring it costs
+ * nine megabytes and breaks no platform.
  *
  * ## Why the equivalence is asserted rather than assumed
  *
@@ -99,6 +112,54 @@ describe('the sharp backend is reported, never guessed at', () => {
 });
 
 describe('native and WebAssembly sharp produce the same image', () => {
+  /**
+   * The fallback has to BE there before anything below can mean anything.
+   *
+   * This assertion exists because its absence cost a week of misreading. With
+   * the package missing, sharp's loader tried the native addon (blocked by the
+   * probe, on purpose), then `@img/sharp-wasm32/sharp.node`, and threw
+   *
+   *     Could not load the "sharp" module using the linux-x64 runtime
+   *
+   * naming the NATIVE runtime — because sharp filters `MODULE_NOT_FOUND` out of
+   * that message (`dist/sharp.cjs`, `if (!err.code.endsWith('MODULE_NOT_FOUND'))`).
+   * The one error that said what was actually wrong was the one suppressed. CI
+   * read as "the runner cannot load native sharp" while the runner was loading
+   * native sharp perfectly well in every other test in this file.
+   *
+   * So the precondition is checked here, by name, and says what to do.
+   */
+  it('carries the WebAssembly fallback that the loader falls back TO', () => {
+    // Resolved from sharp's OWN directory, because that is where the failing
+    // `require` runs. Resolving from this test file would answer a different
+    // question and could pass while the real lookup fails.
+    const fromSharp = dirname(require.resolve('sharp'));
+
+    let resolved: string | null = null;
+    try {
+      resolved = require.resolve('@img/sharp-wasm32/sharp.node', { paths: [fromSharp] });
+    } catch {
+      resolved = null;
+    }
+
+    if (resolved === null) {
+      throw new Error(
+        [
+          '@img/sharp-wasm32 is not installed, so sharp has no WebAssembly backend to fall back to.',
+          '',
+          'This is an INSTALL fault, not a runtime one, and the three equivalence cases below',
+          'cannot run without it. sharp itself will not say so: it filters MODULE_NOT_FOUND out',
+          'of its error and reports the native runtime instead.',
+          '',
+          `Looked for "@img/sharp-wasm32/sharp.node" from ${fromSharp}`,
+          '',
+          'Fix: it must be a REQUIRED dependency of apps/api, never an optional one — see this',
+          "file's header. Then `pnpm install` and commit pnpm-lock.yaml.",
+        ].join('\n'),
+      );
+    }
+  });
+
   /**
    * Runs the upload pipeline in a fresh process with the native addon blocked.
    *

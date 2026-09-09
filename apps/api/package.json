@@ -25,6 +25,7 @@
     "media:placeholders": "nest build && node scripts/generate-placeholder-images.mjs"
   },
   "dependencies": {
+    "@img/sharp-wasm32": "^0.35.4",
     "@nestjs/common": "^11.2.3",
     "@nestjs/config": "4.0.4",
     "@nestjs/core": "^11.2.3",
@@ -46,9 +47,6 @@
     "rxjs": "^7.8.2",
     "sharp": "^0.35.4",
     "zod": "3.25.76"
-  },
-  "optionalDependencies": {
-    "@img/sharp-wasm32": "^0.35.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
