@@ -204,6 +204,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # docs/api/index.html embeds a COPY of the artifact so the contract can be
+      # read by opening a file, with no server (a page that fetches its sibling
+      # JSON is blocked over file://). A second copy is a thing that can
+      # disagree with the first, so it is gated exactly like the artifact is.
+      #
+      # Deliberately BEFORE the database: this check boots nothing and needs no
+      # Mongo, so when the page is stale CI says so in seconds rather than after
+      # a container start and a full Nest build.
+      - name: Check the browsable API page against the artifact
+        run: pnpm --filter api openapi:page:check
+
       - name: Start MongoDB replica set
         run: docker compose -f docker-compose.dev.yml up -d --wait
 
