@@ -7359,3 +7359,121 @@ Two things in the aggregate are worth repeating here:
   product image to be invisible. The defect it was looking for was real and
   present; the instrument could not see it. It is the same shape as the
   ninety-six passing browser tests that had never rendered a product image.
+
+---
+
+# Part 8b — The publication audit, and what it stopped
+
+## The scanner was proven before it was believed
+
+A canary was planted first: a throwaway branch carrying one fake credential per
+detection class — Cloudinary URL/key/secret, Brevo, an SMTP key, a JWT, a Mongo
+URI with a password, an AWS key, a private-key header, a GitHub token, an
+OpenAI-style key, a signed URL, and the two `*_SECRET` assignments. The scan was
+then run over **every blob reachable from every ref** — 1,605 blobs, contents
+rather than filenames — and each of the **14 patterns was verified individually
+against its own canary**, not merely "the file was flagged".
+
+That was worth doing. Pattern 9, the private-key header, reported a MISS on the
+first pass — `grep` had parsed its leading `-----` as command-line options. The
+pattern was correct and the harness was wrong, which is exactly the failure a
+scanner with nothing to find cannot tell you about. Re-run through the `-f` path
+the real scan uses, it passes. **14/14.**
+
+The exact-value half was seeded from the untracked `.env` files, so the scan
+looked for the *live* credentials and not only for things shaped like
+credentials.
+
+## The extraction had a hole, and the hole was the point
+
+The first needle list filtered out digit-only values as noise — which would have
+excluded `CLOUDINARY_API_KEY`, a 15-digit number, from the scan entirely. A
+clean result would have been meaningless and would have looked identical to a
+real one. The list was rebuilt with no shape filter at all for any key matching
+`SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|SALT|SIGNING|PRIVATE|CLOUD_NAME|URI`.
+
+Result: every live credential is **absent** from history — Cloudinary cloud
+name, API key and API secret, `JWT_SECRET`, `BREVO_API_KEY`, both Supabase keys.
+The only credential-key value present is `MONGODB_URI` as the localhost dev
+default, which carries no password and legitimately ships in `.env.example`.
+
+The 388 raw hits were triaged to nothing: 276 "needle" hits were five non-secret
+config values the first extraction over-collected (`EMAIL_FROM_NAME`,
+`EMAIL_FROM_ADDRESS`, `API_BASE_URL`, `SITE_URL`, the localhost Mongo URI), and
+the pattern hits were placeholders — `mongodb+srv://YOUR_USER:YOUR_PASSWORD@`,
+`JWT_SECRET=REPLACE_WITH_…`, `CLOUDINARY_API_SECRET=YOUR_API_SECRET_HERE`.
+
+## One real credential, and it is already on the remote
+
+`apps/admin/src/test.md` — a scratch file of shell lines — carries an
+`ANTHROPIC_API_KEY` (an `sk-`-prefixed key, 48 characters) together with
+`ANTHROPIC_BASE_URL=https://agentrouter.org`, a third-party API router. The
+value is deliberately not reproduced here; reproducing it would write it into
+history a second time.
+
+- Added in `4673949`, the **initial commit** (2026-05-01).
+- Removed from the tree in `4b29fa0` (2026-09-01) — so it is invisible at HEAD.
+- Still reachable from `main`, `phase-1-2-overnight` and `baseline-phase-0`.
+- **Already present on `origin/main`.** It was pushed before this engagement.
+
+Deleting the file did nothing for the credential: the blob is in the history,
+and the history is what gets cloned. The previous audit called the repository
+clean roughly forty commits ago, which is how a secret dated to the initial
+commit survived to here.
+
+Nothing was pushed. The rule is that a found secret stops the push and names
+itself for rotation, and rotation is required regardless of whether anything is
+pushed, because the key has been on GitHub since before this engagement began.
+No history was rewritten — that is the owner's decision and needs the key
+rotated first in any case.
+
+## The placeholder that would not have been rejected, and now is
+
+`.env.example` ships `JWT_SECRET=REPLACE_WITH_A_LOCALLY_GENERATED_KEY_OF_AT_LEAST_32_CHARS`
+— **57 characters**, which sails through a `min(32)` rule. `PLACEHOLDER_SECRET`
+(`/^REPLACE_/i`) refuses it, and `test/infrastructure/env-example.spec.ts` holds
+six assertions over that, including that the example file's own value must keep
+matching the refusal. A placeholder nothing rejects is a default, and this one
+is rejected.
+
+Every real `.env` is gitignored; only the three `.env.example` files are
+tracked, and no `.env` has ever been added on any ref. The admin and storefront
+examples use `YOUR_*` placeholders, which no schema rejects because those apps
+have no Zod env schema — worth knowing, though neither value is a live secret.
+
+One doc nit: the schema comment points at `test/config/env-example.spec.ts` and
+the test is at `test/infrastructure/env-example.spec.ts`.
+
+## The browsable contract
+
+`docs/api/index.html` — Swagger UI over the frozen artifact, spec **embedded**
+rather than fetched, because a page that fetches its sibling JSON is blocked by
+the browser over `file://` and would need a server to read at all. Generated by
+`build-openapi-page.mjs`, wired into `openapi:export`, and gated by
+`check-openapi-page.mjs` in the contract job ahead of the database step, so a
+stale page fails in seconds without Docker or a Nest build.
+
+The gate was proven the same way the scanner was: three tamper modes injected,
+three caught — an altered path in the embedded spec, a removed spec block, and a
+hand-edit that left content identical but the recorded artifact hash stale.
+Swagger UI is pinned to 5.17.14. Rendered in headless Chromium from a `file://`
+URL: 18 tag sections, 70 paths, 171 schemas, no console errors.
+
+## The storefront suite ran, for the first time on this machine
+
+99 passed, 2 failed, 7.4 minutes — and all four previously-recorded failures are
+closed: `qa-layout.spec.ts` inert-control and 44px-target, `t1-chrome.spec.ts:82`
+footer, and `t1-catalogue.spec.ts:177`, the one recorded as unexplained.
+
+The two failures are new and neither is a regression in the code:
+
+- `purchase-journey.spec.ts:49` "place the order" — **environment**. The order
+  write is transactional and the local `mongod` started for this run was a
+  standalone, so the API returned `Transaction numbers are only allowed on a
+  replica set member or mongos`. The suite needs the compose replica set.
+- `t2-flip.spec.ts:195` "sends a signed-in customer away from the auth pages" —
+  **a stale spec, and a real one**. `3a02643` deliberately moved the signed-in
+  bounce off `/login` from `/account/orders` to `/`, and updated the proxy, but
+  not this assertion. The code is right and the test still asserts the old
+  destination. Left unfixed: it is a storefront change and this task was the
+  publication, not the QA pass.
