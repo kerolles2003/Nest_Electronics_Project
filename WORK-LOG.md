@@ -8130,3 +8130,49 @@ person can check, and a browser test is what made a person look.
 Corrected at the source in `quote-response.dto.ts`, regenerated, both gates green.
 
 **6 passed, teardown clean.**
+
+## 4. `/customers` — 5 specs, and the money fix that had been broken since it landed
+
+The brief called this "the money-formatting fix that currently has no coverage at
+all, the one place a 100× error was printing fifty pounds as five thousand". It
+had no coverage, and it had not worked since the day it was written.
+
+`totalSpent` is documented as *lifetime spend in MINOR UNITS*. The table used to
+print it as `EGP {total.toLocaleString()}`, so every row showed a hundred times
+the real figure. The fix was to send a pre-formatted string instead —
+`formattedTotalSpent` — and the admin's `types.ts` declared it, and
+`customers/page.tsx` read it, with a comment explaining why.
+
+**The API never returned it.** `AdminCustomerDto` carried `totalSpent` and
+nothing else, so `c.formattedTotalSpent` was `undefined`, and `{stats.spent}`
+rendered nothing at all.
+
+The screenshot is unambiguous: **DELIVERED REVENUE 145.00 EGP** in the stat card
+above — which reads `revenue.delivered.formatted`, a field the API does return —
+and **TOTAL SPENT: blank** in the row below it, for every customer on the screen.
+
+The 100× error was replaced by an empty column, and nothing noticed, because
+nothing looked. A unit test on either side passes: the API's number is right, its
+type is right, the component renders what it is given. The mistake exists only at
+the boundary, and the only observation that crosses it is a rendered page.
+
+Fixed by adding `formattedTotalSpent` to `AdminCustomerDto`, formatted through
+`MoneyDto` like every other monetary field in the API — which is the rule
+MONEY-MODEL.md sets, and the rule this field was the exception to. Additive to
+the frozen contract, artifact regenerated, both gates green.
+
+### Why the spec asserts the same thing twice
+
+The first assertion is that the cell equals the server's own string. The second
+is that it does NOT contain the minor-unit digits. They look redundant and are
+not: if somebody re-derived the displayed string in the test from `totalSpent`,
+the first would keep passing while the screen was wrong again. A test that
+repeats the bug it checks for is how this bug survived twice — the table and the
+stat strip had it independently, found one commit apart.
+
+Both figures also needed a **delivered** order to be non-zero: lifetime spend and
+delivered revenue are counted at delivery, correctly, because under cash on
+delivery nothing has been paid until the courier collects. A 100× error on zero
+is still zero, so the first version of these specs asserted nothing at all.
+
+**5 passed, teardown clean.**

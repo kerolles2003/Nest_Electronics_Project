@@ -7808,6 +7808,11 @@
             "example": 187500,
             "description": "Lifetime spend in minor units, counted at DELIVERY. Under COD the courier collects at the door, so an order that has not been delivered has not been paid for — see `orders/domain/revenue.ts`, which is the one definition this and the dashboard share."
           },
+          "formattedTotalSpent": {
+            "type": "string",
+            "example": "1,875.00 EGP",
+            "description": "The SAME amount, formatted by the server. Added because `totalSpent` alone was not enough: the admin console divided it nowhere and printed it as `EGP {totalSpent}`, so every row showed a hundred times the real figure — fifty pounds as \"EGP 5,000\". Formatting money at the boundary rather than shipping a bare minor-unit number is the rule MONEY-MODEL.md sets for exactly this reason, and every other monetary field in this API already follows it through `MoneyDto`. `totalSpent` remains authoritative; this is presentation and must never be parsed back."
+          },
           "lastOrderAt": {
             "type": "string",
             "example": "2026-09-01T11:00:00.000Z",
@@ -7829,6 +7834,7 @@
           "deletedAt",
           "orderCount",
           "totalSpent",
+          "formattedTotalSpent",
           "lastOrderAt",
           "createdAt"
         ]
@@ -7985,6 +7991,11 @@
             "example": 187500,
             "description": "Lifetime spend in minor units, counted at DELIVERY. Under COD the courier collects at the door, so an order that has not been delivered has not been paid for — see `orders/domain/revenue.ts`, which is the one definition this and the dashboard share."
           },
+          "formattedTotalSpent": {
+            "type": "string",
+            "example": "1,875.00 EGP",
+            "description": "The SAME amount, formatted by the server. Added because `totalSpent` alone was not enough: the admin console divided it nowhere and printed it as `EGP {totalSpent}`, so every row showed a hundred times the real figure — fifty pounds as \"EGP 5,000\". Formatting money at the boundary rather than shipping a bare minor-unit number is the rule MONEY-MODEL.md sets for exactly this reason, and every other monetary field in this API already follows it through `MoneyDto`. `totalSpent` remains authoritative; this is presentation and must never be parsed back."
+          },
           "lastOrderAt": {
             "type": "string",
             "example": "2026-09-01T11:00:00.000Z",
@@ -8012,6 +8023,7 @@
           "deletedAt",
           "orderCount",
           "totalSpent",
+          "formattedTotalSpent",
           "lastOrderAt",
           "createdAt",
           "addresses"

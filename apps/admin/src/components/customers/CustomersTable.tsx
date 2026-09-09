@@ -115,10 +115,10 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
    * different from what it looks like.
    */
   const statItems = [
-    { label: 'Total Customers', value: stats.total, icon: Users, color: 'primary' as const, caption: 'All registered accounts' },
-    { label: 'New This Week', value: stats.newThisWeek, icon: UserPlus, color: 'success' as const, caption: 'Registered in the last 7 days' },
-    { label: 'Ordered', value: stats.withOrders, icon: ShoppingBag, color: 'warning' as const, caption: stats.windowLabel },
-    { label: 'Delivered Revenue', value: stats.revenueFormatted, icon: CreditCard, color: 'primary' as const, caption: stats.windowLabel },
+    { key: 'total', label: 'Total Customers', value: stats.total, icon: Users, color: 'primary' as const, caption: 'All registered accounts' },
+    { key: 'new-this-week', label: 'New This Week', value: stats.newThisWeek, icon: UserPlus, color: 'success' as const, caption: 'Registered in the last 7 days' },
+    { key: 'ordered', label: 'Ordered', value: stats.withOrders, icon: ShoppingBag, color: 'warning' as const, caption: stats.windowLabel },
+    { key: 'revenue', label: 'Delivered Revenue', value: stats.revenueFormatted, icon: CreditCard, color: 'primary' as const, caption: stats.windowLabel },
   ];
 
   return (
@@ -135,7 +135,12 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                 </div>
               </div>
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{item.label}</p>
-              <p className="text-lg font-bold tracking-tight text-foreground mt-0.5">{item.value}</p>
+              <p
+                data-testid={`stat-${item.key}`}
+                className="text-lg font-bold tracking-tight text-foreground mt-0.5"
+              >
+                {item.value}
+              </p>
               {item.caption && (
                 <p className="text-[10px] text-foreground-subtle mt-0.5 leading-tight">{item.caption}</p>
               )}
@@ -211,7 +216,11 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                 initialCustomers.map((customer) => {
                   const stats = orderMap[customer.id] ?? { count: 0, spent: '—' };
                   return (
-                    <tr key={customer.id} className="hover:bg-muted/20 transition-colors">
+                    <tr
+                      key={customer.id}
+                      data-testid="customer-row"
+                      className="hover:bg-muted/20 transition-colors"
+                    >
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <div className="h-9 w-9 rounded-full border border-border bg-muted flex items-center justify-center shrink-0 overflow-hidden">
@@ -221,7 +230,9 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                               <User className="h-4 w-4 text-muted-foreground/50" />
                             )}
                           </div>
-                          <span className="text-sm font-semibold text-foreground">{customer.full_name}</span>
+                          <span data-testid="customer-name" className="text-sm font-semibold text-foreground">
+                            {customer.full_name}
+                          </span>
                         </div>
                       </td>
                       <td className="px-5 py-3">
@@ -234,11 +245,16 @@ export function CustomersTable({ initialCustomers, orderMap, currentPage, totalP
                         </div>
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <span className="text-sm font-bold text-foreground tabular-nums">{stats.count}</span>
+                        <span data-testid="customer-order-count" className="text-sm font-bold text-foreground tabular-nums">
+                          {stats.count}
+                        </span>
                       </td>
                       <td className="px-5 py-3 text-right">
                         {/* The server's own string. Never an amount and a symbol. */}
-                        <span className="text-sm font-bold text-foreground tabular-nums">
+                        <span
+                          data-testid="customer-spent"
+                          className="text-sm font-bold text-foreground tabular-nums"
+                        >
                           {stats.spent}
                         </span>
                       </td>

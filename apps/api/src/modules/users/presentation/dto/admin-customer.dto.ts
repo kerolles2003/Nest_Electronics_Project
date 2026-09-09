@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsEnum, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { MoneyDto } from '../../../../common/dto/money.dto';
 import { OBJECT_ID_PATTERN } from '../../../../common/dto/object-id';
 import { PaginationMetaDto } from '../../../../common/dto/pagination-meta.dto';
 import { PaginationQueryDto } from '../../../../common/dto/pagination-query.dto';
@@ -121,6 +122,19 @@ export class AdminCustomerDto {
   })
   totalSpent!: number;
 
+  @ApiProperty({
+    example: '1,875.00 EGP',
+    description:
+      'The SAME amount, formatted by the server. Added because `totalSpent` alone was not ' +
+      'enough: the admin console divided it nowhere and printed it as `EGP {totalSpent}`, so ' +
+      'every row showed a hundred times the real figure — fifty pounds as "EGP 5,000". ' +
+      'Formatting money at the boundary rather than shipping a bare minor-unit number is the ' +
+      'rule MONEY-MODEL.md sets for exactly this reason, and every other monetary field in ' +
+      'this API already follows it through `MoneyDto`. ' +
+      '`totalSpent` remains authoritative; this is presentation and must never be parsed back.',
+  })
+  formattedTotalSpent!: string;
+
   @ApiProperty({ example: '2026-09-01T11:00:00.000Z', nullable: true, type: String })
   lastOrderAt!: string | null;
 
@@ -140,6 +154,7 @@ export class AdminCustomerDto {
       deletedAt: user.deletedAt === null ? null : user.deletedAt.toISOString(),
       orderCount: summary.orderCount,
       totalSpent: summary.totalSpent,
+      formattedTotalSpent: MoneyDto.of(summary.totalSpent).formatted,
       lastOrderAt: summary.lastOrderAt === null ? null : summary.lastOrderAt.toISOString(),
       createdAt: user.createdAt.toISOString(),
     };
