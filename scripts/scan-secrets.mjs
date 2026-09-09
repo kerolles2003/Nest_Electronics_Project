@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 /**
  * The secret scanner. Blocking check — a finding fails the build.
@@ -45,78 +46,104 @@ import { spawn, spawnSync } from 'node:child_process';
  * produced a clean result that looked exactly like a real one.
  */
 
+/**
+ * Joins the pieces of a canary sample.
+ *
+ * Every sample below is written in FRAGMENTS and assembled here at runtime,
+ * which looks like an affectation and is not. This file is itself a blob in the
+ * repository, so it is scanned like every other blob — and the first version of
+ * it, with the samples written out as ordinary string literals, matched all
+ * fifteen of its own patterns the moment it was committed. The scan went red
+ * and stayed red, pointing at the scanner.
+ *
+ * That is the exact failure this whole check is supposed to prevent: a gate
+ * that is permanently red is a gate everybody learns to skip, and one that
+ * cries wolf about itself teaches the habit fastest.
+ *
+ * Splitting each sample at a point the pattern requires to be contiguous — the
+ * `//` in a URI, the `=` after a key name, the prefix of a token — means the
+ * assembled VALUE still exercises the pattern exactly as a real secret would,
+ * while the source TEXT contains no substring that matches anything. The canary
+ * is undiminished; only its storage changed.
+ *
+ * If you add a pattern, add its sample the same way, and check the scan is
+ * still green against this file.
+ */
+const cat = (...parts) => parts.join('');
+
+const HEX16 = '0123456789abcdef';
+const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
 const PATTERNS = [
   // [name, regex, a fake sample of this class that MUST be detected]
   [
     'cloudinary url',
     /cloudinary:\/\/[0-9]{6,}:[A-Za-z0-9_-]{10,}@[A-Za-z0-9_-]+/,
-    'cloudinary://123456789012345:AbCdEfGhIjKlMnOpQrStUvWxYz0@democloud',
+    cat('cloudinary:', '//', '123456789012345:AbCdEfGhIjKlMnOpQrStUvWxYz0@democloud'),
   ],
   [
     'cloudinary api secret',
     /CLOUDINARY_API_SECRET[\s]*[:=][\s]*['"]?(?!YOUR_|REPLACE_|<)[A-Za-z0-9_-]{20,}/,
-    'CLOUDINARY_API_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz0',
+    cat('CLOUDINARY_API_SECRET', '=AbCdEfGhIjKlMnOpQrStUvWxYz0'),
   ],
   [
     'cloudinary api key',
     /CLOUDINARY_API_KEY[\s]*[:=][\s]*['"]?(?!YOUR_|REPLACE_|<)[0-9]{12,}/,
-    'CLOUDINARY_API_KEY=123456789012345',
+    cat('CLOUDINARY_API_KEY', '=123456789012345'),
   ],
   [
     'brevo api key',
     /xkeysib-[0-9a-f]{40,}-[A-Za-z0-9]{10,}/,
-    'xkeysib-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-AbCdEfGhIjKlMnOp',
+    cat('xkeysib', '-', HEX16.repeat(4), '-AbCdEfGhIjKlMnOp'),
   ],
   [
     'brevo smtp key',
     /xsmtpsib-[0-9a-f]{40,}-[A-Za-z0-9]{10,}/,
-    'xsmtpsib-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-AbCdEfGhIjKlMnOp',
+    cat('xsmtpsib', '-', HEX16.repeat(4), '-AbCdEfGhIjKlMnOp'),
   ],
   [
     'jwt / session token',
     /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r3wa',
+    cat(
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+      '.',
+      'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+      '.',
+      'dBjftJeZ4CVPmB92K27uhbUJU1p1r3wa',
+    ),
   ],
   [
     'mongo uri with password',
     /mongodb(\+srv)?:\/\/(?!YOUR_|<|user:pass)[^:@/\s"']+:(?!YOUR_|<|pass@|p%40ss@)[^@/\s"']+@/,
-    'mongodb+srv://appuser:S3cr3tPassw0rd@cluster0.abcde.mongodb.net/db',
+    cat('mongodb+srv:', '//', 'appuser:S3cr3tPassw0rd@cluster0.abcde.mongodb.net/db'),
   ],
-  ['aws access key', /AKIA[0-9A-Z]{16}/, 'AKIAIOSFODNN7EXAMPLE'],
+  ['aws access key', /AKIA[0-9A-Z]{16}/, cat('AKIA', 'IOSFODNN7EXAMPLE')],
   [
     'private key block',
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-    '-----BEGIN RSA PRIVATE KEY-----',
+    cat('-----', 'BEGIN RSA PRIVATE KEY', '-----'),
   ],
-  [
-    'github token',
-    /gh[pousr]_[A-Za-z0-9]{30,}/,
-    'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-  ],
+  ['github token', /gh[pousr]_[A-Za-z0-9]{30,}/, cat('ghp', '_', ALNUM)],
   [
     'openai / anthropic style key',
     /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/,
-    'sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd',
+    cat('sk', '-', ALNUM, 'abcd'),
   ],
-  [
-    'stripe live key',
-    /\b[ps]k_live_[A-Za-z0-9]{16,}/,
-    'sk_live_ABCDEFGHIJKLMNOPQRSTUVWX',
-  ],
+  ['stripe live key', /\b[ps]k_live_[A-Za-z0-9]{16,}/, cat('sk', '_live_', ALNUM)],
   [
     'signed url',
     /X-Amz-Signature=[0-9a-f]{32,}/,
-    'https://x/y?X-Amz-Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    cat('https://x/y?X-Amz-Signature', '=', HEX16.repeat(4)),
   ],
   [
     'jwt secret',
     /JWT_SECRET[\s]*[:=][\s]*['"]?(?!REPLACE_|YOUR_|<)[A-Za-z0-9+/=_-]{24,}/,
-    'JWT_SECRET=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA==',
+    cat('JWT_SECRET', '=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA=='),
   ],
   [
     'session secret',
     /SESSION_SECRET[\s]*[:=][\s]*['"]?(?!REPLACE_|YOUR_|<)[A-Za-z0-9+/=_-]{24,}/,
-    'SESSION_SECRET=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA==',
+    cat('SESSION_SECRET', '=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA=='),
   ],
 ];
 
@@ -138,6 +165,15 @@ const ALLOWLIST = new Map([
     'apps/admin/src/test.md — scratch ANTHROPIC_API_KEY committed in 4673949 ' +
       '(initial commit), removed from the tree in 4b29fa0. The credential was ' +
       'ROTATED and is inert. History deliberately not rewritten: see SECURITY.md.',
+  ],
+  [
+    '37e824593b8b0a2d7c3354283cc84047f40486b5',
+    'scripts/scan-secrets.mjs as first committed in bc1a3ef — this scanner, back ' +
+      'when its canary samples were written as plain string literals, so it ' +
+      'matched all fifteen of its own patterns. Every value in it is a FAKE ' +
+      'built for the self-test; none was ever a credential. The live version ' +
+      'assembles them at runtime and is clean; this entry covers the one blob ' +
+      'already in the history. Verify with: git cat-file blob 37e8245.',
   ],
 ]);
 
@@ -168,7 +204,44 @@ function selfTest() {
   return PATTERNS.length;
 }
 
+/**
+ * `--file <path>`: scan ONE working-tree file and stop.
+ *
+ * For checking something before it becomes a blob, which is the only moment a
+ * secret is still cheap to remove. It is also how this file proves it does not
+ * trip its own patterns — see the note on `cat` above for why that is a real
+ * risk and not a hypothetical one.
+ */
+function scanOneFile(path) {
+  const proven = selfTest();
+  const text = readFileSync(path, 'utf8');
+  const hits = [];
+
+  for (const [name, regex] of PATTERNS) {
+    const match = text.match(regex);
+    if (match !== null) hits.push({ name, match: match[0] });
+  }
+
+  if (hits.length > 0) {
+    process.stderr.write(`secret scan: ${hits.length} match(es) in ${path}\n`);
+    for (const h of hits) {
+      process.stderr.write(`  ${h.name}: ${h.match.slice(0, 6)}…${h.match.slice(-2)}\n`);
+    }
+    process.exit(1);
+  }
+
+  process.stdout.write(
+    `secret scan: ${path} is clean (${proven} patterns, each proven against its own canary).\n`,
+  );
+}
+
 async function main() {
+  const fileFlag = process.argv.indexOf('--file');
+  if (fileFlag !== -1 && process.argv[fileFlag + 1] !== undefined) {
+    scanOneFile(process.argv[fileFlag + 1]);
+    return;
+  }
+
   const proven = selfTest();
 
   const objects = git(['rev-list', '--objects', '--all']).split('\n');
