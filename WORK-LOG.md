@@ -7822,3 +7822,88 @@ Verified under the CI condition, not a proxy for it: `node_modules` deleted, the
 rather than letting sharp mis-report it. Proved by making it fail on purpose —
 both resolution paths removed, `4 failed, 2 passed`, the new test first and
 saying what is wrong, what it looked for, where, and what to do.
+
+## 2. `addresses.spec.ts` concurrency — the suite was closing its own server
+
+`read ECONNRESET`, three times, with no stack and no assertion output. My last
+entry said this was not a data-integrity failure. That was true and it was half
+the story; the other half is the one that matters: **the invariant was
+unverified on CI**, and had been since the file was written. A test named "never
+produces two defaults under concurrent first-address creation" that dies on a
+dropped connection proves nothing about defaults.
+
+### What was actually happening
+
+`http()` is `request(app.getHttpServer())`, and the app is started with
+`app.init()` — which initialises the application but **binds nothing**. supertest
+reacts to an unbound server by calling `listen(0)` itself for the first request
+it sees, and `close()` when that request's response lands.
+
+Instrumented over one run of this file:
+
+```
+[instrument] http server listen() calls: 386, close() calls: 387, distinct ports: 386
+```
+
+**386 listen/close cycles for 386 requests**, each on a fresh ephemeral port.
+Invisible while requests are sequential, which is why it survived this long.
+
+Under `Promise.all` it is not invisible. Eight racers share one server, only the
+first of them owns it, and when the first response lands that racer closes the
+*listening* socket while its siblings are still queued for accept. A queued
+connection whose listener disappears is reset, and the client reads exactly
+`read ECONNRESET`. Reproduced directly, outside Nest and outside Mongo: a server
+that answers one request and closes its listener while eight more are queued
+kills all eight with `ECONNRESET`, on Linux and on Windows both.
+
+That also explains the pattern nobody had explained: the three cases with **eight**
+racers failed and the four with two or four racers passed. It is a timing window,
+and a loaded runner opens it.
+
+Two theories were tested and discarded before this one, both by measurement
+rather than by argument: keep-alive socket reuse (superagent opens a fresh
+connection per request — 6 requests, 6 connections), and parallel jest workers
+(`jest.config.js` pins `maxWorkers: 1`, so CI runs one worker, as a local
+`--runInBand` does).
+
+### The fix, and the proof
+
+One line: `await app.listen(0)` in `beforeAll`. `app.address()` is then never
+null, so supertest never creates a server and never closes one; `app.close()` in
+`afterAll` releases it. Re-instrumented: **386 cycles became 1**.
+
+Then the part that matters — **the invariant was broken on purpose** to confirm
+the test can still see it. `insertAddress` was rewritten as the naive
+read-then-write the aggregation pipeline exists to avoid: decide "am I the first
+address, and therefore the default?" from a read, then write. Sequentially
+indistinguishable from the correct version.
+
+```
+● concurrency › never produces two defaults under concurrent first-address creation
+  expect(received).toBe(expected)
+  Expected: 1
+  Received: 6
+
+Tests: 1 failed, 103 passed, 104 total
+```
+
+**Six defaults where one is allowed, and 103 other tests saw nothing.** That is
+the whole argument for the file: no sequential test in this suite can catch this
+class of defect, and until now the one test that could was dying in the transport
+before it ran. Break reverted; 104/104.
+
+### The same pattern is latent in six other files
+
+`cart`, `checkout`, `media-upload`, `admin-order-queue`, `admin-orders` and
+`order-lifecycle` all use `Promise.all` over the same unbound-server pattern, at
+two to four racers. None has failed. That is not evidence that they work — it is
+the same window, narrower. Not changed here because none of them is red and this
+is a fix for what is red; recorded so the next `ECONNRESET` is diagnosed in
+minutes rather than in a week.
+
+## Local baseline after both fixes
+
+`pnpm --filter api test`: **1310 passed, 15 skipped, 0 failed**, 57 of 58 suites.
+The skipped suite is `media/cloudinary-integration.spec.ts`, gated behind an
+`INTEGRATION` flag because it calls the live vendor — an opt-in, not a silent
+skip.

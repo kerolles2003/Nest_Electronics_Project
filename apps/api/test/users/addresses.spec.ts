@@ -267,6 +267,35 @@ beforeAll(async () => {
   );
   await app.init();
 
+  /*
+   * BIND ONCE, for the whole file. This line is load-bearing.
+   *
+   * `app.init()` leaves the HTTP server listening on nothing, and supertest
+   * reacts to that by calling `listen(0)` itself for the first request it sees
+   * and `close()` when that request's response lands. Instrumented on this
+   * file, that is 386 listen/close cycles for 386 requests, each on a fresh
+   * ephemeral port.
+   *
+   * Harmless while requests are sequential, which is why it survived this long.
+   * Not harmless under `Promise.all`: the racers share one server, only the
+   * first of them owns it, and when the first response lands that racer closes
+   * the LISTENING socket while its siblings are still queued for accept. A
+   * queued connection whose listener disappears is reset, and the client reads
+   * exactly `read ECONNRESET` — which is the bare, stackless error the three
+   * eight-racer cases in `describe('concurrency')` died with on CI. No
+   * assertion ran. Nothing about the default invariant was tested; the
+   * transport was pulled out from under it.
+   *
+   * The window is timing-dependent, which is why it opens on a loaded runner
+   * and not on a developer's machine, and why the four cases with two or four
+   * racers survived while the three with eight did not.
+   *
+   * Binding here means `app.address()` is never null, so supertest never
+   * creates a server of its own and never closes one. `app.close()` in
+   * `afterAll` releases this one.
+   */
+  await app.listen(0);
+
   users = app.get<Model<User>>(getModelToken(User.name));
   carts = app.get<Model<Cart>>(getModelToken(Cart.name));
   products = app.get<Model<Product>>(getModelToken(Product.name));
