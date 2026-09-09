@@ -177,7 +177,9 @@ export function AuditLogTable({ logs, actions, currentPage, totalPages, total }:
           <div className="p-12 text-center">
             <Shield className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
             <h3 className="text-base font-bold text-foreground">
-              {hasFilters ? 'Nothing matches these filters' : 'Nothing recorded yet'}
+              <span data-testid="audit-empty">
+                {hasFilters ? 'Nothing matches these filters' : 'Nothing recorded yet'}
+              </span>
             </h3>
             <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
               {hasFilters
@@ -192,14 +194,23 @@ export function AuditLogTable({ logs, actions, currentPage, totalPages, total }:
                 const open = expanded === log.id;
 
                 return (
-                  <li key={log.id} className="px-4 py-3 transition-colors hover:bg-muted/20">
+                  <li
+                    key={log.id}
+                    data-testid="audit-entry"
+                    data-action={log.action}
+                    data-entity-type={log.entity.type}
+                    className="px-4 py-3 transition-colors hover:bg-muted/20"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-1.5 py-[2px] text-[10px] font-bold ${tone(log.action)}`}>
+                          <span
+                            data-testid="audit-action"
+                            className={`rounded-full border px-1.5 py-[2px] text-[10px] font-bold ${tone(log.action)}`}
+                          >
                             {humanise(log.action)}
                           </span>
-                          <span className="text-sm font-semibold text-foreground">
+                          <span data-testid="audit-entity" className="text-sm font-semibold text-foreground">
                             {log.entity.label}
                           </span>
                           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -215,7 +226,7 @@ export function AuditLogTable({ logs, actions, currentPage, totalPages, total }:
                             title="Everything this person did"
                           >
                             <User className="h-3 w-3" />
-                            {log.actor.name}
+                            <span data-testid="audit-actor">{log.actor.name}</span>
                             <span className="text-muted-foreground/60">({log.actor.role})</span>
                           </button>
                           {log.ip !== null && (

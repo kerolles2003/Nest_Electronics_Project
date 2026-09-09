@@ -8176,3 +8176,49 @@ delivery nothing has been paid until the courier collects. A 100× error on zero
 is still zero, so the first version of these specs asserted nothing at all.
 
 **5 passed, teardown clean.**
+
+## 5. `/categories` and `/brands` — 8 specs, one file
+
+The same component shape over two collections with the same lifecycle, so the
+specs are written once and run twice. Two files would be the same specs twice,
+and the second copy is the one that would drift.
+
+**Restore is why the file exists.** Delete here is soft and it RESERVES the
+slug — right, because reusing a slug repoints existing links at a different
+thing, and wrong to discover by accident, because it means a mis-click costs the
+name until somebody restores it. So the walk is delete → **the slug is refused
+to a new row** → restore → the row is back under the same slug and name. The
+middle step is the one a happy-path CRUD spec would not have, and it is the one
+that explains why the restore button exists at all.
+
+**8 passed, teardown clean.**
+
+## 6. `/audit-log` — 5 specs
+
+The lowest-risk screen, with the worst failure mode: a trail that is empty when
+it should not be does not look broken, it looks like nothing happened. That is
+what this screen used to show — the acting admin is an API account and the old
+page read Supabase `profiles`, so every administrative action was invisible on
+the page that exists to record them.
+
+So the spec does not check that the screen renders. It takes an administrative
+action and then requires THAT action to be on THIS screen, attributed to the
+operator who took it — scoped to the entry carrying a SKU this run invented,
+because a page-wide check for `PRODUCT_CREATED` passes on a row from a previous
+run, which is indistinguishable from having recorded nothing new.
+
+Read-only is asserted as an **absence**: no control on the page that could alter
+a record, and no route behind it (`POST`, `PATCH`, `DELETE` on `/admin/audit-logs`
+all answer 404). A disabled button would be a claim that the action exists and is
+currently refused — a weaker guarantee than "there is nothing here that could do
+it", which is what `AUDIT-MODEL.md` §8 actually says.
+
+**5 passed, teardown clean.**
+
+## Not covered, on purpose: `/coupons` and `/reviews`
+
+Both are still Supabase-backed and are being rebuilt in Phase 8. A spec written
+against them now is work thrown away with the screen, and a spec written against
+their replacements does not exist yet to write. Recorded here rather than left
+looking forgotten — they are the two screens in the console with no browser
+coverage, and that is a decision rather than an omission.

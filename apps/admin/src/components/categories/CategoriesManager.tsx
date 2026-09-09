@@ -147,6 +147,7 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
         <button
           type="button"
           onClick={() => setEditing({ id: null, input: emptyInput() })}
+          data-testid="category-new"
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover"
         >
           <Plus className="h-4 w-4" /> New category
@@ -171,12 +172,17 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
               return (
                 <li
                   key={category.id}
+                  data-testid="category-row"
+                  data-slug={category.slug}
+                  data-deleted={String(isDeleted)}
                   className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/20 ${isDeleted ? 'opacity-60' : ''}`}
                 >
                   {/* Indentation IS depth. See the docstring. */}
                   <div className="min-w-0 flex-1" style={{ paddingLeft: `${String(category.depth * 20)}px` }}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">{category.name.en}</span>
+                      <span data-testid="category-name" className="text-sm font-semibold text-foreground">
+                        {category.name.en}
+                      </span>
                       {category.name.ar !== null && (
                         <span className="text-xs text-muted-foreground" dir="rtl">
                           {category.name.ar}
@@ -191,7 +197,9 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
                       )}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-3">
-                      <span className="font-mono text-[11px] text-muted-foreground">{category.slug}</span>
+                      <span data-testid="category-slug" className="font-mono text-[11px] text-muted-foreground">
+                        {category.slug}
+                      </span>
                       <Link
                         href={`/products?category=${category.id}`}
                         className="text-[11px] text-muted-foreground hover:text-primary hover:underline"
@@ -209,6 +217,7 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
                         type="button"
                         disabled={busy}
                         onClick={() => restore(category)}
+                        data-testid="category-restore"
                         className="inline-flex items-center gap-1 rounded-lg bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20 disabled:opacity-50"
                       >
                         <RotateCcw className="h-3 w-3" /> Restore
@@ -218,6 +227,7 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
                         <button
                           type="button"
                           onClick={() => setEditing({ id: category.id, input: toInput(category) })}
+                          data-testid="category-edit"
                           className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20"
                         >
                           <Pencil className="h-3 w-3" /> Edit
@@ -226,6 +236,7 @@ export function CategoriesManager({ categories }: CategoriesManagerProps) {
                           type="button"
                           disabled={busy}
                           onClick={() => setConfirming(category)}
+                          data-testid="category-delete"
                           className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                           aria-label="Delete category"
                         >
@@ -383,6 +394,7 @@ function CategoryDialog({
         <div className="space-y-4 px-5 py-4">
           <Field label="Name (English)" required error={fieldErrors['name.en']}>
             <input
+              data-testid="category-field-name"
               value={form.nameEn}
               onChange={(event) => changeName(event.target.value)}
               required
@@ -403,6 +415,7 @@ function CategoryDialog({
 
           <Field label="Slug" required error={fieldErrors['slug']}>
             <input
+              data-testid="category-field-slug"
               value={form.slug}
               onChange={(event) => {
                 setSlugTouched(true);
@@ -488,7 +501,11 @@ function CategoryDialog({
           )}
 
           {error !== null && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div
+              role="alert"
+              data-testid="category-form-error"
+              className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -505,6 +522,7 @@ function CategoryDialog({
           </button>
           <button
             type="submit"
+            data-testid="category-save"
             disabled={isSaving}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-50"
           >
@@ -560,6 +578,7 @@ function ConfirmDeleteCategory({
           <button
             type="button"
             onClick={onConfirm}
+            data-testid="category-delete-confirm"
             className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-xs font-bold text-destructive-foreground transition-colors hover:bg-destructive/90"
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete

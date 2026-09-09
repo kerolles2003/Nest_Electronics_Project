@@ -142,6 +142,7 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
         <button
           type="button"
           onClick={() => setEditing({ id: null, input: emptyInput() })}
+          data-testid="brand-new"
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover"
         >
           <Plus className="h-4 w-4" /> New brand
@@ -166,11 +167,16 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
               return (
                 <li
                   key={brand.id}
+                  data-testid="brand-row"
+                  data-slug={brand.slug}
+                  data-deleted={String(isDeleted)}
                   className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/20 ${isDeleted ? 'opacity-60' : ''}`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-foreground">{brand.name.en}</span>
+                      <span data-testid="brand-name" className="text-sm font-semibold text-foreground">
+                        {brand.name.en}
+                      </span>
                       {brand.name.ar !== null && (
                         <span className="text-xs text-muted-foreground" dir="rtl">
                           {brand.name.ar}
@@ -185,7 +191,9 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
                       )}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-3">
-                      <span className="font-mono text-[11px] text-muted-foreground">{brand.slug}</span>
+                      <span data-testid="brand-slug" className="font-mono text-[11px] text-muted-foreground">
+                        {brand.slug}
+                      </span>
                       <Link
                         href={`/products?brand=${brand.id}`}
                         className="text-[11px] text-muted-foreground hover:text-primary hover:underline"
@@ -214,6 +222,7 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
                         type="button"
                         disabled={busy}
                         onClick={() => restore(brand)}
+                        data-testid="brand-restore"
                         className="inline-flex items-center gap-1 rounded-lg bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20 disabled:opacity-50"
                       >
                         <RotateCcw className="h-3 w-3" /> Restore
@@ -223,6 +232,7 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
                         <button
                           type="button"
                           onClick={() => setEditing({ id: brand.id, input: toInput(brand) })}
+                          data-testid="brand-edit"
                           className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20"
                         >
                           <Pencil className="h-3 w-3" /> Edit
@@ -231,6 +241,7 @@ export function BrandsManager({ brands }: BrandsManagerProps) {
                           type="button"
                           disabled={busy}
                           onClick={() => setConfirming(brand)}
+                          data-testid="brand-delete"
                           className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                           aria-label="Delete brand"
                         >
@@ -368,6 +379,7 @@ function BrandDialog({
         <div className="space-y-4 px-5 py-4">
           <Field label="Name (English)" required error={fieldErrors['name.en']}>
             <input
+              data-testid="brand-field-name"
               value={form.nameEn}
               onChange={(event) => changeName(event.target.value)}
               required
@@ -388,6 +400,7 @@ function BrandDialog({
 
           <Field label="Slug" required error={fieldErrors['slug']}>
             <input
+              data-testid="brand-field-slug"
               value={form.slug}
               onChange={(event) => {
                 setSlugTouched(true);
@@ -443,7 +456,11 @@ function BrandDialog({
           )}
 
           {error !== null && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div
+              role="alert"
+              data-testid="brand-form-error"
+              className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -460,6 +477,7 @@ function BrandDialog({
           </button>
           <button
             type="submit"
+            data-testid="brand-save"
             disabled={isSaving}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-50"
           >
@@ -523,6 +541,7 @@ function ConfirmDeleteBrand({
           <button
             type="button"
             onClick={onConfirm}
+            data-testid="brand-delete-confirm"
             className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-xs font-bold text-destructive-foreground transition-colors hover:bg-destructive/90"
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete
