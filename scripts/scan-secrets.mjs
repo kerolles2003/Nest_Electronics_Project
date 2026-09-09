@@ -326,10 +326,21 @@ async function main() {
     cat.stdin.write(`${blobs.join('\n')}\n`);
   });
 
+  // One line per allowlisted BLOB, not per pattern it trips. The scanner's own
+  // historical blob matches all fifteen, and printing the same paragraph
+  // fifteen times is how a green log becomes one nobody reads.
+  const byBlob = new Map();
+
   for (const entry of allowed) {
+    if (!byBlob.has(entry.oid)) byBlob.set(entry.oid, { path: entry.path, names: [] });
+    byBlob.get(entry.oid).names.push(entry.name);
+  }
+
+  for (const [oid, { path, names }] of byBlob) {
     process.stdout.write(
-      `secret scan: allowlisted — ${entry.path} (${entry.name})\n` +
-        `  ${ALLOWLIST.get(entry.oid)}\n`,
+      `secret scan: allowlisted — ${path} ` +
+        `(${names.length} pattern${names.length === 1 ? '' : 's'}: ${names.join(', ')})\n` +
+        `  ${ALLOWLIST.get(oid)}\n`,
     );
   }
 
