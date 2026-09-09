@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { DEV_ADMIN_EMAIL, E2E_EMAIL_PREFIX } from './fixtures/accounts';
+import { E2E_SKU_PREFIX, E2E_SLUG_PREFIX } from './fixtures/catalogue';
 import { SCRATCH_DATABASE, SCRATCH_SUITE } from './origin';
 
 /**
@@ -165,6 +166,96 @@ function readUri() {
   }
 
   /*
+   * THE CATALOGUE THIS SUITE CREATED.
+   *
+   * Products, categories, brands and the media attached to them, made by the
+   * SEEDED OPERATOR rather than by a namespaced account — so there is no email
+   * to find them by. They are found by the prefixes in fixtures/catalogue.ts,
+   * which is the identity they get instead.
+   *
+   * Order matters, and it is the reverse of how they were made:
+   *
+   *   media assets  -> found through their product id, which the API puts in
+   *                    the publicId, so they must be read BEFORE the products go
+   *   inventory     -> events on those products, plus the stock they moved
+   *   products      -> then the categories and brands they pointed at
+   *
+   * SCOPED BY PREFIX throughout. Nothing here can match a seeded product: the
+   * seed's SKUs and slugs are real ones, and none of them begins ADMIN-E2E-.
+   */
+  const suiteProducts = await db.collection('products')
+    .find({ sku: new RegExp('^' + process.env.E2E_SKU_PREFIX) }, { projection: { _id: 1 } })
+    .toArray();
+  const suiteProductIds = suiteProducts.map((p) => p._id);
+
+  let media = 0;
+  let suiteEvents = 0;
+
+  if (suiteProductIds.length > 0) {
+    for (const id of suiteProductIds) {
+      const removed = await db.collection('mediaAssets').deleteMany({
+        publicId: new RegExp('^nest/products/' + id.toString() + '/'),
+      });
+      media += removed.deletedCount;
+    }
+
+    suiteEvents = (await db.collection('inventoryEvents')
+      .deleteMany({ productId: { $in: suiteProductIds } })).deletedCount;
+  }
+
+  /*
+   * Inventory events on SEEDED products, reversed by their own sign.
+   *
+   * The inventory specs adjust a real catalogue product, because that is the
+   * screen under test and a product of the suite's own would not exercise the
+   * list it appears in. Reversing each event by its own delta is exact, and it
+   * is the same method the order path above uses — the events are the authority
+   * for what actually moved, and the order lines are not.
+   *
+   * Scoped by reference: only adjustments this suite tagged with its own
+   * prefix in the reason field are reversed. An event this run did not cause is
+   * not this script's to undo.
+   */
+  const seededAdjustments = await db.collection('inventoryEvents')
+    .find({ reason: new RegExp('^' + process.env.E2E_SKU_PREFIX) })
+    .toArray();
+
+  for (const event of seededAdjustments) {
+    const delta = event.quantityDelta;
+    if (typeof delta !== 'number' || delta === 0) continue;
+
+    await db.collection('products').updateOne(
+      { _id: event.productId },
+      { $inc: { 'stock.onHand': -delta } },
+    );
+    restocked += 1;
+  }
+
+  if (seededAdjustments.length > 0) {
+    await db.collection('inventoryEvents').deleteMany({
+      _id: { $in: seededAdjustments.map((e) => e._id) },
+    });
+    suiteEvents += seededAdjustments.length;
+  }
+
+  const products = suiteProductIds.length === 0
+    ? { deletedCount: 0 }
+    : await db.collection('products').deleteMany({ _id: { $in: suiteProductIds } });
+
+  const slugPattern = new RegExp('^' + process.env.E2E_SLUG_PREFIX);
+  const categories = await db.collection('categories').deleteMany({ slug: slugPattern });
+  const brands = await db.collection('brands').deleteMany({ slug: slugPattern });
+
+  /*
+   * SLUG REDIRECTS. Renaming a slug through the console leaves one behind, on
+   * purpose — an existing link must not 404. They are the suite's own only when
+   * they point at, or come from, one of its slugs.
+   */
+  const redirects = await db.collection('slugRedirects').deleteMany({
+    $or: [{ oldSlug: slugPattern }, { newSlug: slugPattern }],
+  });
+
+  /*
    * THE OPERATOR'S OWN SESSIONS.
    *
    * Every spec signs the development admin in, and that account is a seeded
@@ -207,6 +298,11 @@ function readUri() {
     'admin e2e teardown: removed ' + ids.length + ' user(s), ' + orders + ' order(s), ' +
       sessions.deletedCount + ' operator session(s), ' +
       audits.deletedCount + ' audit record(s), ' +
+      products.deletedCount + ' product(s), ' +
+      categories.deletedCount + ' category(ies), ' +
+      brands.deletedCount + ' brand(s), ' +
+      redirects.deletedCount + ' slug redirect(s), ' +
+      media + ' media asset(s), ' + suiteEvents + ' inventory event(s), ' +
       'reversed ' + restocked + ' stock movement(s)',
   );
   await mongoose.disconnect();
@@ -221,6 +317,8 @@ export default function globalTeardown(): void {
   const env = {
     ...process.env,
     E2E_EMAIL_PREFIX,
+    E2E_SKU_PREFIX,
+    E2E_SLUG_PREFIX,
     DEV_ADMIN_EMAIL,
     MONGODB_DB_NAME: SCRATCH_DATABASE,
   };

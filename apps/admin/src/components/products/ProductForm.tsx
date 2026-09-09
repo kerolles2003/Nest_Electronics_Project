@@ -11,6 +11,7 @@ import {
   unpublishProductAction,
   type ProductFormInput,
 } from '@/actions/product.actions';
+import { BASE_PATH } from '@/lib/api/renewal';
 import { ProductSpecsEditor } from './ProductSpecsEditor';
 import { ProductImageManager } from './ProductImageManager';
 import type { AdminBrand, AdminCategory, AdminProduct } from '@/lib/api/types';
@@ -56,11 +57,29 @@ import {
  *
  * ## The slug check fails closed
  *
- * `/api/check-slug` answers `available: null` when it cannot reach the API, and
- * this form renders that as *unknown* — neither a tick nor a cross. The Supabase
- * route it replaced answered "free" on every failure path, and the form trusted
- * it, so an operator filled in a whole product and lost it to a unique-index
- * violation on save.
+ * `/admin/api/check-slug` answers `available: null` when it cannot reach the
+ * API, and this form renders that as *unknown* — neither a tick nor a cross.
+ * The Supabase route it replaced answered "free" on every failure path, and the
+ * form trusted it, so an operator filled in a whole product and lost it to a
+ * unique-index violation on save.
+ *
+ * ## The `basePath` on that URL is load-bearing
+ *
+ * It used to read `/api/check-slug`, and every call 404'd. Next prefixes
+ * `basePath` onto `<Link>`, router navigations and `next/image` — it does NOT
+ * touch a raw `fetch`, and an absolute path replaces the whole path component.
+ * So the route handler that was written to fail closed was never reached at
+ * all: every keystroke got a 404, the form read that as `available: null`, and
+ * the indicator sat on *unknown* forever.
+ *
+ * Which is the safe direction, and is exactly why it went unnoticed — a
+ * uniqueness check that never says "free" never causes a bad save. It just
+ * never does its job either. Found by the browser suite's health fixture,
+ * which fails a test on a console error even when its assertions pass.
+ *
+ * The same trap is documented in `e2e/origin.ts` for Playwright's `baseURL`
+ * and in `playwright.config.ts`. The harness had learnt it; the application
+ * had not.
  */
 
 interface ProductFormProps {
@@ -173,7 +192,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
     if (product !== undefined) params.set('excludeId', product.id);
 
     const timer = setTimeout(() => {
-      void fetch(`/api/check-slug?${params.toString()}`)
+      void fetch(`${BASE_PATH}/api/check-slug?${params.toString()}`)
         .then((response) => response.json())
         .then((data: { available: boolean | null; suggestion: string | null }) => {
           /*
@@ -277,6 +296,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
               <FieldLabel required>Name (English)</FieldLabel>
               <input
                 value={form.nameEn}
+                data-testid="field-name-en"
                 onChange={(event) => changeName(event.target.value)}
                 required
                 maxLength={200}
@@ -311,6 +331,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
               <FieldLabel required>SKU</FieldLabel>
               <input
                 value={form.sku}
+                data-testid="field-sku"
                 onChange={(event) => set('sku', event.target.value.toUpperCase())}
                 required={mode === 'create'}
                 readOnly={mode === 'edit'}
@@ -331,6 +352,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
               <div className="relative">
                 <input
                   value={form.slug}
+                  data-testid="field-slug"
                   onChange={(event) => {
                     setSlugTouched(true);
                     set('slug', event.target.value);
@@ -512,7 +534,11 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
       <div className="w-full space-y-5 xl:w-80 xl:shrink-0">
         <SectionCard title="Save" icon={CheckCircle2}>
           {formError !== null && (
-            <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div
+              role="alert"
+              data-testid="form-error"
+              className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>{formError}</span>
             </div>
@@ -520,6 +546,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
 
           <button
             type="submit"
+            data-testid="product-save"
             disabled={isSaving || deleted}
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -585,6 +612,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
                 min={0}
                 step="0.01"
                 value={form.basePrice}
+                data-testid="field-base-price"
                 onChange={(event) => set('basePrice', event.target.value)}
                 required
                 className={inputClass(fieldErrors['basePrice'])}
@@ -598,6 +626,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
                 min={0}
                 step="0.01"
                 value={form.salePrice}
+                data-testid="field-sale-price"
                 onChange={(event) => set('salePrice', event.target.value)}
                 className={inputClass(fieldErrors['salePrice'])}
               />
@@ -633,6 +662,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
               <FieldLabel required>Category</FieldLabel>
               <select
                 value={form.categoryId}
+                data-testid="field-category"
                 onChange={(event) => set('categoryId', event.target.value)}
                 required
                 className={selectClass(fieldErrors['categoryId'])}
@@ -651,6 +681,7 @@ export function ProductForm({ mode, categories, brands, product }: ProductFormPr
               <FieldLabel>Brand</FieldLabel>
               <select
                 value={form.brandId}
+                data-testid="field-brand"
                 onChange={(event) => set('brandId', event.target.value)}
                 className={selectClass(fieldErrors['brandId'])}
               >
@@ -756,16 +787,46 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
 function FieldError({ message }: { message: string | undefined }) {
   if (message === undefined) return null;
 
-  return <p className="mt-1 text-[11px] font-medium text-destructive">{message}</p>;
+  return (
+    <p data-testid="field-error" className="mt-1 text-[11px] font-medium text-destructive">
+      {message}
+    </p>
+  );
 }
 
+/**
+ * The verdict, named so a test can read it.
+ *
+ * `data-slug-status` rather than an icon assertion: the icons are three
+ * different lucide components and a spec that matched on their markup would
+ * break on an icon change while saying nothing about the check.
+ */
 function SlugIndicator({ status }: { status: SlugStatus }) {
-  if (status === 'checking') return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
-  if (status === 'free') return <CheckCircle2 className="h-3.5 w-3.5 text-success" />;
-  if (status === 'taken') return <AlertCircle className="h-3.5 w-3.5 text-destructive" />;
-  if (status === 'unknown') return <HelpCircle className="h-3.5 w-3.5 text-warning" />;
+  if (status === 'idle') return null;
 
-  return null;
+  const Icon =
+    status === 'checking'
+      ? Loader2
+      : status === 'free'
+        ? CheckCircle2
+        : status === 'taken'
+          ? AlertCircle
+          : HelpCircle;
+
+  const tone =
+    status === 'checking'
+      ? 'animate-spin text-muted-foreground'
+      : status === 'free'
+        ? 'text-success'
+        : status === 'taken'
+          ? 'text-destructive'
+          : 'text-warning';
+
+  return (
+    <span data-testid="slug-status" data-slug-status={status}>
+      <Icon className={`h-3.5 w-3.5 ${tone}`} />
+    </span>
+  );
 }
 
 /**

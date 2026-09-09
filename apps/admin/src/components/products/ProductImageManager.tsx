@@ -207,6 +207,7 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
       >
         <input
           ref={fileInput}
+          data-testid="image-file-input"
           type="file"
           accept="image/jpeg,image/png,image/webp"
           multiple
@@ -247,7 +248,7 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
       {/* Tiles */}
       {images.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-          No images yet. The first one added becomes the primary.
+          <span data-testid="image-empty">No images yet. The first one added becomes the primary.</span>
         </p>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -257,6 +258,9 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
             return (
               <div
                 key={image.publicId}
+                data-testid="image-tile"
+                data-public-id={image.publicId}
+                data-primary={String(image.isPrimary)}
                 className={`overflow-hidden rounded-xl border bg-background ${
                   image.isPrimary ? 'border-primary ring-1 ring-primary/30' : 'border-border'
                 }`}
@@ -280,7 +284,10 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
                   )}
 
                   {image.isPrimary && (
-                    <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-primary px-1.5 py-[2px] text-[10px] font-bold text-primary-foreground">
+                    <span
+                      data-testid="image-primary-badge"
+                      className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-primary px-1.5 py-[2px] text-[10px] font-bold text-primary-foreground"
+                    >
                       <Star className="h-2.5 w-2.5 fill-current" />
                       Primary
                     </span>
@@ -290,6 +297,7 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
                     type="button"
                     disabled={isBusy}
                     onClick={() => detach(image)}
+                    data-testid="image-detach"
                     aria-label="Remove image"
                     title="Remove from this product. The file itself is kept."
                     className="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1 text-white transition-colors hover:bg-destructive disabled:opacity-50"
@@ -334,6 +342,7 @@ export function ProductImageManager({ product }: { product: AdminProduct }) {
                         type="button"
                         disabled={isBusy}
                         onClick={() => makePrimary(image.publicId)}
+                        data-testid="image-make-primary"
                         className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                       >
                         <Star className="h-2.5 w-2.5" />

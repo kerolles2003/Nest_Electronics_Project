@@ -71,6 +71,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <div
               key={toast.id}
               role="alert"
+              /*
+               * Named so a browser test can assert WHICH notice appeared, and
+               * of which kind, rather than matching a string anywhere on the
+               * page. `role="alert"` alone is not enough to tell a success
+               * notice from the error one it replaced.
+               */
+              data-testid="toast"
+              data-toast-type={toast.type}
               style={{
                 backgroundColor: 'white',
                 color: '#1a1a2e',

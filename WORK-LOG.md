@@ -7954,3 +7954,99 @@ each proven against its own canary.**
 **Owner action: the token in `~/.npmrc` should be rotated.** It was printed into
 a session log. It is outside every repository and outside every scan, which is
 precisely why nothing would have told you.
+
+---
+
+# Part 10 — browser coverage for the admin console
+
+Seven screens, in the order of what breaks worst if it is wrong. `/coupons` and
+`/reviews` are deliberately NOT covered: both are still Supabase-backed and are
+being rebuilt in Phase 8, so a spec written against them now is work that gets
+thrown away with the screen. They are skipped on purpose, not forgotten.
+
+Every spec runs under the existing health fixture, so the hydration canary fires
+before each test body and a console error fails a test even when its assertions
+pass. That last property earned itself back on the first screen — see below.
+
+## What had to be built before the first spec could be written
+
+**A catalogue namespace, and a teardown that knows about it.** `global-teardown.ts`
+does not merely clean up; it compares the database against the state preparation
+recorded — every collection's document count and every product's `stock.onHand`
+per SKU — and fails the run on any difference. It knew about accounts, orders,
+sessions and audit rows, because those were the only things the suite made.
+Catalogue specs make products, categories, brands and media, and they make them
+as the SEEDED OPERATOR, so there is no email prefix to find them by.
+
+`e2e/fixtures/catalogue.ts` is the identity they get instead — `ADMIN-E2E-` for
+SKUs, `admin-e2e-` for slugs — and the teardown now removes products by that
+prefix, their media assets (found through the product id the API embeds in every
+`publicId`), their inventory events, their slug redirects, and the categories
+and brands beside them. Fixed prefixes rather than per-run ones, for the reason
+`E2E_EMAIL_PREFIX` already gives: a crashed run's residue is collected by the
+next run rather than orphaned forever.
+
+**A real PNG, built in the test.** `e2e/fixtures/image.ts` writes one from
+scratch — IHDR, a deflated IDAT, IEND, and a hand-rolled CRC-32. The API sniffs
+magic bytes, decodes the image and refuses anything whose short edge is under
+200px, so a renamed text file or a 1×1 placeholder is rejected before the code
+under test runs. A binary fixture would work and would also be an opaque blob
+nobody can check; forty lines that say what the bytes are is better, and this
+workspace acquires no image dependency to support a test.
+
+## 1. `/products` — 10 specs, and a defect the health fixture found
+
+Covered: the list (every cell scoped to its own `data-testid`, and the expected
+money DERIVED from what the API stored rather than written out as a literal),
+create, the duplicate-SKU refusal, edit, SKU immutability, delete/restore with
+the SKU staying taken, and the image manager.
+
+**The image manager is the reason this screen went first.** `POST /admin/media`
+opens a ledger row at `refCount: 0`; `POST /admin/catalog/products/:id/images`
+is what RETAINS it. The API's own suite proves `retain()` from the API side.
+What nothing proved is that the CONSOLE's attach produces the same protection —
+and that is the path every real photograph in this catalogue will take. So the
+spec uploads through the browser, then asks the API to destroy the asset and
+requires a **409 `MEDIA_ASSET_IN_USE`**, then detaches through the browser and
+requires the same call to succeed with a 204. An attach that did not retain
+would pass every UI assertion and leave a live product page pointing at a
+photograph the next cleanup deletes. That is legacy defect W4.
+
+### The defect: a uniqueness check that had never once run
+
+The suite failed eight tests with no assertion error. The health fixture had
+caught a console error:
+
+```
+[console.error] at http://127.0.0.1:3200/admin/products/new
+Failed to load resource: the server responded with a status of 404 (Not Found)
+```
+
+A probe named it: **`GET /api/check-slug` → 404, on every keystroke.**
+
+`ProductForm` fetched `/api/check-slug`. The application is served under
+`basePath: '/admin'`, and Next prefixes `basePath` onto `<Link>`, router
+navigations and `next/image` — **not onto a raw `fetch`**, where an absolute
+path replaces the whole path component. The route handler lives at
+`/admin/api/check-slug` and was never reached.
+
+The handler behind it is careful. Its own header explains that the Supabase
+version answered `{ exists: false }` on every failure path — a database error, a
+missing service, any exception — so an operator filled in a whole product and
+lost it to a unique-index violation on save. It was rewritten to **fail closed**.
+
+That care is exactly why nobody noticed. The form read every 404 as
+`available: null` and rendered *unknown*, which is the safe answer. **A check
+that can never say "free" never causes a bad save. It also never does its job.**
+The slug indicator had sat on a question mark since the route was written.
+
+Fixed by prefixing `BASE_PATH`, which the application already exports and
+`next.config.ts` already imports. The regression test asserts the two answers
+only a reachable route can give: **free** for a slug that is free, then **taken**
+for the same slug once it is used. `unknown` fails it.
+
+This is the same trap `e2e/origin.ts` and `playwright.config.ts` both document
+for Playwright's `baseURL` and the admin's `basePath`. The harness had learnt
+it. The application had not.
+
+**Result: 10 passed, teardown clean — "nothing left behind".**

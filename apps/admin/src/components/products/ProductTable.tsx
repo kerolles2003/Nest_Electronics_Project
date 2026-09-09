@@ -195,6 +195,7 @@ export function ProductTable({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
+              data-testid="product-search"
               placeholder="Search by name, SKU or slug..."
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
@@ -270,7 +271,9 @@ export function ProductTable({
           <div className="p-12 text-center">
             <Package className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
             <h3 className="text-base font-bold text-foreground">
-              {viewing === 'deleted' ? 'Nothing has been deleted' : 'No products match'}
+              <span data-testid="product-empty">
+                {viewing === 'deleted' ? 'Nothing has been deleted' : 'No products match'}
+              </span>
             </h3>
             <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
               {hasFilters
@@ -302,7 +305,12 @@ export function ProductTable({
                     const onSale = product.pricing.salePrice !== null;
 
                     return (
-                      <tr key={product.id} className={`transition-colors hover:bg-muted/20 ${deleted ? 'opacity-60' : ''}`}>
+                      <tr
+                        key={product.id}
+                        data-testid="product-row"
+                        data-sku={product.sku}
+                        className={`transition-colors hover:bg-muted/20 ${deleted ? 'opacity-60' : ''}`}
+                      >
                         <td className="px-4 py-3 min-w-[240px]">
                           <div className="flex items-center gap-3">
                             {src !== null ? (
@@ -317,32 +325,38 @@ export function ProductTable({
                             <div className="flex min-w-0 flex-col gap-0.5">
                               <Link
                                 href={`/products/${product.id}/edit`}
+                                data-testid="product-name"
                                 className="truncate text-sm font-semibold text-foreground transition-colors hover:text-primary"
                                 title={product.name.en}
                               >
                                 {product.name.en}
                               </Link>
-                              <span className="font-mono text-[11px] text-muted-foreground">{product.sku}</span>
+                              <span data-testid="product-sku" className="font-mono text-[11px] text-muted-foreground">
+                                {product.sku}
+                              </span>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="block max-w-[140px] truncate text-xs text-muted-foreground">
+                          <span data-testid="product-category" className="block max-w-[140px] truncate text-xs text-muted-foreground">
                             {product.category.name.en}
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="block max-w-[120px] truncate text-xs text-muted-foreground">
+                          <span data-testid="product-brand" className="block max-w-[120px] truncate text-xs text-muted-foreground">
                             {product.brand?.name.en ?? '—'}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex flex-col items-end">
-                            <span className="text-sm font-bold tabular-nums text-foreground">
+                            <span data-testid="product-price" className="text-sm font-bold tabular-nums text-foreground">
                               {money(product.pricing.effectivePrice)}
                             </span>
                             {onSale && (
-                              <span className="text-[10px] tabular-nums text-muted-foreground line-through">
+                              <span
+                                data-testid="product-base-price"
+                                className="text-[10px] tabular-nums text-muted-foreground line-through"
+                              >
                                 {money(product.pricing.basePrice)}
                               </span>
                             )}
@@ -350,6 +364,7 @@ export function ProductTable({
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
+                            data-testid="product-stock"
                             className={`text-sm font-bold tabular-nums ${
                               product.stock.onHand === 0
                                 ? 'text-destructive'
@@ -361,7 +376,7 @@ export function ProductTable({
                             {product.stock.onHand}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-4 py-3 text-center" data-testid="product-state">
                           <StateChip product={product} />
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -375,6 +390,7 @@ export function ProductTable({
                                 onClick={() =>
                                   void run(product, () => restoreProductAction(product.id), 'Product restored')
                                 }
+                                data-testid="product-restore"
                                 className="inline-flex items-center gap-1 rounded-lg bg-success/10 px-2.5 py-1.5 text-[11px] font-semibold text-success transition-colors hover:bg-success/20 disabled:opacity-50"
                               >
                                 <RotateCcw className="h-3 w-3" /> Restore
@@ -394,6 +410,7 @@ export function ProductTable({
                                       product.isActive ? 'Product unpublished' : 'Product published',
                                     )
                                   }
+                                  data-testid="product-visibility"
                                   title={
                                     product.isActive
                                       ? 'Hide from customers. Recorded separately from an edit.'
@@ -405,6 +422,7 @@ export function ProductTable({
                                 </button>
                                 <Link
                                   href={`/products/${product.id}/edit`}
+                                  data-testid="product-edit"
                                   className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/20"
                                 >
                                   <Pencil className="h-3 w-3" /> Edit
@@ -413,6 +431,7 @@ export function ProductTable({
                                   type="button"
                                   disabled={busy}
                                   onClick={() => setConfirmDelete(product)}
+                                  data-testid="product-delete"
                                   className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                                   title="Delete (recoverable)"
                                 >
@@ -531,6 +550,7 @@ function ConfirmDelete({
           <button
             type="button"
             onClick={onCancel}
+            data-testid="delete-cancel"
             className="rounded-lg px-3 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             Cancel
@@ -538,6 +558,7 @@ function ConfirmDelete({
           <button
             type="button"
             onClick={onConfirm}
+            data-testid="delete-confirm"
             className="inline-flex items-center gap-2 rounded-lg bg-destructive px-4 py-2 text-xs font-bold text-destructive-foreground transition-colors hover:bg-destructive/90"
           >
             <Trash2 className="h-3.5 w-3.5" />

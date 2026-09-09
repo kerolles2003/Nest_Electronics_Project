@@ -241,6 +241,48 @@ export async function registerCustomer(
   }
 }
 
+/**
+ * An API context already carrying an operator's bearer token.
+ *
+ * ## What it is for, and what it is NOT for
+ *
+ * The catalogue specs assert on the DATABASE's answer, not on the console's own
+ * echo of what it just sent. A page that renders its optimistic local state
+ * would satisfy a UI-only assertion perfectly while having written nothing —
+ * which is the same class of hollowness as a suite whose React never booted.
+ * So each of them drives the browser, then asks the API what is actually there.
+ *
+ * It is NOT a way to set fixtures up faster than the console can. Anything the
+ * screen under test is supposed to create is created BY that screen; this reads.
+ * The exception is stated at each call site.
+ *
+ * The caller disposes it. `test.afterAll` is the usual place.
+ */
+export async function adminApi(): Promise<APIRequestContext> {
+  const context = await request.newContext();
+
+  const loggedIn = await context.post(url('/auth/login'), {
+    data: { email: DEV_ADMIN_EMAIL, password: DEV_ADMIN_PASSWORD },
+  });
+  await expectStatus(loggedIn, 200, 'signing the development admin in');
+
+  const token = (await loggedIn.json()).data.accessToken as string;
+
+  /*
+   * Rebuilt with the header baked in rather than passed at each call. A helper
+   * that returns a token invites a call that forgets it, and a forgotten
+   * Authorization header is a 401 that reads like a permissions bug.
+   */
+  await context.dispose();
+
+  return request.newContext({ extraHTTPHeaders: { Authorization: `Bearer ${token}` } });
+}
+
+/** The API's full URL for a path, for callers holding an `adminApi()` context. */
+export function apiUrl(path: string): string {
+  return url(path);
+}
+
 /** Reads one order as the API sees it, for asserting against what the UI shows. */
 export async function readOrderAsAdmin(orderId: string): Promise<Record<string, unknown>> {
   const context = await api();
