@@ -220,6 +220,92 @@ export async function placeOrder(runId: string, label: string): Promise<PlacedOr
   }
 }
 
+/**
+ * A signed-in customer with a delivery address in a chosen governorate, and a
+ * cart, able to ask for a checkout quote.
+ *
+ * ## Why the settings suite needs a real customer
+ *
+ * "Editing a shipping rate changes the next checkout quote" is a claim about
+ * two subsystems agreeing, and only a quote can settle it. Reading the rate back
+ * from the admin API would prove the console saved something; it would say
+ * nothing about whether a customer is charged it.
+ *
+ * The governorate is a parameter because the order fixtures above use `Cairo`.
+ * A spec that edited Cairo's rate would be changing the fee under any order
+ * placed beside it, and the failure would surface in the other file.
+ */
+export async function quotingCustomer(
+  runId: string,
+  label: string,
+  governorate: string,
+): Promise<{ quote: () => Promise<{ fee: number; priced: boolean }>; dispose: () => Promise<void> }> {
+  const context = await api();
+  const email = `${E2E_EMAIL_PREFIX}.${label}.${runId}@example.test`;
+
+  const registered = await context.post(url('/auth/register'), {
+    data: { email, password: CUSTOMER_PASSWORD, fullName: `Admin E2E ${label}` },
+  });
+  await expectStatus(registered, 201, 'registering the quoting customer');
+
+  const loggedIn = await context.post(url('/auth/login'), {
+    data: { email, password: CUSTOMER_PASSWORD },
+  });
+  await expectStatus(loggedIn, 200, 'signing the quoting customer in');
+
+  const token = (await loggedIn.json()).data.accessToken as string;
+  const auth = { Authorization: `Bearer ${token}` };
+
+  const address = await context.post(url('/users/me/addresses'), {
+    headers: auth,
+    data: {
+      label: 'Home',
+      fullName: `Admin E2E ${label}`,
+      phone: '01012345678',
+      street: '3 Corniche Road',
+      city: 'Centre',
+      governorate,
+    },
+  });
+  await expectStatus(address, 201, `saving an address in ${governorate}`);
+  const addressId = (await address.json()).data.id as string;
+
+  const products = await context.get(url('/products?limit=24&sort=newest'));
+  await expectStatus(products, 200, 'reading the catalogue');
+
+  const catalogue = (await products.json()).data as { id: string; availability: string }[];
+  const product = catalogue.find((candidate) => candidate.availability === 'IN_STOCK');
+
+  if (product === undefined) {
+    throw new Error('No IN_STOCK product to quote against.\nRun: pnpm --filter api seed');
+  }
+
+  const added = await context.post(url('/cart/items'), {
+    headers: auth,
+    data: { productId: product.id, quantity: 1 },
+  });
+  await expectStatus(added, 200, 'adding a line to the quoting cart');
+
+  return {
+    quote: async () => {
+      // Recomputed every request and never cached — the endpoint's own
+      // contract — so a second call after an edit is a genuinely fresh answer.
+      const response = await context.post(url('/checkout/quote'), {
+        headers: auth,
+        data: { addressId },
+      });
+      await expectStatus(response, 200, 'quoting the checkout');
+
+      const body = (await response.json()).data as {
+        pricing: { shippingFee: { amount: number }; shippingPriced: boolean };
+      };
+
+      return { fee: body.pricing.shippingFee.amount, priced: body.pricing.shippingPriced };
+    },
+    dispose: () => context.dispose(),
+  };
+}
+
 /** Registers a CUSTOMER and returns their credentials. For the role tests. */
 export async function registerCustomer(
   runId: string,

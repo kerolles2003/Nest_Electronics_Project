@@ -8050,3 +8050,83 @@ for Playwright's `baseURL` and the admin's `basePath`. The harness had learnt
 it. The application had not.
 
 **Result: 10 passed, teardown clean — "nothing left behind".**
+
+## 2. `/inventory` — 7 specs
+
+Stock is a money path that does not look like one: it decides whether a customer
+can buy, what the availability filter says, and what a picker is sent to find.
+
+Every spec asserts BOTH ends of an adjustment — the balance it produced and the
+ledger entry that explains it. A balance that moved without an event leaves a
+number nobody can account for a year later; an event without the movement leaves
+the opposite. Both are silent, and either alone would pass a UI-only assertion.
+`balanceBefore`/`balanceAfter` are RECORDED by the API rather than recomputed in
+the test, so asserting them proves the event describes the move that happened.
+
+The typed event matters on its own: "stock went down by three" and "three were
+destroyed" are different facts, and one generic movement type makes the second
+permanently unrecoverable. So a DAMAGE adjustment is asserted to be recorded as
+DAMAGE, not merely as a negative delta.
+
+**The floor at zero is asserted twice, deliberately.** The dialog disables its
+own submit — asserted as `toBeDisabled()`, because a warning beside a live button
+is a movement that gets through on a fast click — and the API refuses the same
+adjustment with `409 INSUFFICIENT_STOCK_FOR_ADJUSTMENT`. Only the second is the
+rule: a mobile client, a script or a future screen meets the API alone, and a
+spec that proved the button was grey would be proving the courtesy.
+
+**7 passed, teardown clean.**
+
+## 3. `/settings` — 6 specs, and a false statement in the frozen contract
+
+The claim under test is one sentence: **a fee typed here is charged to the next
+customer who checks out to that governorate.** The admin suite could show the
+console saved a number; the API suite could show `FulfilmentService.quote()`
+reads the table; neither could show they meant the same row. So the spec edits
+the rate in the browser and then takes a real `POST /checkout/quote` as a real
+signed-in customer with a real address in that governorate.
+
+Not Cairo — `placeOrder()` puts every order fixture there, and editing Cairo's
+fee would change the amount under any order placed beside it, surfacing as a
+failure in the ORDERS file. The same residue pattern the teardown exists to
+stop, in a different shape. `Aswan`, and each spec puts the fee back, because a
+seeded row is not something the teardown may delete and `--assert-clean`
+compares document counts, not values.
+
+All 27 governorates are asserted present AND editable. That is not tidiness:
+`quote()` **raises** on a governorate with no row rather than inventing a fee, so
+a lost row is a checkout that 500s for everyone in that governorate.
+
+### The finding: the contract says shipping is always free, and it is not
+
+The quote came back **8,150 piastres for Aswan**, then **8,150 → the edited
+amount** after the browser edit. Which contradicts what `docs/api/openapi.v1.json`
+tells a mobile developer:
+
+> It is `0` under the CURRENT configuration — the per-governorate rate table is
+> unresolved business input (OPEN-001), so the server charges nothing rather
+> than inventing a fee.
+
+And `shippingPriced`:
+
+> It is `false` under the current configuration and becomes `true` when real
+> per-governorate rates land.
+
+Both were true when written and both were made false by D-8 — which the SAME
+document records, in `CreateAddressDto.governorate`: "This was previously free
+text because the governorate vocabulary belonged to an unresolved shipping rate
+table (OPEN-001). **D-8 resolved it**." The contract contradicts itself, and the
+half that is wrong is the half a client reads to decide whether to show a
+delivery line at all. A mobile client that believed it would display 0.00 EGP
+and under-collect on every order.
+
+**The drift gate cannot catch this, and that is not a gap in the gate.** It
+compares names, types, required flags and structure — `INTEGRATION.md` says so
+under "What the gate does NOT catch", and lists a change in what a value MEANS as
+exactly this case. The artifact was regenerated and byte-identical apart from
+two descriptions, so the gate was green throughout. Prose is the part only a
+person can check, and a browser test is what made a person look.
+
+Corrected at the source in `quote-response.dto.ts`, regenerated, both gates green.
+
+**6 passed, teardown clean.**

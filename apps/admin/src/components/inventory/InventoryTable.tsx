@@ -311,7 +311,12 @@ export function InventoryTable({
                     const style = STATE_STYLE[level.state];
 
                     return (
-                      <tr key={level.productId} className="hover:bg-muted/20 transition-colors">
+                      <tr
+                        key={level.productId}
+                        data-testid="inventory-row"
+                        data-sku={level.sku}
+                        className="hover:bg-muted/20 transition-colors"
+                      >
                         <td className="px-4 py-3 min-w-[200px]">
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-2">
@@ -328,7 +333,9 @@ export function InventoryTable({
                                 </span>
                               )}
                             </div>
-                            <span className="text-[11px] font-mono text-muted-foreground">{level.sku}</span>
+                            <span data-testid="inventory-sku" className="text-[11px] font-mono text-muted-foreground">
+                              {level.sku}
+                            </span>
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -337,12 +344,18 @@ export function InventoryTable({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className={`text-sm font-bold tabular-nums ${style.value}`}>
+                          <span
+                            data-testid="inventory-on-hand"
+                            className={`text-sm font-bold tabular-nums ${style.value}`}
+                          >
                             {level.onHand}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-xs text-muted-foreground tabular-nums">
+                          <span
+                            data-testid="inventory-threshold"
+                            className="text-xs text-muted-foreground tabular-nums"
+                          >
                             {level.lowStockThreshold}
                           </span>
                         </td>
@@ -352,7 +365,11 @@ export function InventoryTable({
                             and the threshold here. That re-derivation in five
                             places is how legacy got five different answers.
                           */}
-                          <span className={`inline-flex items-center rounded-full border px-2 py-[2px] text-[10px] font-bold ${style.chip}`}>
+                          <span
+                            data-testid="inventory-state"
+                            data-state={level.state}
+                            className={`inline-flex items-center rounded-full border px-2 py-[2px] text-[10px] font-bold ${style.chip}`}
+                          >
                             {style.label}
                           </span>
                         </td>
@@ -361,6 +378,7 @@ export function InventoryTable({
                             <button
                               type="button"
                               onClick={() => setViewingHistory(level)}
+                              data-testid="inventory-history"
                               className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                               title="Movement history"
                             >
@@ -369,6 +387,7 @@ export function InventoryTable({
                             <button
                               type="button"
                               onClick={() => setAdjusting(level)}
+                              data-testid="inventory-adjust"
                               className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/20 transition-colors"
                             >
                               <RefreshCcw className="h-3 w-3" />

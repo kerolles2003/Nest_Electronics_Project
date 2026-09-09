@@ -135,6 +135,8 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
                     key={option.value}
                     type="button"
                     onClick={() => setType(option.value)}
+                    data-testid={`adjust-type-${option.value}`}
+                    data-selected={String(selected)}
                     className={`rounded-lg border px-2 py-2 text-left transition-colors ${
                       selected
                         ? 'border-primary bg-primary/10'
@@ -160,6 +162,7 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
                 <button
                   type="button"
                   onClick={() => setDirection(1)}
+                  data-testid="adjust-in"
                   aria-pressed={direction === 1}
                   className={`inline-flex items-center gap-1 rounded-md px-3 text-xs font-bold transition-colors ${
                     direction === 1 ? 'bg-success/15 text-success' : 'text-muted-foreground hover:text-foreground'
@@ -170,6 +173,7 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
                 <button
                   type="button"
                   onClick={() => setDirection(-1)}
+                  data-testid="adjust-out"
                   aria-pressed={direction === -1}
                   className={`inline-flex items-center gap-1 rounded-md px-3 text-xs font-bold transition-colors ${
                     direction === -1 ? 'bg-destructive/15 text-destructive' : 'text-muted-foreground hover:text-foreground'
@@ -180,6 +184,7 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
               </div>
               <input
                 id="adjust-units"
+                data-testid="adjust-units"
                 type="number"
                 min={1}
                 step={1}
@@ -194,14 +199,20 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
             {hasUnits && (
               <p className="mt-1.5 text-xs text-muted-foreground">
                 {level.onHand} {delta >= 0 ? '+' : '−'} {Math.abs(delta)} ={' '}
-                <span className={`font-bold tabular-nums ${wouldGoNegative ? 'text-destructive' : 'text-foreground'}`}>
+                <span
+                  data-testid="adjust-projected"
+                  className={`font-bold tabular-nums ${wouldGoNegative ? 'text-destructive' : 'text-foreground'}`}
+                >
                   {projected}
                 </span>
               </p>
             )}
 
             {wouldGoNegative && (
-              <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-destructive">
+              <p
+                data-testid="adjust-negative-warning"
+                className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-destructive"
+              >
                 <AlertTriangle className="h-3.5 w-3.5" />
                 Stock cannot go below zero — there are only {level.onHand} on hand.
               </p>
@@ -215,6 +226,7 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
             </label>
             <textarea
               id="adjust-reason"
+              data-testid="adjust-reason"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               rows={2}
@@ -232,7 +244,11 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
           </div>
 
           {error !== null && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div
+              role="alert"
+              data-testid="adjust-error"
+              className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -252,6 +268,7 @@ export function InventoryAdjustDialog({ level, onClose, onAdjusted }: InventoryA
           <button
             type="button"
             onClick={submit}
+            data-testid="adjust-apply"
             disabled={!canSubmit}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >

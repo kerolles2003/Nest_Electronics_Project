@@ -139,7 +139,9 @@ export function InventoryHistoryDrawer({ level, onClose }: InventoryHistoryDrawe
           {events !== null && events.length === 0 && (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
               <Box className="mb-2 h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm font-medium text-muted-foreground">No movements recorded</p>
+              <p data-testid="history-empty" className="text-sm font-medium text-muted-foreground">
+                No movements recorded
+              </p>
               <p className="mt-0.5 text-xs text-muted-foreground/60">
                 Nothing has moved this product&apos;s stock since it was created.
               </p>
@@ -156,10 +158,15 @@ export function InventoryHistoryDrawer({ level, onClose }: InventoryHistoryDrawe
                 return (
                   <div
                     key={`${event.createdAt}-${String(index)}`}
+                    data-testid="history-event"
+                    data-event-type={event.type}
                     className="px-5 py-3 transition-colors hover:bg-muted/20"
                   >
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <span className={`rounded-full border px-1.5 py-[2px] text-[10px] font-bold ${chip}`}>
+                      <span
+                        data-testid="history-type"
+                        className={`rounded-full border px-1.5 py-[2px] text-[10px] font-bold ${chip}`}
+                      >
                         {label}
                       </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground/70">
@@ -169,18 +176,24 @@ export function InventoryHistoryDrawer({ level, onClose }: InventoryHistoryDrawe
 
                     <div className="flex items-baseline justify-between gap-3">
                       <span
+                        data-testid="history-delta"
                         className={`text-sm font-bold tabular-nums ${positive ? 'text-success' : 'text-destructive'}`}
                       >
                         {positive ? '+' : ''}
                         {event.quantityDelta}
                       </span>
                       {/* Recorded, not recomputed. See the docstring. */}
-                      <span className="text-[11px] tabular-nums text-muted-foreground">
-                        {event.balanceBefore} → <span className="font-semibold text-foreground">{event.balanceAfter}</span>
+                      <span data-testid="history-balance" className="text-[11px] tabular-nums text-muted-foreground">
+                        {event.balanceBefore} →{' '}
+                        <span data-testid="history-balance-after" className="font-semibold text-foreground">
+                          {event.balanceAfter}
+                        </span>
                       </span>
                     </div>
 
-                    <p className="mt-1 text-xs text-foreground">{event.reason}</p>
+                    <p data-testid="history-reason" className="mt-1 text-xs text-foreground">
+                      {event.reason}
+                    </p>
 
                     <div className="mt-1 flex flex-wrap items-center gap-3">
                       {event.actorName !== null && (

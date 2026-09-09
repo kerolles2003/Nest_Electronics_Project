@@ -108,9 +108,12 @@ export class PricingBreakdownDto {
       'The delivery fee, computed by the SERVER from the chosen address governorate and the ' +
       'post-discount subtotal. A client never sends it and never derives it; the same ' +
       'calculation runs here and at `POST /orders`, so a quote and the order it becomes agree. ' +
-      'Quote without an `addressId` and it is computed without a governorate. ' +
-      'It is `0` under the CURRENT configuration — the per-governorate rate table is unresolved ' +
-      'business input (OPEN-001), so the server charges nothing rather than inventing a fee. ' +
+      'Quote without an `addressId` and it is computed without a governorate, which is the one ' +
+      'case that is not a price — `shippingPriced` is `false` and the accompanying `0` is a ' +
+      'placeholder. ' +
+      'With an address it is a REAL FEE, read from the per-governorate rate table: D-8 resolved ' +
+      'OPEN-001 and the table is seeded one row per governorate with no fallback, so a ' +
+      'governorate with no row raises rather than being charged nothing. ' +
       'DO NOT interpret the amount: read `shippingPriced` to tell a real fee from a placeholder.',
   })
   shippingFee!: MoneyDto;
@@ -121,10 +124,12 @@ export class PricingBreakdownDto {
       'Whether `shippingFee` is a PRICE. Read this INSTEAD of comparing the amount to zero. ' +
       '`true` means the fee is what the customer owes — including when it is `0` because a ' +
       'free-shipping threshold was met, which must be shown as free delivery. ' +
-      '`false` means no rate has been supplied yet (OPEN-001); the accompanying `0` is a ' +
-      'placeholder and should be shown as "delivery not yet calculated", never as free. ' +
-      'It is `false` under the current configuration and becomes `true` when real ' +
-      'per-governorate rates land, WITHOUT the meaning of any other field changing. ' +
+      '`false` means there is nothing to price yet — a quote taken before an address is chosen; ' +
+      'the accompanying `0` is a placeholder and should be shown as "delivery not yet ' +
+      'calculated", never as free. ' +
+      'Once an address is supplied it is `true`: per-governorate rates landed with D-8, and ' +
+      'they landed WITHOUT the meaning of any other field changing, which is what this field ' +
+      'was introduced to make possible. ' +
       'This field exists precisely so that a client written today keeps telling the truth then: ' +
       'a client that branches on `shippingFee.amount === 0` will misreport every free order.',
   })

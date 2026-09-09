@@ -78,12 +78,14 @@ export function ShippingRatesTable({ initialRates }: ShippingRatesTableProps) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            data-testid="rate-search"
             placeholder="Search governorates..."
             className="pl-9"
           />
         </div>
         <div className="text-xs text-muted-foreground">
-          Showing {filteredRates.length} of {rates.length} governorates
+          Showing <span data-testid="rate-count">{filteredRates.length}</span> of{' '}
+          <span data-testid="rate-total">{rates.length}</span> governorates
         </div>
       </div>
 
@@ -115,15 +117,18 @@ export function ShippingRatesTable({ initialRates }: ShippingRatesTableProps) {
                   return (
                     <tr
                       key={rate.governorate}
+                      data-testid="rate-row"
+                      data-governorate={rate.governorate}
                       className="hover:bg-muted/20 transition-colors"
                     >
-                      <td className="px-6 py-4 font-medium text-foreground">
+                      <td data-testid="rate-governorate" className="px-6 py-4 font-medium text-foreground">
                         {rate.governorate}
                       </td>
                       <td className="px-6 py-4">
                         {isEditing ? (
                           <div className="flex items-center gap-2 max-w-[160px]">
                             <Input
+                              data-testid="rate-fee-input"
                               type="number"
                               step="0.5"
                               min="0"
@@ -140,7 +145,7 @@ export function ShippingRatesTable({ initialRates }: ShippingRatesTableProps) {
                             <span className="text-xs text-muted-foreground">EGP</span>
                           </div>
                         ) : (
-                          <span className="font-mono text-foreground font-semibold">
+                          <span data-testid="rate-fee" className="font-mono text-foreground font-semibold">
                             {rate.formattedFee}
                           </span>
                         )}
@@ -173,6 +178,7 @@ export function ShippingRatesTable({ initialRates }: ShippingRatesTableProps) {
                               variant="default"
                               disabled={isPending}
                               onClick={() => saveEdit(rate.governorate)}
+                              data-testid="rate-save"
                               className="h-8 px-2.5"
                             >
                               {isPending ? (
@@ -197,6 +203,7 @@ export function ShippingRatesTable({ initialRates }: ShippingRatesTableProps) {
                             size="sm"
                             variant="outline"
                             onClick={() => startEdit(rate)}
+                            data-testid="rate-edit"
                             className="h-8 px-3 text-xs"
                           >
                             <Pencil className="h-3 w-3 mr-1.5" />
