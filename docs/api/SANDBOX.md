@@ -173,6 +173,23 @@ triggering a restart loop.
 - Swagger UI — <http://127.0.0.1:3002/api/v1/docs>
 - OpenAPI JSON — <http://127.0.0.1:3002/api/v1/docs-json>
 - Frozen artifact — [`docs/api/openapi.v1.json`](./openapi.v1.json) ← **build against this one**
+- Browsable contract, no server needed — [`docs/api/index.html`](./index.html), opened from disk
+
+### Ports
+
+Each app pins its own, so `pnpm dev` at the root starts all three without a collision.
+
+| App | Port | |
+|---|---|---|
+| `apps/api` | **3002** | `PORT` in `apps/api/.env` |
+| `apps/storefront` | **3000** | matches `SITE_URL`, which is what verification links are built from |
+| `apps/admin` | **3001** | |
+
+Both Next apps default to 3000, so before they were pinned the second one to start
+silently moved to 3001 — or took 3000 first and left the storefront somewhere its own
+verification links did not point at. The `--port` flags in each `package.json` are what
+prevent that; the e2e suites ignore them and pass their own ports (3100 storefront, 3200
+admin) so a test run never fights a development server for a socket.
 
 ---
 
