@@ -7673,3 +7673,70 @@ inside a dated evidence statement ("the sole remote is X; **2 commits**") that
 was true when written. The README carries the current home instead, and the old
 repository gets an archive notice — which is the mitigation that actually stops
 someone building against the wrong thing.
+
+---
+
+# Part 8e — The push, and the first CI run this repository has ever had
+
+## What went
+
+143 commits to `kerolles2003/Nest_Electronics_Project`, verified private (404
+unauthenticated, anonymous read refused) and empty (0 refs) immediately before
+pushing. `main` and `phase-1-2-overnight` at the same tip — the second because
+this log and `HANDOFF.md` name that branch in dozens of places — plus the
+`baseline-phase-0` tag. No force, all fresh refs.
+
+The rename that was planned did not happen: the owner had no 2FA verification
+available, and GitHub requires it both to delete the empty public
+`Nest_Electronics` and to rename this repository into that freed name. So the
+awkward name stands and the README carries a table of all three repositories,
+because the most natural-sounding name of the three is the empty one.
+
+## Verified against the pushed history, not the local copy
+
+A **fresh clone** of the new remote, scanned there: 1,623 blobs across every
+ref, 15 patterns each proven against its own canary, clean. Blob `826d18a`
+absent from the object database; no path named `test.md` in any commit; the only
+`.env` files ever added on any ref are the three `.env.example`s.
+
+The scanner also ran **on GitHub**, which is the half that matters — a guard
+that only ever ran locally is not a guard. Its log reports **1,623 blobs**, the
+same number as the local run, which is the evidence that `fetch-depth: 0` did
+its job. A shallow clone would have reported a fraction of that and passed while
+looking at almost nothing.
+
+## The first CI run failed, and it was not a regression
+
+This workflow had never executed anywhere. Both jobs that boot the real
+application died on `JWT_SECRET Invalid or missing value`: CI set `MONGODB_URI`
+and nothing else, and `JWT_SECRET` has no default — deliberately, and the
+`.env.example` placeholder is refused too, because a placeholder nothing rejects
+is a default. The rule was right and CI was wrong.
+
+Fixed by generating an ephemeral key per run rather than storing one. It is a
+throwaway for a database destroyed with the runner, it keeps the workflow's
+promise that no job requires a credential, and a literal would have been a
+32-character secret committed to the repository — which the secret scan would
+have failed, correctly.
+
+After that: **Lint, Type check, Build, and the API contract drift gate all
+pass**, the last of which also proves the new browsable-page gate green on CI.
+
+## What is still red, and why it is being reported rather than fixed
+
+The transaction gate runs the API suite: **1,303 passed, 6 failed**, in two
+suites, and neither failure is a code defect.
+
+- `test/media/sharp-backend.spec.ts` — 3 tests. `Could not load the "sharp"
+  module using the linux-x64 runtime`. The suite compares the native and
+  WebAssembly backends, and the runner cannot load the native one at all.
+  Environmental, and the same two-backend problem `SANDBOX.md` already documents.
+- `test/users/addresses.spec.ts` concurrency — 3 tests, all failing with
+  `read ECONNRESET`. The connection dropped under concurrent load; the
+  assertions never ran. This is **not** a data-integrity finding, which is worth
+  saying plainly because the test names — "never produces two defaults under
+  concurrent first-address creation" — read like one at a glance.
+
+Both are pre-existing, both were exposed rather than caused by the first CI run,
+and both are outside a publication task. Recorded here so the next person starts
+from the names rather than from a red badge.
