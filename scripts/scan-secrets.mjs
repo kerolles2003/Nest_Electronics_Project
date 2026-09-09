@@ -124,6 +124,26 @@ const PATTERNS = [
     cat('-----', 'BEGIN RSA PRIVATE KEY', '-----'),
   ],
   ['github token', /gh[pousr]_[A-Za-z0-9]{30,}/, cat('ghp', '_', ALNUM)],
+  /*
+   * npm publish tokens, in both shapes they appear in.
+   *
+   * Added after one was found in the machine's GLOBAL ~/.npmrc — outside this
+   * repository, and so never something this scanner had a chance to catch. That
+   * is the point: it had no chance because it had no pattern. A `.npmrc`
+   * committed by anyone, or a token pasted into a workflow, would have passed
+   * fifteen clean patterns and been published.
+   *
+   * The second entry is the assignment rather than the token shape, because a
+   * private registry's token is not `npm_`-prefixed and would otherwise be
+   * invisible. `${...}`, `REPLACE_` and `YOUR_` are excluded: those are the
+   * indirection this repository already requires, not a credential.
+   */
+  ['npm token', /\bnpm_[A-Za-z0-9]{30,}/, cat('npm', '_', ALNUM)],
+  [
+    'npmrc auth token',
+    /_authToken[\s]*=[\s]*['"]?(?!\$\{|REPLACE_|YOUR_|<)[A-Za-z0-9_.=+/-]{16,}/,
+    cat('//registry.npmjs.org/:_authToken', '=', ALNUM),
+  ],
   [
     'openai / anthropic style key',
     /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/,

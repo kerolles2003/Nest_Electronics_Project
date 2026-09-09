@@ -7907,3 +7907,50 @@ minutes rather than in a week.
 The skipped suite is `media/cloudinary-integration.spec.ts`, gated behind an
 `INTEGRATION` flag because it calls the live vendor — an opt-in, not a silent
 skip.
+
+## 3. A sixteenth and seventeenth pattern, and a hole that was never green
+
+Running `pnpm config list` during the sharp investigation printed a live npm
+publish token from the machine's **global** `C:\Users\kerol\.npmrc`. It is not in
+this repository — no `.npmrc` has ever been added on any ref, checked with
+`git log --all --diff-filter=A` — so nothing leaked. What it exposed is that the
+scanner **had no pattern for one**. A `.npmrc` committed by anyone, or a token
+pasted into a workflow file, would have walked past fifteen clean patterns.
+
+This is not a fourth "green that meant nothing"; it is worse in one specific way.
+The previous four were checks that ran and reported success while proving
+nothing. This one never even looked. A pattern that does not exist cannot fail,
+and cannot be noticed failing.
+
+Two patterns added, both assembled at runtime like the other fifteen so the
+scanner still does not match its own source:
+
+- `npm token` — `npm_` plus 30 or more base62 characters.
+- `npmrc auth token` — the `_authToken=` **assignment**, because a private
+  registry's token has no recognisable prefix and would otherwise be invisible.
+
+The canary self-test earned its place immediately: the first version of the
+`npm_` pattern was written with a mangled escape and the scan refused to run —
+`THE SCANNER IS BROKEN. These patterns did not detect their own canary: npm token`.
+A pattern that silently matches nothing is exactly the failure this repository
+keeps finding, and here the harness caught it before it could be committed.
+
+Live-fired in both directions, with fake values of the real shape:
+
+| input | verdict |
+| --- | --- |
+| `_authToken=npm_<36 chars>` | **caught** (npm token) |
+| `_authToken=<32 hex>` — a private registry, no prefix | **caught** (npmrc auth token) |
+| `_authToken=${NPM_TOKEN}` | clean |
+| `_authToken=REPLACE_…` / `YOUR_…` | clean |
+
+The exclusions matter as much as the matches: `${...}`, `REPLACE_` and `YOUR_`
+are the indirection this repository already requires, and a scanner that flagged
+them would be trained away within a week.
+
+Full repository scan after: **clean, 1631 blobs across every ref, 17 patterns
+each proven against its own canary.**
+
+**Owner action: the token in `~/.npmrc` should be rotated.** It was printed into
+a session log. It is outside every repository and outside every scan, which is
+precisely why nothing would have told you.
