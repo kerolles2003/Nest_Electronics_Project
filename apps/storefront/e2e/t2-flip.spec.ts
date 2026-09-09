@@ -193,11 +193,26 @@ test.describe('the proxy guard', () => {
   });
 
   test('sends a signed-in customer away from the auth pages', async ({ page, context }) => {
+    /*
+     * The destination is the SHOP, not the orders list.
+     *
+     * This asserted `/account/orders` until `3a02643` moved it. Signing in with
+     * no carried destination used to land on an order history that is empty for
+     * anyone who had just registered and a detour for everyone else, so it now
+     * lands on the storefront home — and the proxy's bounce off the auth pages
+     * moved with it so the two cannot disagree.
+     *
+     * The proxy was updated in that commit and this assertion was not, so it
+     * spent the interval failing against correct code: the redirect worked, and
+     * the test said it did not. `apps/storefront/src/proxy.ts` is the authority.
+     */
     await signInWithCookies(context, account);
 
     for (const path of ['/login', '/register', '/forgot-password']) {
       await page.goto(path);
-      await expect(page).toHaveURL(/\/account\/orders$/);
+      await expect(page, `${path} should bounce a signed-in customer to the shop`).toHaveURL(
+        `${BASE_URL}/`,
+      );
     }
   });
 
