@@ -8222,3 +8222,46 @@ against them now is work thrown away with the screen, and a spec written against
 their replacements does not exist yet to write. Recorded here rather than left
 looking forgotten — they are the two screens in the console with no browser
 coverage, and that is a decision rather than an omission.
+
+---
+
+# Part 11 — the storefront stragglers
+
+## `purchase-journey.spec.ts` needed a topology nothing checked
+
+The journey places a real order, and `POST /orders` writes stock, the inventory
+ledger, the order and the cart emptying in ONE MongoDB transaction. A standalone
+`mongod` refuses that:
+
+    Transaction numbers are only allowed on a replica set member or mongos
+
+and the refusal arrives at the checkout step — eight steps into a nine-step
+journey — as a 500 from a button click. Nothing in the report says "your database
+is the wrong topology". The suite had been depending on whatever `mongod`
+happened to be listening on 27017, and `docker-compose.dev.yml` is the only
+thing that starts the right one.
+
+`e2e/global-setup.ts` now asserts it, **first**, before two Next applications
+spend minutes compiling for a run that cannot pass.
+
+### It runs a real transaction rather than reading `rs.status()`
+
+Because the compose file says so in its own words: *"This file provides DATABASE
+AVAILABILITY only… Connection readiness is not transaction readiness."* A replica
+set that reports a PRIMARY can still be mid-election, and `rs.status().ok` is a
+proxy for the thing rather than the thing. So the probe starts a session, opens a
+transaction, inserts, and **aborts** — the operation checkout needs, minus the
+writing. Against a database of its own, dropped afterwards, so it cannot disturb
+the scratch database whose document counts the teardown compares to a baseline.
+
+It shells out to `apps/api`, where Mongoose already resolves, for the same reason
+`apps/admin/e2e/global-teardown.ts` does: this workspace has no MongoDB
+dependency and should not acquire one to support a test.
+
+### Proved in both directions
+
+- against the compose replica set: **exit 0**
+- against a deliberately-started standalone `mongod` on another port: **exit 1**,
+  and the wrapper turns that into the compose command to run
+
+The standalone container was started for the test and removed after it.
