@@ -70,3 +70,23 @@ you are looking for setup steps or the API contract, they are above; those three
 you any faster.
 
 Architecture and domain models live in [`docs/architecture/`](docs/architecture/).
+
+Those documents cite commit SHAs that **git will not find**. This repository's history was
+rewritten exactly once, before its first push, to remove a file that carried a credential — so
+every SHA changed. The documents were left alone on purpose; a record edited to agree with a
+rewritten past is no longer a record.
+[`docs/commit-map.txt`](docs/commit-map.txt) maps all 141 old SHAs to their new ones:
+
+```bash
+grep -i ^d376382 docs/commit-map.txt   # an old short SHA from WORK-LOG.md -> the commit today
+```
+
+The same rewrite is why there is no credential anywhere in this history. See
+[`SECURITY.md`](SECURITY.md), which also explains why the key was rotated regardless.
+
+## Where this repository lives
+
+`kerolles2003/Nest_Electronics_Project` is the home. It supersedes
+`kerolles2003/Nest_Electro`, which is **archived** and carries an older, divergent prototype —
+a Supabase/Vite storefront that is not this system. If you were sent there, you were sent to the
+wrong place; nothing there is current.

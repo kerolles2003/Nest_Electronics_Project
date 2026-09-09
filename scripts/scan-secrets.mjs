@@ -160,15 +160,19 @@ const PATTERNS = [
  * it — see SECURITY.md for what was rotated and when.
  */
 const ALLOWLIST = new Map([
-  [
-    '826d18a43510ceeeb6865809869b3021423ad3e2',
-    'apps/admin/src/test.md — scratch ANTHROPIC_API_KEY committed in 4673949 ' +
-      '(initial commit), removed from the tree in 4b29fa0. The credential was ' +
-      'ROTATED and is inert. History deliberately not rewritten: see SECURITY.md.',
-  ],
+  /*
+   * The ANTHROPIC_API_KEY blob (826d18a…) was here, and is deliberately gone.
+   *
+   * This repository's history was rewritten once, before its first push, to
+   * remove `apps/admin/src/test.md` entirely — so there is no credential in any
+   * commit to excuse. The entry was deleted with the blob rather than left
+   * behind: an allowlist naming an object that no longer exists is a note that
+   * cannot be verified, and it would quietly keep excusing that SHA if it ever
+   * came back. See SECURITY.md.
+   */
   [
     '37e824593b8b0a2d7c3354283cc84047f40486b5',
-    'scripts/scan-secrets.mjs as first committed in bc1a3ef — this scanner, back ' +
+    'scripts/scan-secrets.mjs as first committed in 8eb46c3 — this scanner, back ' +
       'when its canary samples were written as plain string literals, so it ' +
       'matched all fifteen of its own patterns. Every value in it is a FAKE ' +
       'built for the self-test; none was ever a credential. The live version ' +

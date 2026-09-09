@@ -23,42 +23,55 @@ reaches a remote, rotation is the only remedy, and deleting the file is not a
 fix. Rotate the credential, then decide with the owner whether to rewrite
 history or to record the finding here and allowlist the blob.
 
-## A rotated credential in early history — do not panic, do not rewrite
+## The one history rewrite, and the credential that is not here
 
-**Status: inert. No action required.**
+**Status: no credential exists in this repository's history. Nothing to do.**
 
-`apps/admin/src/test.md` — a scratch file of shell lines — contained an
-`ANTHROPIC_API_KEY` alongside `ANTHROPIC_BASE_URL=https://agentrouter.org`.
+`apps/admin/src/test.md` — a scratch file of shell lines — carried an
+`ANTHROPIC_API_KEY` alongside `ANTHROPIC_BASE_URL=https://agentrouter.org`. It
+was added in the initial commit, removed from the working tree four months
+later, and therefore still sat in every branch's history where deleting the file
+had done nothing about it.
 
-| | |
-|---|---|
-| Added | `4673949` — the initial commit, 2026-05-01 |
-| Removed from the tree | `4b29fa0`, 2026-09-01 |
-| Found | 2026-09-09, by `scripts/scan-secrets.mjs` on its first real run |
-| **Rotated** | **2026-09-09, by the owner. The value is dead.** |
-| Blob | `826d18a43510ceeeb6865809869b3021423ad3e2` |
+**Before this repository's first push, the history was rewritten once** with
+`git filter-repo --path apps/admin/src/test.md --invert-paths`, on a clone, and
+the result verified by SHA rather than by filename: blob
+`826d18a43510ceeeb6865809869b3021423ad3e2` is unreachable from every ref and is
+absent from the object database entirely. The full scanner was then re-run over
+the rewritten history — canary proof first — across 1,616 blobs, clean.
 
-It is still reachable from the history of every branch, and it is **deliberately
-left there**. Two reasons:
+That rewrite was cheap precisely because it happened **before** the first push,
+into a repository nobody had cloned. It is a one-time event and is not a
+precedent: the same operation on a published history is a force-push that breaks
+every existing clone, which is why the rule elsewhere in this file is to rotate
+first and rewrite only by a deliberate decision.
 
-1. **The credential is already rotated**, so the value in the history authorises
-   nothing. Rewriting history to remove a dead string buys nothing.
-2. **The cost is real.** Purging it means rewriting 130-odd commits and
-   force-pushing over a handover, which breaks every existing clone and every
-   commit SHA referenced in `WORK-LOG.md`, `PLAN.md` and this file. That is a
-   large, irreversible operation in exchange for tidiness.
+### The key was rotated anyway, and had to be
 
-If you are reading this because you found that key: it is expected, it is dead,
-and it is recorded. **Do not start a history rewrite on your own account.** Its
-blob SHA is allowlisted by SHA — not by path or by pattern — in
-`scripts/scan-secrets.mjs`, so a single edited byte produces a new blob that is
-not allowlisted and fails the build.
+The rewrite removed the value from *this* history. It did not un-expose it.
+
+The key lived for four months in the predecessor repository
+(`kerolles2003/Nest_Electro`), which was pushed to GitHub long before anyone
+noticed. Anything that has reached a remote must be treated as compromised
+regardless of what is done to the history afterwards, so **the credential was
+rotated by the owner and is dead.** Removing it from the new history is
+hygiene — it stops a future reader finding a live-looking secret and having to
+work out whether it matters. It is not the remedy, and it was never the remedy.
+
+### The cost, and where it went
+
+Rewriting changed every commit SHA, and `WORK-LOG.md`, `HANDOFF.md`, `PLAN.md`
+and the `docs/phase-2` reports cite dozens of them. Those documents were
+**deliberately not edited** — a record rewritten to agree with a rewritten past
+stops being a record. [`docs/commit-map.txt`](docs/commit-map.txt) maps all 141
+old SHAs to their new ones so every citation stays resolvable. No commit was
+dropped.
 
 ### What it cost, and why the scanner exists
 
-The key sat in the repository for **four months** and was **already on the
-remote** — pushed long before it was noticed. A manual audit roughly forty
-commits earlier had called the repository clean.
+The key sat in the predecessor repository for **four months** and was already on
+its remote. A manual audit roughly forty commits earlier had called that
+repository clean.
 
 Nobody was careless. A manual audit is a thing you have to remember to do, and
 the one time it is skipped is the time it was needed. That is the whole argument

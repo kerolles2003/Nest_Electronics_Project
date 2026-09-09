@@ -7583,3 +7583,76 @@ secret does nothing; the blob stays and the history is what gets cloned.
   Supabase-backed, five broken images, deferred to Phase 8 — and explicitly not
   the house pattern to copy, since it is the only route still fetching through
   `getServices()`.
+
+---
+
+# Part 8d — A new repository, and the one rewrite it was worth doing
+
+## Why the ruling changed
+
+Part 8b refused to rewrite history, and that was right at the time: the argument
+was never "rewriting is wrong", it was that force-pushing 132 commits onto a
+remote others may have cloned, immediately before a handover, costs more than it
+buys. Into a repository that does not exist yet, none of that applies. The
+rewrite is local, one-time, and nobody has a clone to break.
+
+So the credential is gone from this history entirely, rather than allowlisted.
+
+## Two repositories were checked before either was used
+
+The first new repository offered — `Nest_Electronics` — was **public**.
+`GET /repos/...` returned 200 unauthenticated with `"visibility": "public"`, and
+an anonymous `git ls-remote` with no credentials and no git config succeeded,
+which is the check that settles it rather than inferring from a status code.
+Pushing there would have published the full API contract, this log, and a
+`SECURITY.md` that names where a credential lived — while the repository that
+actually carried the key stayed private. Reported; nothing was pushed.
+
+`Nest_Electronics_Project` passes both: 404 unauthenticated, anonymous read
+refused for want of credentials, and **0 refs** — genuinely empty, not merely
+new. `Nest_Electronics` is still public and still empty, and should be deleted
+or made private so it cannot be mistaken for this one.
+
+## The rewrite
+
+`git filter-repo --path apps/admin/src/test.md --invert-paths`, on a **clone**;
+the working repository was never touched. filter-repo twice refused to run —
+first because removing `origin` made the clone stop looking fresh, then because
+a local `main` existed without its tracking ref. Both refusals were correct and
+both were resolved by re-cloning rather than by reaching for `--force`, which is
+the flag that turns a safety check into a formality.
+
+Verified **by SHA, not by filename**: blob
+`826d18a43510ceeeb6865809869b3021423ad3e2` is unreachable from every ref and
+`git cat-file -e` reports it absent from the object database. No path named
+`test.md` appears in any commit.
+
+Then the whole scanner was re-run over the rewritten history, canary proof
+first — 15 patterns each proven against a planted fake, then 1,616 blobs across
+every ref: **clean**. A rewrite that leaves one other thing behind is worse than
+no rewrite, because it feels finished.
+
+## The allowlist entry was deleted with the blob
+
+The `826d18a` entry is gone from `scan-secrets.mjs`. An allowlist naming an
+object that no longer exists is a note nobody can verify, and worse, it would go
+on silently excusing that SHA if the content ever returned.
+
+One entry remains, and it is honest: `37e8245`, the scanner's own first
+committed version, back when its canary samples were plain string literals.
+Every value in it is a fake built for the self-test. It was **not** rewritten
+away, because doing so would falsify the commit that says "the scanner was
+flagging itself" — the same reason the SHAs in this log were left alone.
+
+## The cost was paid, not hidden
+
+141 commits changed SHA, and this log, `HANDOFF.md`, `PLAN.md` and the
+`docs/phase-2` reports cite dozens of the old ones. They were deliberately not
+edited. `docs/commit-map.txt` maps all 141 old SHAs to new, with a header
+explaining how to use it, and the README points at it. No commit was dropped.
+
+Three old-repository URLs in `docs/phase-2/` were also left alone: each sits
+inside a dated evidence statement ("the sole remote is X; **2 commits**") that
+was true when written. The README carries the current home instead, and the old
+repository gets an archive notice — which is the mitigation that actually stops
+someone building against the wrong thing.
