@@ -120,6 +120,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The API refuses to boot without a signing key, by design: JWT_SECRET has
+      # no default, and the .env.example placeholder is refused too, because a
+      # placeholder nothing rejects IS a default. That rule is right, and it is
+      # why both of these jobs failed the first time this workflow ever ran.
+      #
+      # Generated per run rather than stored. It is a throwaway key for a
+      # database that is destroyed with the runner, so there is nothing to leak
+      # and nothing to rotate — which keeps this workflow's promise that no job
+      # requires a credential. A literal here would be a 32-character secret
+      # committed to the repository, and the secret scan would rightly fail it.
+      - name: Generate an ephemeral JWT_SECRET
+        run: |
+          echo "JWT_SECRET=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))")" >> "$GITHUB_ENV"
+
       # The SAME compose file local development uses, so CI and a developer's
       # machine prove the same thing about the same topology. Its healthcheck
       # initiates the replica set idempotently; --wait blocks until a PRIMARY
@@ -203,6 +217,20 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # The API refuses to boot without a signing key, by design: JWT_SECRET has
+      # no default, and the .env.example placeholder is refused too, because a
+      # placeholder nothing rejects IS a default. That rule is right, and it is
+      # why both of these jobs failed the first time this workflow ever ran.
+      #
+      # Generated per run rather than stored. It is a throwaway key for a
+      # database that is destroyed with the runner, so there is nothing to leak
+      # and nothing to rotate — which keeps this workflow's promise that no job
+      # requires a credential. A literal here would be a 32-character secret
+      # committed to the repository, and the secret scan would rightly fail it.
+      - name: Generate an ephemeral JWT_SECRET
+        run: |
+          echo "JWT_SECRET=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))")" >> "$GITHUB_ENV"
 
       # docs/api/index.html embeds a COPY of the artifact so the contract can be
       # read by opening a file, with no server (a page that fetches its sibling
