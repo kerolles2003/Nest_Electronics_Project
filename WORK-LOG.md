@@ -7477,3 +7477,109 @@ The two failures are new and neither is a regression in the code:
   not this assertion. The code is right and the test still asserts the old
   destination. Left unfixed: it is a storefront change and this task was the
   publication, not the QA pass.
+
+---
+
+# Part 8c — The scanner, and the hole in the method that built it
+
+## My own method had a hole, and a clean result would have hidden it
+
+This is the most important line in this entry, so it goes first.
+
+The exact-value half of the audit worked by pulling the live credentials out of
+the untracked `.env` files and searching history for those literal strings. To
+keep the needle list free of noise, the first version filtered out values that
+were **digits only**.
+
+`CLOUDINARY_API_KEY` is a 15-digit number.
+
+So the scan that reported "no Cloudinary credential in history" had **never
+looked for the Cloudinary API key at all**, and would have reported exactly the
+same thing if the key had been sitting in the initial commit. The output of a
+scan that cannot see a class of secret is indistinguishable from the output of a
+scan that looked and found nothing. It was caught only because the needle list
+was read back key by key and one line said `CLOUDINARY_API_KEY -> 0 blobs`,
+which was suspicious for a key that is a number.
+
+The list was rebuilt with **no shape filter at all** for any key matching
+`SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|SALT|SIGNING|PRIVATE|CLOUD_NAME|URI`, and
+re-run. The result stayed clean, and now means something.
+
+**This is the fourth time in this repository that a green signal meant
+nothing**, and they are all the same shape — the instrument could not perceive
+the defect it was pointed at:
+
+1. `t1-chrome.spec.ts` asserted the footer's "Brands" anchor was rendered. It
+   never asserted the link resolved, and `/brands` was a 404 in the chrome of
+   every page on the site for as long as the test was green.
+2. **Ninety-six passing browser tests** had never rendered a product image. The
+   suite ran with no Cloudinary cloud name, so a product image drawn at
+   `opacity: 0` passed everything.
+3. The QA crawl reported `imagesInvisible: 0` on all 120 records — for the same
+   reason. There was no product image to be invisible. The defect was real and
+   present; the instrument was blind to it.
+4. This one.
+
+And a fifth of the same family, on the configuration side: `.env.example`
+shipped a 57-character `JWT_SECRET` that satisfied `min(32)`, so the schema
+said yes to a signing key that is in the repository. A placeholder nothing
+rejects is a default.
+
+The pattern is worth naming because it keeps recurring: **a check that has never
+failed is not evidence that it works.** Which is why the scanner now proves
+itself against a canary on every run rather than once, by hand, on the day it
+was written.
+
+## The scanner flagged itself, permanently, one commit after landing
+
+Committing `scripts/scan-secrets.mjs` made its own source a blob, and its canary
+samples were plain string literals — so the next run matched all fifteen of its
+own patterns and went red pointing at itself. It would have been red before a
+single real push.
+
+That is the precise failure the whole check exists to prevent. A permanently red
+gate is a gate people learn to skip, and one that cries wolf about itself
+teaches the habit fastest — the same argument this log already made about a
+permanently failing test.
+
+The samples are now assembled at runtime from fragments split where each pattern
+requires contiguity. The assembled value exercises the pattern exactly as a real
+secret would; the source text matches nothing. `--file <path>` was added to scan
+a single working-tree file, which is how that is verified and is useful in its
+own right — before a secret is a blob is the only moment it is cheap to remove.
+
+The one bad blob is in history at `bc1a3ef` and is allowlisted **by SHA** with
+its reason, not rewritten away. Every value in it is a fake built for the
+self-test.
+
+## What the scanner is
+
+Blocking, on **every push to every branch** and every pull request — its own
+workflow rather than a job in `ci.yml`, because `ci.yml` runs on push only for
+`main`, and a credential is on the remote the moment it is pushed whatever
+branch carries it. It has no dependencies, so it costs seconds.
+
+It reads every blob reachable from every ref: 1,868 of them, contents rather
+than filenames. `fetch-depth: 0` is load-bearing, and the script **fails rather
+than reporting clean** if it finds a shallow clone with nothing to read — the
+one remaining way it could have passed by looking at nothing.
+
+Proven before it was trusted: it blocks a planted Brevo key, and **still blocks
+after that file is deleted**, which is the property that matters. Deleting a
+secret does nothing; the blob stays and the history is what gets cloned.
+
+## Three things fixed before the handover
+
+- **Ports pinned.** Both Next apps took the default 3000, so the second to start
+  silently moved to 3001 — or took 3000 first and left the storefront somewhere
+  its own verification links did not point at. api 3002, storefront 3000, admin
+  3001, tabulated in `SANDBOX.md`. The e2e suites pass their own ports and are
+  unaffected.
+- **`t2-flip.spec.ts:195` fixed.** `3a02643` moved the signed-in bounce off the
+  auth pages to `/` and updated the proxy but not this assertion, so it failed
+  against correct code. A red test in a repository being handed over reads as a
+  broken repository.
+- **`/blog` labelled**, in the README and in a header comment on the page. Still
+  Supabase-backed, five broken images, deferred to Phase 8 — and explicitly not
+  the house pattern to copy, since it is the only route still fetching through
+  `getServices()`.
