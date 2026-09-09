@@ -7608,10 +7608,27 @@ Pushing there would have published the full API contract, this log, and a
 `SECURITY.md` that names where a credential lived — while the repository that
 actually carried the key stayed private. Reported; nothing was pushed.
 
-`Nest_Electronics_Project` passes both: 404 unauthenticated, anonymous read
-refused for want of credentials, and **0 refs** — genuinely empty, not merely
-new. `Nest_Electronics` is still public and still empty, and should be deleted
-or made private so it cannot be mistaken for this one.
+A second repository, `Nest_Electronics_Project`, passed both: 404
+unauthenticated, anonymous read refused for want of credentials, and **0 refs** —
+genuinely empty, not merely new.
+
+**`Nest_Electronics_Project` is this repository, and the similarly-named one
+above is not.** A tidy-up was planned — delete the empty public
+`Nest_Electronics`, then rename this one into that freed name, which is the
+natural name and the one that belongs in the Flutter handover. It was cancelled
+before anything was pushed: the owner had no 2FA verification available, and
+GitHub requires it for both operations.
+
+So the awkward name stands, and it is load-bearing. `Nest_Electronics` still
+exists, is still **public**, and is still empty. A developer who guesses the
+obvious name lands on nothing at all, which at least fails loudly — but the
+README carries a table naming all three for exactly this reason.
+
+If the rename happens later, it is still cheap in GitHub's terms — the redirect
+is automatic — but it will no longer be free: this repository will have been
+cloned by then, and every clone's `origin` keeps pointing at a redirect rather
+than the real name. Whoever does it should update the README table and say so in
+the handover.
 
 ## The rewrite
 

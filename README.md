@@ -86,7 +86,16 @@ The same rewrite is why there is no credential anywhere in this history. See
 
 ## Where this repository lives
 
-`kerolles2003/Nest_Electronics_Project` is the home. It supersedes
-`kerolles2003/Nest_Electro`, which is **archived** and carries an older, divergent prototype —
-a Supabase/Vite storefront that is not this system. If you were sent there, you were sent to the
-wrong place; nothing there is current.
+**`kerolles2003/Nest_Electronics_Project`** is the home. Clone that one.
+
+Three repositories under this owner have confusingly similar names, and only the first is this
+system:
+
+| Repository | What it is |
+|---|---|
+| **`Nest_Electronics_Project`** | **This project.** Private. The only one with the system in it. |
+| `Nest_Electro` | The predecessor, **archived**. Carries an older, divergent prototype — a Supabase/Vite storefront that is not this system. |
+| `Nest_Electronics` | **Empty, and not this project.** Created by mistake, public, never pushed to. Nothing is there. |
+
+The middle name is the natural one for this project and is the one you will guess. It is the
+wrong one. If a link sent you to either of the last two, you were sent to the wrong place.
