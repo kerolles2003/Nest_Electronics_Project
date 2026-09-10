@@ -8265,3 +8265,114 @@ dependency and should not acquire one to support a test.
   and the wrapper turns that into the compose command to run
 
 The standalone container was started for the test and removed after it.
+
+---
+
+# Part 12 — the storefront re-run, and two tests that measured the machine
+
+## Before and after, by name
+
+The count is the same at one end and misleading at the other, which is why this
+is a list of names.
+
+**Before** — 99 passed, 2 failed, 101 tests, 7.4 minutes:
+
+- `purchase-journey.spec.ts:49` "a customer can register, order and see it in
+  their history" — the standalone `mongod`, closed in Part 11.
+- `t2-flip.spec.ts:195` "sends a signed-in customer away from the auth pages" —
+  the stale destination, closed in `eacb60f`.
+
+**After** — **103 passed, 0 failed, 103 tests, 4.4 minutes.**
+
+Both stragglers are closed and stay closed. The suite gained two tests since the
+baseline, so 2 failed → 2 failed would have looked like no progress at all while
+being a complete swap of which tests were red. It was, on the first run.
+
+## The first re-run was red, and neither failure was a regression
+
+Run one came back `2 failed, 101 passed` — a different two:
+
+- `qa-layout.spec.ts:131` "every internal link in the header, footer and body
+  resolves"
+- `qa-layout.spec.ts:225` "no image on a catalogue page is left at zero opacity"
+
+Run two, same commit, nothing touched, **7 passed**. The only variable was free
+memory: roughly 300 MB during the first run, roughly 1.5 GB during the second.
+
+That is the worst kind of red. It is not wrong — those two tests really did fail —
+but it carries no information about the code, and a suite that goes red when the
+machine is busy teaches exactly the lesson this repository has spent a week
+trying to unteach. So neither was left as found.
+
+### `:131` was a timeout, and it asserted nothing
+
+    Test timeout of 90000ms exceeded.
+    Error: apiRequestContext.get: Request context disposed.
+      → GET http://127.0.0.1:3100/blog
+
+`/blog` was not broken. It was simply the link the clock ran out on. The test
+collects every internal `href` and requests each one, and in dev mode the FIRST
+request to a route compiles it — real work the 90-second default never budgeted
+for. No status was ever compared: `broken` was still empty and `expect(broken)`
+never ran.
+
+**This is the address-invariant lesson again.** A test named "every internal link
+resolves" that dies on its own timeout proves nothing about the links, exactly as
+a concurrency test that dies on `ECONNRESET` proves nothing about defaults. It
+belongs on the unverified list, not the broken list.
+
+`test.slow()` triples the budget. Not one assertion was touched. The same walk
+took 18.6 seconds on the run that followed.
+
+Supabase was checked and eliminated first — `/blog` is the one customer-facing
+route still reading it, so a hang there was the obvious suspect. The host answers
+in 0.58 s. It was never the cause.
+
+### `:225` measured before React had hydrated
+
+Twelve images, complete and decoded and drawn at `opacity: 0` — the exact defect
+the spec's own comment describes, and the exact count it quotes.
+
+But `ProductCard`'s fix is present and correct: a mount effect reading
+`img.complete && naturalWidth > 0`, on **both** render variants, in a package
+consumed from source. So the fix was live, and the images were still invisible.
+
+The gap is `settle()`. It waits for `networkidle`, and the network says nothing
+about whether React has hydrated. `FeaturedProducts` and `NewArrivals` are both
+behind `<Suspense>`, and on a loaded machine those boundaries hydrate well after
+the network goes quiet. The test was reading **"has not faded in yet"** as
+**"never fades in"** — same symptom, different defect.
+
+`reactOwnsLoadedImages()` now waits for React's own `__react…` markers on every
+loaded image before anything is measured — the same proof `probeHydration` uses
+in the health fixture, so nothing in the application opts in to being measured.
+If ownership never arrives it **fails**, naming hydration or an unresolved
+Suspense boundary. It does not skip.
+
+### Proved by breaking it on purpose
+
+The obvious risk in "wait longer before asserting" is that it waits until the
+real defect goes away. So the real defect was put back: the mount effect in
+`packages/ui/src/product-card.tsx` was removed, leaving the `onLoad`-only code
+that shipped the original bug.
+
+**The test failed, with the hydration wait in place** — twelve images at opacity
+zero, the same list. Restored, it passes. The wait distinguishes "not yet" from
+"never" without softening the assertion, which is the only version of this change
+worth making.
+
+## The environment finding: there was no compose replica set to use
+
+Part 11 made the suite refuse to start against a database that cannot do
+transactions. Running it here found the other half of that story: **the Docker
+daemon was not running at all**, and the only `mongod` on the machine belonged to
+an unrelated project's scratchpad on port 27105.
+
+The probe is right to assert the capability rather than the topology. A native
+single-node replica set on 27017 satisfies transactions perfectly well, and that
+is what this run used — `mongod --replSet rs0`, initiated once. The suite's
+guarantee held: it checks that a transaction can start, not that Docker started
+it, so the honest requirement is portable and this run met it without compose.
+
+Worth writing down rather than fixing: `docker-compose.dev.yml` is still the only
+documented way to get the right topology, and it was unavailable.

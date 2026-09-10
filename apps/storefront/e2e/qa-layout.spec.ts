@@ -56,6 +56,58 @@ async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
 }
 
+/**
+ * Waits until React OWNS the images that have loaded.
+ *
+ * `settle` waits for the network, and the network says nothing about whether
+ * React has hydrated. `FeaturedProducts` and `NewArrivals` are both behind
+ * `<Suspense>`, and on a loaded machine those boundaries hydrate well after
+ * `networkidle` — so a measurement taken at `networkidle` reads "has not
+ * faded in YET" as "never fades in". Same symptom, different defect.
+ *
+ * That is not hypothetical. The opacity test below failed on a run with roughly
+ * 300 MB of memory free and passed on the next run, same code, with more
+ * headroom. A test that flips on how busy the machine is cannot be evidence in
+ * either direction, which is the whole complaint this file was written about.
+ *
+ * The marker is React's own — `__react…` on every host node it owns, the same
+ * proof `probeHydration` uses in the health fixture — so the application does
+ * not have to opt in to being measured.
+ */
+async function reactOwnsLoadedImages(page: Page): Promise<void> {
+  const OWNERSHIP_TIMEOUT_MS = 30_000;
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const loaded = Array.from(document.querySelectorAll('img')).filter(
+          (img) => img.complete && img.naturalWidth > 0,
+        );
+
+        // Nothing to wait for. The caller asserts this case itself, and its
+        // message ("rendered no images at all") is the useful one.
+        if (loaded.length === 0) return true;
+
+        return loaded.every((img) => Object.keys(img).some((key) => key.startsWith('__react')));
+      },
+      undefined,
+      { timeout: OWNERSHIP_TIMEOUT_MS },
+    );
+  } catch {
+    /*
+     * A failure, deliberately, never a skip. If React never took ownership then
+     * either hydration did not finish or a Suspense boundary never resolved,
+     * and both are defects this file exists to catch — reported as themselves
+     * rather than as a confusing opacity result.
+     */
+    throw new Error(
+      `React never took ownership of the loaded images on ${page.url()} within ` +
+        `${String(OWNERSHIP_TIMEOUT_MS)}ms. Hydration did not finish, or a Suspense ` +
+        'boundary never resolved. Opacity is only meaningful after this point.',
+    );
+  }
+}
+
 test.describe('the page fits the phone it is being read on', () => {
   test('no route scrolls the body sideways at 360px', async ({ page }) => {
     await page.setViewportSize(PHONE);
@@ -129,6 +181,19 @@ test.describe('the document has the landmarks it claims', () => {
 
 test.describe('the chrome does not link to pages that do not exist', () => {
   test('every internal link in the header, footer and body resolves', async ({ page, request }) => {
+    /*
+     * SLOW on purpose. This is a budget, not a loosened assertion.
+     *
+     * The walk requests every internal link, and in dev mode the FIRST request
+     * to a route compiles it. That is real work the 90s default does not budget
+     * for: on a run with roughly 300 MB free this hit the cap mid-request to
+     * /blog and died with `Request context disposed` having checked no status
+     * at all — `broken` was never asserted. A timeout here proved nothing
+     * about the links, exactly as a dropped connection proved nothing about the
+     * address invariant. The same walk took 34s with more headroom.
+     */
+    test.slow();
+
     /*
      * Six of these were 404s — `/about`, `/brands`, `/faq`, `/returns`,
      * `/shipping`, `/vendors` — and because they live in the header and footer
@@ -237,6 +302,9 @@ test.describe('product images are visible, not merely loaded', () => {
     for (const route of ['/', '/products']) {
       await page.goto(route);
       await settle(page);
+      // Before measuring, not after: see the helper for what networkidle does
+      // not tell you.
+      await reactOwnsLoadedImages(page);
 
       const images = await page.evaluate(() =>
         Array.from(document.querySelectorAll('img')).map((img) => ({
