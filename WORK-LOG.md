@@ -8558,3 +8558,80 @@ a pattern, a suppression is permanent in a way a sighting is not, and this
 fixture's whole value is that its ignore list is short enough to read. It is
 written down here instead: **if `cannot have a negative time stamp` appears
 again, it is this, it is dev-mode React, and it is not the console.**
+
+---
+
+# Part 15 — the relative timestamps stop asking the browser what time it is
+
+The defect from Part 13: `OrdersTable` printed "3m ago" from `Date.now()` read
+during render. It is a **client** component, so React renders it twice — once on
+the server into HTML, once in the browser to hydrate — with a different clock
+each time. When a minute ticked in the gap the two disagreed, React reported
+
+    Hydration failed because the server rendered text didn't match the client
+    + 3m ago
+    - 2m ago
+
+and threw away the server tree for the whole boundary. Observed once for real,
+where it failed **six tests in one run**.
+
+## The fix
+
+The instant is decided ONCE, on the server, and passed in: `renderedAt` on
+`OrdersTableProps`, `relativeTime(iso, now)` instead of `relativeTime(iso)`.
+Both render passes become pure functions of the same inputs. Same rule
+`initialsOf` in `lib/api/identity.ts` already follows, and for the same reason.
+
+Nothing is lost: these figures were always as-of page render — the component
+never re-rendered them on a timer.
+
+`ReviewsTable` had the identical bug and got the identical treatment. The
+dashboard index has the same-shaped helper and is **not** affected: it is a
+Server Component, so it renders once and there is no second pass to disagree
+with. Left alone rather than "fixed" for symmetry.
+
+### `src/lib/render-clock.ts`, and why a one-line function earns a file
+
+`renderedAt={Date.now()}` in a Server Component is an impure call during render,
+and the React Compiler lint rule refuses it — correctly, because it cannot tell
+a Server Component (renders once, per request) from a client one (renders twice,
+on two machines). `serverRenderInstant()` names which case this is and puts the
+reasoning where a reader will find it.
+
+It is `server-only`. Importing it into a client component would reintroduce
+precisely the bug it removes, and that is now a **build error** rather than
+something review has to catch.
+
+## What I could NOT do, and it matters
+
+**There is no regression test for this.** Not because I did not try — four
+approaches, each abandoned for a measured reason:
+
+1. **Skew the browser clock and let the health fixture catch the page error.**
+   The skew works perfectly: `page.clock.setFixedTime(+90s)` makes the two
+   clocks land in different minutes every time, and the mismatch fires on
+   demand. But the fixture never saw it, and the test passed against a
+   component I had deliberately broken.
+2. **Assert the rendered text.** Useless: React keeps the SERVER text after a
+   mismatch, so the cell reads "Just now" whether the component is fixed or
+   broken. The DOM cannot tell the two apart.
+3. **`page.on('pageerror')` and `page.on('console')` in the test.** Neither
+   fires. Next's dev overlay installs its own handler and forwards the error to
+   the dev server over its websocket — the only place it appears is the server's
+   stdout, prefixed `[browser]`, where no test can reach it.
+4. **A capture-phase `window.addEventListener('error')` installed by
+   `addInitScript`, ahead of the overlay.** Also never fires. React does not let
+   this one reach the window at all.
+
+Each attempt was run against the deliberately-broken component, and **each one
+passed**. A test that passes against the defect it is named after is the exact
+thing this repository has spent a week removing, so none of them was kept.
+
+**What guards it instead is the type system.** `relativeTime` cannot be called
+without an instant, and `renderedAt` is a required prop — so a regression is a
+deliberate edit that has to add an argument back, not an accident. That is
+weaker than a test and it is what is actually true.
+
+**Verified:** `admin-orders.spec.ts` + `admin-session-renewal.spec.ts` — **20
+passed**, `nothing was ignored`, `nothing left behind`. Admin type-check, lint
+(0 errors) and build all green.

@@ -8,6 +8,7 @@ import type { OrderStatus } from '@/lib/api/types';
 import OrdersTable from '@/components/orders/OrdersTable';
 import QueueFilters from '@/components/orders/QueueFilters';
 import { AlertCircle } from 'lucide-react';
+import { serverRenderInstant } from '@/lib/render-clock';
 
 /**
  * The order work queue, on the API.
@@ -172,6 +173,9 @@ export default async function OrdersPage(props: {
             activeStatus={status}
             counts={stats.counts}
             total={stats.total}
+            // Decided here, on the server, so both render passes agree — see the
+            // prop on OrdersTableProps for what disagreeing costs.
+            renderedAt={serverRenderInstant()}
           />
         </Suspense>
       )}

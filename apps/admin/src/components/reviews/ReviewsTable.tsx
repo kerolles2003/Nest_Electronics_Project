@@ -24,12 +24,35 @@ interface ReviewsTableProps {
     rejected: number;
     verified: number;
   };
+  /**
+   * The instant every row on this page is measured against, decided ONCE on the
+   * server.
+   *
+   * This table is a client component, so React renders it twice: once on the
+   * server into HTML, and again in the browser to hydrate it. A relative time
+   * read from `Date.now()` inside the component is a different number on each of
+   * those passes, and when a minute boundary falls between them the two disagree:
+   *
+   *     + 3m ago
+   *     - 2m ago
+   *
+   * React reports that as "the server rendered text didn't match the client" and
+   * throws away the server tree for the whole boundary. It is intermittent by
+   * nature — it needs a minute to tick at the wrong moment — so it survived every
+   * per-screen test run and only appeared in a longer one, where the orders were
+   * old enough for the boundary to land in the gap.
+   *
+   * Passing the instant in makes both passes pure functions of the same inputs,
+   * which is the same rule `initialsOf` in `lib/api/identity.ts` already follows
+   * and for the same reason. The figures are as-of page render either way: this
+   * component never re-rendered them on a timer.
+   */
+  renderedAt: number;
 }
 
-function formatRelativeTime(dateString: string) {
+function formatRelativeTime(dateString: string, now: number) {
   const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const diffMs = now - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
@@ -54,7 +77,14 @@ function StarRating({ rating }: { rating: number }) {
   );
 }
 
-export function ReviewsTable({ initialReviews, currentPage, totalPages, total, stats }: ReviewsTableProps) {
+export function ReviewsTable({
+  initialReviews,
+  currentPage,
+  totalPages,
+  total,
+  stats,
+  renderedAt,
+}: ReviewsTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { addToast } = useToast();
@@ -348,7 +378,7 @@ export function ReviewsTable({ initialReviews, currentPage, totalPages, total, s
                         <StatusBadge status={review.moderation_status ?? 'pending'} />
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <span className="text-[11px] text-muted-foreground">{formatRelativeTime(review.created_at)}</span>
+                        <span className="text-[11px] text-muted-foreground">{formatRelativeTime(review.created_at, renderedAt)}</span>
                       </td>
                       <td className="px-5 py-3 text-right">
                         <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">

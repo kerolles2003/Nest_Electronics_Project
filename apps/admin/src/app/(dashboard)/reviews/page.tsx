@@ -2,6 +2,7 @@ import { requireAdmin, getAdminServices } from '@/lib/services';
 import { DomainNotLiveNotice } from '@/components/system/DomainNotLiveNotice';
 import { Suspense } from 'react';
 import { ReviewsTable } from '@/components/reviews/ReviewsTable';
+import { serverRenderInstant } from '@/lib/render-clock';
 
 function ReviewsSkeleton() {
   return (
@@ -98,6 +99,9 @@ export default async function ReviewsPage(props: {
             rejected: rejectedCount ?? 0,
             verified: verifiedCount ?? 0,
           }}
+          // Decided here, on the server, so both render passes agree — see the
+          // prop on ReviewsTableProps for what disagreeing costs.
+          renderedAt={serverRenderInstant()}
         />
       </Suspense>
     </div>

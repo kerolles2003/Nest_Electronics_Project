@@ -34,6 +34,30 @@ interface OrdersTableProps {
   /** `null` for a count the API did not answer — NOT zero. */
   counts: Record<string, number | null>;
   total: number | null;
+  /**
+   * The instant every row on this page is measured against, decided ONCE on the
+   * server.
+   *
+   * This table is a client component, so React renders it twice: once on the
+   * server into HTML, and again in the browser to hydrate it. A relative time
+   * read from `Date.now()` inside the component is a different number on each of
+   * those passes, and when a minute boundary falls between them the two disagree:
+   *
+   *     + 3m ago
+   *     - 2m ago
+   *
+   * React reports that as "the server rendered text didn't match the client" and
+   * throws away the server tree for the whole boundary. It is intermittent by
+   * nature — it needs a minute to tick at the wrong moment — so it survived every
+   * per-screen test run and only appeared in a longer one, where the orders were
+   * old enough for the boundary to land in the gap.
+   *
+   * Passing the instant in makes both passes pure functions of the same inputs,
+   * which is the same rule `initialsOf` in `lib/api/identity.ts` already follows
+   * and for the same reason. The figures are as-of page render either way: this
+   * component never re-rendered them on a timer.
+   */
+  renderedAt: number;
 }
 
 /** The tiles, in lifecycle order. */
@@ -51,9 +75,9 @@ function label(status: OrderStatus): string {
   return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ');
 }
 
-function relativeTime(iso: string): string {
+function relativeTime(iso: string, now: number): string {
   const then = new Date(iso).getTime();
-  const minutes = Math.floor((Date.now() - then) / 60000);
+  const minutes = Math.floor((now - then) / 60000);
 
   if (minutes < 1) return 'Just now';
   if (minutes < 60) return `${String(minutes)}m ago`;
@@ -70,6 +94,7 @@ export default function OrdersTable({
   activeStatus,
   counts,
   total,
+  renderedAt,
 }: OrdersTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -206,7 +231,7 @@ export default function OrdersTable({
                         {order.orderNumber}
                       </Link>
                       <span className="text-[10px] text-muted-foreground">
-                        {relativeTime(order.placedAt)}
+                        {relativeTime(order.placedAt, renderedAt)}
                       </span>
                     </div>
                   </td>
