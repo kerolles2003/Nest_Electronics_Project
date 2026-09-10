@@ -8376,3 +8376,74 @@ it, so the honest requirement is portable and this run met it without compose.
 
 Worth writing down rather than fixing: `docker-compose.dev.yml` is still the only
 documented way to get the right topology, and it was unavailable.
+
+---
+
+# Part 13 — the admin suite run as a whole, and two defects only that found
+
+Part 10 ran each screen's spec as it was written. That proves each spec, and it
+does not prove they coexist: the catalogue fixtures are shared, and the teardown
+compares the database against a recorded baseline. So the whole admin suite was
+run in one go, both configs.
+
+**72 passed, 2 failed, 5.7 minutes** — and `admin-e2e: nothing left behind`, so
+the shared fixtures and the teardown baseline do hold across a full run.
+
+Both failures are in `admin-session-renewal.spec.ts`, which is **pre-existing**
+and not one of the seven screens. Neither is a regression from Part 10: nothing
+in that work touches session renewal or the orders table.
+
+## `:127` — a relative timestamp that disagrees with itself
+
+    a second navigation does not renew again
+
+No assertion failed. The health fixture failed it, on a page error:
+
+    Hydration failed because the server rendered text didn't match the client
+    ...
+    +   3m ago
+    -   2m ago
+
+`relativeTime()` in `src/components/orders/OrdersTable.tsx` computes from
+`Date.now()` at render. The server renders `2m ago`, the client re-computes at
+hydration and gets `3m ago`, and React regenerates the tree. It fires only when
+a minute boundary falls between the two renders, which is why per-screen runs
+never saw it and a longer full-suite run did — the orders were older by then.
+
+**Confirmed intermittent:** the same test passes when the file is run alone.
+
+The same pattern is in two more places: `src/app/(dashboard)/page.tsx` and
+`src/components/reviews/ReviewsTable.tsx`. The reviews one is Supabase-backed and
+being rebuilt in Phase 8; the dashboard one is live and has no browser coverage
+at all, so nothing would report it.
+
+## `:170` — a dead session left in the browser
+
+    does not leave a dead session in the browser
+
+    expect(received).toBeFalsy()
+    Received: "not.a.valid.token"
+
+Sign in, break both cookies, navigate. The redirect to `/admin/login` works —
+the test above it asserting exactly that passes — but the refresh cookie is
+still in the browser afterwards. The spec says why that matters in its own
+words: it makes every later navigation repeat the failed round trip, and leaves
+the navigation guard holding a credential nothing can use.
+
+**This one is NOT intermittent.** Run alone: **8 passed, 1 failed**, and this is
+the one. It is a standing defect, reproducible on demand.
+
+Left unfixed deliberately. It is session and auth code, outside the three parts
+this task defined, and a guessed fix in that area is worse than a precise report
+of it. Recorded here so it is a known red with a cause rather than a mystery.
+
+## What this does and does not say about CI
+
+Neither failure makes CI red, because **CI runs no browser suites**. `ci.yml` is
+lint, type-check, build, `pnpm --filter api test` (the transaction gate), the
+API contract drift gate, and the secret scan. The browser suites are local-only.
+
+That cuts both ways, and the second half is the one worth writing down: the
+admin and storefront browser suites are the only thing covering the console and
+the storefront in a browser, and **nothing runs them automatically**. Every
+result in Parts 10 to 13 is a result somebody chose to produce by hand.
