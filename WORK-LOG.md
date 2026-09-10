@@ -8447,3 +8447,114 @@ That cuts both ways, and the second half is the one worth writing down: the
 admin and storefront browser suites are the only thing covering the console and
 the storefront in a browser, and **nothing runs them automatically**. Every
 result in Parts 10 to 13 is a result somebody chose to produce by hand.
+
+---
+
+# Part 14 — `:170` was my mistake, not the console's
+
+**Correcting Part 13 directly.** I recorded `admin-session-renewal.spec.ts:170`
+as "a standing defect, reproducible on demand" — a dead refresh cookie left in
+the browser after an unrenewable session. That was wrong, and the way it was
+wrong is worth more than the fix.
+
+The console clears the session correctly. The **test measured before the
+clearing could happen**.
+
+## What the instrumented run actually showed
+
+Reading the code did not settle it and neither did two reconstructions of the
+scenario, both of which failed to reproduce the redirect at all. What settled it
+was logging every response inside the real failing test:
+
+    200 /admin/orders                       <- page.goto() RETURNS HERE
+    DIAG-FINAL   /admin/orders              <- the assertion reads cookies HERE
+    DIAG-COOKIE  nest_admin_rt=not.a.valid.token
+    303 /admin/session/renew?next=%2Forders <- the clearing happens here
+    200 /admin/login
+
+`requireAdmin()` refuses inside a Server Component, and Next delivers that
+refusal as a **client-side** navigation once the streamed response hydrates. So
+`goto()` resolves on the 200 for `/orders`, and the cookie is read while the
+browser has not yet been anywhere near the route that clears it. The refresh
+cookie was *always* going to still be there. The test reported a leaked session
+and was really measuring that a redirect takes longer than zero milliseconds.
+
+## Why the test above it survived the identical mistake
+
+`:154` does exactly the same three steps and asserts
+
+    await expect(page).toHaveURL(/\/admin\/login$/);
+
+which **retries until it matches**. `:170` used
+
+    expect(await cookieValue(page, REFRESH_COOKIE)).toBeFalsy();
+
+which is one sample, taken at the worst possible moment. Two tests, same
+scenario, one honest and one not, separated only by whether the assertion was
+allowed to wait. That is the same defect as `qa-layout.spec.ts:225` in Part 12 —
+measuring at `networkidle` and calling "not yet" "never" — and this is now the
+second one found in two days.
+
+## The fix
+
+Wait for the flow to reach its observable end, then poll:
+
+    await expect(page).toHaveURL(/\/admin\/login$/);
+
+    await expect
+      .poll(async () => cookieValue(page, REFRESH_COOKIE), { message: ... })
+      .toBeFalsy();
+
+Polled rather than sampled because arriving at `/login` and the browser having
+applied the `Set-Cookie` that cleared the pair are two different moments, and it
+is the second one the test is about.
+
+## Proved by breaking it on purpose
+
+The risk in "wait longer before asserting" is waiting until a real defect
+disappears. So `await clearSession()` was commented out of
+`app/session/renew/route.ts` — the exact leak the test is named after — and the
+fixed test **failed**, with its own message:
+
+    Error: a dead refresh cookie is still in the browser after sign-out
+    Received: "not.a.valid.token"
+
+Restored, it passes. The wait admits the flow, not the bug.
+
+## The general lesson, recorded because it will happen again
+
+Three times now a red test in this repository has meant "the measurement was
+taken too early" rather than "the code is wrong": the `ECONNRESET` racers, the
+image opacity at `networkidle`, and this. In every case a **retrying** assertion
+sat next to a **sampling** one and only the sampling one lied.
+
+`expect(await something())` is a sample. `expect(locator)`, `expect(page)` and
+`expect.poll` are observations that wait. In a suite driving a framework that
+finishes work after the navigation resolves, the sampling form should be treated
+as suspect by default.
+
+## Result
+
+`admin-session-renewal.spec.ts` alone: **9 passed**, `browser-health: nothing was
+ignored in this run`. It was 8 passed and 1 failed before.
+
+## And one thing seen once, recorded rather than suppressed
+
+The full-suite run taken between the fix and this one came back **6 failed, 68
+passed** — every test in this file, including the four that had never failed and
+the one just fixed. The cause was neither the fix nor the console:
+
+    TypeError: Failed to execute 'measure' on 'Performance':
+    'OrdersPage' cannot have a negative time stamp.
+      at flushComponentPerformance (…react-server-dom-turbopack…)
+
+That is React's DEV-ONLY render-timing instrumentation, thrown inside Next's own
+compiled bundle, on every test that loads `/orders`. It did not recur on the run
+above, and it has no counterpart in a production build, which has no
+`flushComponentPerformance` at all.
+
+Deliberately NOT added to the health fixture's ignore list. One sighting is not
+a pattern, a suppression is permanent in a way a sighting is not, and this
+fixture's whole value is that its ignore list is short enough to read. It is
+written down here instead: **if `cannot have a negative time stamp` appears
+again, it is this, it is dev-mode React, and it is not the console.**

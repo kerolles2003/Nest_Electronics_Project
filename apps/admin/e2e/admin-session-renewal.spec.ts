@@ -174,10 +174,42 @@ test.describe('a session that cannot be renewed', () => {
 
     await page.goto(route('/orders'));
 
+    /*
+     * WAIT FOR THE FLOW TO FINISH BEFORE MEASURING. This is the whole fix.
+     *
+     * `requireAdmin()` refuses inside a Server Component, and Next delivers
+     * that refusal as a CLIENT-side navigation once the streamed response
+     * hydrates. So `page.goto()` resolves on the 200 for /orders, well before
+     * the browser has been anywhere near the route that clears the cookies.
+     * Measured, in this order:
+     *
+     *     200 /admin/orders          <- goto() returns HERE
+     *     303 /admin/session/renew   <- the clearing happens here
+     *     200 /admin/login
+     *
+     * Read at `goto()`, the refresh cookie is ALWAYS still present, because
+     * nothing has yet had the chance to remove it. This test was reporting a
+     * leaked session and was really measuring that a redirect takes longer
+     * than zero milliseconds.
+     *
+     * The test above it survived the same mistake only because
+     * `expect(page).toHaveURL()` RETRIES until it matches. A bare
+     * `expect(await ...)` is one sample, taken at the worst possible moment.
+     */
+    await expect(page).toHaveURL(/\/admin\/login$/);
+
     // Keeping the cookies would make every later navigation repeat the whole
     // failed round trip, and would leave the navigation guard letting somebody
     // through on the strength of a credential nothing can use.
-    expect(await cookieValue(page, REFRESH_COOKIE)).toBeFalsy();
+    //
+    // Polled rather than sampled: arriving at /login and the browser having
+    // applied the `Set-Cookie` that cleared the pair are two different
+    // moments, and it is the second one this asserts.
+    await expect
+      .poll(async () => cookieValue(page, REFRESH_COOKIE), {
+        message: 'a dead refresh cookie is still in the browser after sign-out',
+      })
+      .toBeFalsy();
   });
 });
 
