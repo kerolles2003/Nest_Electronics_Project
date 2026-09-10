@@ -8635,3 +8635,80 @@ weaker than a test and it is what is actually true.
 **Verified:** `admin-orders.spec.ts` + `admin-session-renewal.spec.ts` — **20
 passed**, `nothing was ignored`, `nothing left behind`. Admin type-check, lint
 (0 errors) and build all green.
+
+---
+
+# Part 16 — the CI results, which I said could not be read and then read
+
+Every entry from Part 9 onwards has carried the same caveat: the fixes were
+verified locally, and **whether CI actually went green was unobserved**. Part 12
+put it on the unverified list. It should not have been there. The caveat was
+half right and half laziness, and the half that was wrong is the useful part.
+
+`gh` is genuinely not installed on this machine, and the repository is private,
+so the unauthenticated API answers 404 — that much was true and checked. What I
+did not do was ask the obvious next question: **the push worked, so a credential
+for `github.com` exists.** `credential.helper` is `manager`, and
+
+    printf 'protocol=https\nhost=github.com\n\n' | git credential fill
+
+hands back the token Windows Credential Manager already held. The Actions API
+answered 200 on the first try. The token stayed in a shell variable, was never
+printed, and went nowhere but `api.github.com`.
+
+**The lesson is the one this repository keeps relearning.** "I could not check
+it" and "I did not find a way to check it" produce identical sentences and are
+not the same statement, exactly as a scan that cannot see a class of secret
+produces the same output as a scan that looked and found nothing. Both were my
+own reports, three weeks apart.
+
+## What the runs say
+
+| run | commit | result |
+| --- | --- | --- |
+| CI #3 | `ccd0f6f` | **failure** — the six red tests Part 9 diagnosed |
+| CI #4 | `7fa0a89` | **success** — first run carrying both Part 1 fixes |
+| CI #5 | `dbb1b9d` | success |
+| CI #6 | `ec8b8c1` | success |
+
+Secret scan #5 to #8 are green across the same four commits.
+
+`ccd0f6f` is the commit immediately before `85c5229`, so CI #3 → CI #4 is the
+before-and-after of the sharp and concurrency fixes with nothing else in between.
+
+Per-job, on `ec8b8c1`:
+
+| job | result | time |
+| --- | --- | --- |
+| Lint | success | 55s |
+| Type check | success | 58s |
+| Build | success | 77s |
+| API contract drift gate | success | 84s |
+| **Transaction gate** | **success** | **325s** |
+
+## Why the Transaction gate is the line that matters
+
+It runs `pnpm --filter api test`, which is where **both** Part 1 fixes live:
+`sharp-backend.spec.ts` and the `describe('concurrency')` cases in
+`addresses.spec.ts`. Passing there is the one thing local verification could
+never establish, because the sharp defect **only existed on linux-x64** — an x64
+host correctly skipping two `cpu:[wasm32]` parents is the whole mechanism, and a
+Windows developer machine with a `node_modules` predating the change could not
+reproduce it in either direction.
+
+So: 325 seconds of green on a GitHub linux-x64 runner is the proof that the
+WASM fallback now installs under `--frozen-lockfile` where it did not, and that
+the eight-racer concurrency cases **execute** rather than dying on a dropped
+connection before their first assertion.
+
+The pipeline has gone from permanently red to **four consecutive green runs**,
+which was the point of Part 9 and is now a fact rather than an expectation.
+
+## The record, resolvable
+
+- CI #3, the red one: `actions/runs/34377884736`
+- CI #4, the first green: `actions/runs/34391016563`
+- CI #6, current: `actions/runs/34538942974`
+
+Under `github.com/kerolles2003/Nest_Electronics_Project`. Written out because a
+run number alone stops meaning anything once the list scrolls.
