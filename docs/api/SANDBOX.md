@@ -187,9 +187,19 @@ Each app pins its own, so `pnpm dev` at the root starts all three without a coll
 
 Both Next apps default to 3000, so before they were pinned the second one to start
 silently moved to 3001 — or took 3000 first and left the storefront somewhere its own
-verification links did not point at. The `--port` flags in each `package.json` are what
-prevent that; the e2e suites ignore them and pass their own ports (3100 storefront, 3200
-admin) so a test run never fights a development server for a socket.
+verification links did not point at. The `--port` flag on each app's **`dev`** script is
+what prevents that; the e2e suites ignore it and pass their own ports (3100 storefront,
+3200 admin) so a test run never fights a development server for a socket.
+
+`start` is deliberately **not** pinned. An explicit `--port` beats `$PORT`, and every
+platform that runs a built app assigns the port itself and routes health checks to the one
+it assigned — so a pinned `start` listens on 3000 while the platform waits on something
+else and reports no open ports. `apps/api` already takes its port from the environment
+(`PORT` in `apps/api/.env`); the Next apps now do the same in production, and keep the
+pinned ports where the collision actually happens, in development.
+
+To run a second checkout without touching either file, pass the port the way the e2e
+suites do: `pnpm --filter storefront exec next dev --port 4000`.
 
 ---
 
