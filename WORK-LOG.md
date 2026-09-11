@@ -7380,6 +7380,19 @@ pattern was correct and the harness was wrong, which is exactly the failure a
 scanner with nothing to find cannot tell you about. Re-run through the `-f` path
 the real scan uses, it passes. **14/14.**
 
+> **Note, added later.** That 14 is the count of classes in *this* manual audit, and it
+> is not the number of patterns the committed scanner carries. `scripts/scan-secrets.mjs`
+> shipped with **15** — the fifteenth, `stripe live key`, was written with the script in
+> `bc1a3ef` and so was never part of the hand-run above — and a sixteenth,
+> `postgres uri with password`, was added afterwards. Corrected here rather than silently
+> renumbered: bumping the 14 to 16 would claim a hand-verification of two patterns that
+> never happened, which is the same kind of untrue record this entry exists to warn about.
+>
+> Nothing is unproven as a result. `selfTest()` runs **every** pattern against its own
+> canary on every single run and fails the build if any does not fire, so the guarantee the
+> manual audit gave once, the scanner now gives continuously — which was the whole reason
+> for turning the audit into a script.
+
 The exact-value half was seeded from the untracked `.env` files, so the scan
 looked for the *live* credentials and not only for things shaped like
 credentials.
