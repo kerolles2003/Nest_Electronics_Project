@@ -248,6 +248,13 @@ jobs:
       # Deliberately BEFORE the database: this check boots nothing and needs no
       # Mongo, so when the page is stale CI says so in seconds rather than after
       # a container start and a full Nest build.
+      #
+      # This step is the ONLY place the page gate runs. `openapi:check` below
+      # used to start with the same command, so it ran twice in this job and two
+      # places decided when it happened — which meant deleting this step to
+      # "de-duplicate" would silently push the failure back behind the Mongo
+      # container and the Nest build, the exact thing the paragraph above is
+      # about. If this step goes, the gate goes with it.
       - name: Check the browsable API page against the artifact
         run: pnpm --filter api openapi:page:check
 

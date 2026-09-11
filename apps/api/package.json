@@ -18,10 +18,10 @@
     "staff:create": "nest build && node dist/database/seed/staff.provision.js",
     "dev-admin:seed": "nest build && node dist/database/seed/dev-admin.seed.js",
     "catalogue:import": "nest build && node dist/database/import/catalogue-import.js",
-    "openapi:export": "nest build && node dist/openapi/export-openapi.js && node scripts/build-openapi-page.mjs",
+    "openapi:export": "nest build && node dist/openapi/export-openapi.js && pnpm run openapi:page",
     "openapi:page": "node scripts/build-openapi-page.mjs",
     "openapi:page:check": "node scripts/check-openapi-page.mjs",
-    "openapi:check": "node scripts/check-openapi-page.mjs && nest build && node dist/openapi/check-openapi-drift.js",
+    "openapi:check": "nest build && node dist/openapi/check-openapi-drift.js",
     "media:placeholders": "nest build && node scripts/generate-placeholder-images.mjs"
   },
   "dependencies": {
