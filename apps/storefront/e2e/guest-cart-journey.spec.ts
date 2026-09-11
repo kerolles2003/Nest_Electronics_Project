@@ -159,7 +159,27 @@ async function seedGuestCart(
 ): Promise<void> {
   await page.addInitScript(
     ([key, value]) => {
-      window.localStorage.setItem(key as string, value as string);
+      /*
+       * SEEDS ONCE. Playwright runs an init script on EVERY navigation, not
+       * just the first, so an unconditional write here is a harness that
+       * silently resets the application's state part-way through a test.
+       *
+       * That is not hypothetical: it disabled the one assertion
+       * `a merge INTERRUPTED part-way and retried does not double anything`
+       * exists to make. The application froze its merge plan, the retry
+       * navigated, this script overwrote `localStorage` with `pendingMerge:
+       * null`, and the retry therefore re-planned — the exact behaviour the
+       * test was written to forbid. It still passed, because a re-plan against
+       * a cart the aborted write had not reached happens to produce the same
+       * number. On CI the write landed, the re-plan produced 7, and a test that
+       * had never once exercised its own invariant finally said so.
+       *
+       * Seeding only when the key is absent makes the clobber impossible
+       * rather than merely unintended.
+       */
+      if (window.localStorage.getItem(key as string) === null) {
+        window.localStorage.setItem(key as string, value as string);
+      }
     },
     [STORE_KEY, JSON.stringify({ state: { items, pendingMerge }, version: 0 })] as const,
   );
@@ -394,10 +414,15 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
    * THE case. Everything else is arithmetic; this is the one that costs a
    * customer money if it is wrong.
    *
-   * The interruption is real: the second server-action POST — the one that
-   * writes — is aborted at the network layer. The first (the read-only plan)
-   * is allowed through, so the plan is frozen in `localStorage` exactly as it
-   * would be in production, and the write may or may not have reached the API.
+   * The interruption is real AND it lands: the write is forwarded to the API
+   * and only then failed at the client, so the cart really does hold the
+   * target while the browser believes the merge failed.
+   *
+   * That determinism is the point. `route.abort()` alone kills the request
+   * before the API sees it, which makes "did the write land?" a race with the
+   * server — and the branch that actually doubles a basket is the one where it
+   * DID. This case used to lose that race on a developer machine and win it on
+   * CI, so it passed locally for a reason that had nothing to do with the code.
    *
    * The retry then re-applies THOSE targets. Because they are absolute and
    * frozen, the answer is the same whether the aborted write landed or not.
@@ -442,6 +467,13 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
       body.includes(product.id) && body.includes(`"quantity":${String(TARGET)}`);
 
     if (carriesTarget) {
+      /*
+       * Forwarded first, then failed. `route.fetch()` performs the request —
+       * the API applies the write — and the client is told the network died.
+       * That is precisely "the write landed and the response was lost", which
+       * is the only interruption that can double a cart.
+       */
+      await route.fetch().catch(() => null);
       await route.abort('failed');
       return;
     }
@@ -478,6 +510,25 @@ test('a merge INTERRUPTED part-way and retried does not double anything', async 
   // --- the retry -----------------------------------------------------------
   await page.unroute('**/*');
   await page.goto('/account/orders');
+
+  /*
+   * The frozen plan MUST still be there after the navigation.
+   *
+   * Asserted explicitly because its absence is invisible: without a plan the
+   * retry simply re-plans, which looks like a working merge and produces the
+   * right number whenever the interrupted write did not land. This assertion
+   * is the difference between testing the retry path and testing a coincidence.
+   */
+  expect(
+    await page.evaluate((key) => {
+      const raw = window.localStorage.getItem(key);
+      return raw === null
+        ? null
+        : (JSON.parse(raw) as { state: { pendingMerge: unknown[] | null } }).state.pendingMerge;
+    }, STORE_KEY),
+    'the frozen plan did not survive the retry navigation, so the retry re-planned',
+  ).toEqual([{ productId: product.id, quantity: TARGET }]);
+
   await waitForMerge(page);
 
   /*
