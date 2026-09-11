@@ -1,0 +1,22 @@
+# Files whose exact BYTES are load-bearing.
+#
+# `core.autocrlf` is true on the Windows machines this repository is developed
+# on, which means git may rewrite line endings between the working tree and the
+# blob. For most files that is invisible and welcome. For these four it is not:
+#
+#   - docs/api/openapi.v1.json is the frozen contract, and docs/api/index.html
+#     records a sha256 of it.
+#   - docs/api/index.html embeds a copy of that contract and records hashes of
+#     the two vendored Swagger UI files beside it.
+#   - apps/api/scripts/check-openapi-page.mjs fails the build when any of those
+#     hashes disagrees with the file it names.
+#
+# A line-ending rewrite changes the bytes, therefore the hash, therefore the
+# verdict — and it would do so on one platform and not the other, producing a
+# gate that is green on the machine that ran the generator and red in CI, for a
+# difference in no content anybody changed. `-text` tells git to store and check
+# out these paths verbatim everywhere.
+docs/api/openapi.v1.json     -text
+docs/api/index.html          -text
+docs/api/swagger-ui-bundle.js -text
+docs/api/swagger-ui.css      -text
