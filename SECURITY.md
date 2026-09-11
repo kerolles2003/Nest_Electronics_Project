@@ -23,6 +23,20 @@ reaches a remote, rotation is the only remedy, and deleting the file is not a
 fix. Rotate the credential, then decide with the owner whether to rewrite
 history or to record the finding here and allowlist the blob.
 
+### Running it yourself
+
+CI is the backstop, not the first line — by the time it fails, the blob is
+already on the remote. Both of these run locally with no dependencies:
+
+```
+pnpm secrets:scan                    # the whole history, exactly what CI runs
+pnpm secrets:scan-file <path>        # one working-tree file, before you add it
+```
+
+The second one is the cheap half of the same job, and the only moment a secret
+is still free to remove. Use it on anything arriving from outside the repository
+— a vendored bundle, a pasted config, a downloaded fixture — before `git add`.
+
 ## The one history rewrite, and the credential that is not here
 
 **Status: no credential exists in this repository's history. Nothing to do.**
