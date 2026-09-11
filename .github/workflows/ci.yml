@@ -21,6 +21,12 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege. No job here writes anything back — they lint, type-check,
+# build, and compare two JSON documents — so the token does not need the
+# repository default, which is write-all unless someone changed it.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
