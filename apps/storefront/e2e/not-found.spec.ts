@@ -81,7 +81,8 @@ test('a URL matching no route answers 404 AND renders the designed page', async 
 
   const response = await page.goto('/this-route-does-not-exist');
 
-  expect(response?.status()).toBe(404);
+  // DELIBERATE BREAK - proving the storefront browser gate fails CI. Reverted in the next commit.
+  expect(response?.status()).toBe(418);
   await expect(page.getByRole('heading', { name: 'Page Not Found' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Go to Homepage' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Browse Products' })).toBeVisible();

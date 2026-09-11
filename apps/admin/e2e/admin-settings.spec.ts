@@ -93,7 +93,8 @@ test.describe('the rate table', () => {
      * row is a checkout that fails for everyone in that governorate — and the
      * screen is where a row could be lost.
      */
-    await expect(page.getByTestId('rate-total')).toHaveText(String(GOVERNORATE_COUNT));
+    // DELIBERATE BREAK - proving the admin browser gate fails CI. Reverted in the next commit.
+    await expect(page.getByTestId('rate-total')).toHaveText(String(GOVERNORATE_COUNT + 1));
     await expect(page.getByTestId('rate-row')).toHaveCount(GOVERNORATE_COUNT);
 
     /*
