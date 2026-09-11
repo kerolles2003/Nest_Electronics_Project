@@ -8712,3 +8712,98 @@ which was the point of Part 9 and is now a fact rather than an expectation.
 
 Under `github.com/kerolles2003/Nest_Electronics_Project`. Written out because a
 run number alone stops meaning anything once the list scrolls.
+
+---
+
+# Part 17 — the superseded working directory, which is a live trap, and my wrong correction of the owner
+
+A session was asked to establish ground truth. It reported a repository that
+did not match what the owner believed: `origin` with one branch, `main` at
+`c7ccecf` dated **2026-05-02**, Vite, a WoodMart theme, `artifacts/storefront`,
+**134 commits**. I read that gap against this directory, found one unpushed
+commit, and concluded the previous session had been here all along.
+
+**That was wrong, and the owner corrected it.** A single unpushed commit cannot
+turn a September tree into a May-dated Vite prototype. The correct inference was
+the one the owner had already made and I talked past.
+
+## The trap, measured
+
+`D:\eng-mina\nest-electronics` exists. It is a second checkout, and it points
+at the archived remote:
+
+| | this directory | `D:\eng-mina\nest-electronics` |
+| --- | --- | --- |
+| `origin` | `kerolles2003/Nest_Electronics_Project` | **`kerolles2003/Nest_Electro`** |
+| `origin/main` | `ec8b8c1`, 2026-09-11 | **`c7ccecf`, 2026-05-02** |
+| remote branches | 2 | **1** |
+| `origin/main` tree | the monorepo | **Vite, `artifacts/storefront`, `.replit`** |
+| checked-out branch | `main` | `phase-1-2-overnight` |
+| `rev-list --count main..HEAD` | — | **134** |
+
+Every number the previous session reported is in the right-hand column. It was
+not confused and it was not in a stale copy of this tree; it was in a different
+repository, reading it correctly.
+
+`c7ccecf` really does carry `artifacts/mockup-sandbox/vite.config.ts` and
+`artifacts/storefront/src/App.tsx`. That ref is also itself stale — the live
+`Nest_Electro` remote has since moved to `19c3030`, so even the archived
+directory's idea of its own remote is out of date.
+
+## Why it is a trap rather than an eyesore
+
+The directory does not look abandoned. Its HEAD is `de8a353`, dated
+**2026-09-11 — today**, and it holds 148 commits. A session opening it finds a
+plausible, recent, actively-worked tree and a `git log` that reads like this
+project. Nothing announces that `origin` is archived. The only tell is
+`git remote -v`, which is the one command a session is least likely to
+distrust the answer to.
+
+So the failure mode is not "somebody gets confused once". It is that **any
+session opened there produces a confident, internally consistent, entirely
+false report** — and the report will disagree with this repository in ways that
+invite exactly the debugging I did: looking for the discrepancy inside the tree,
+where it is not.
+
+This is the same shape as the four signals this engagement has already caught:
+a green suite that proved nothing, a scanner that could not see a class of
+secret, a dashboard reading a discarded table, and "I could not check it"
+standing in for "I did not find a way to check it". A correct-looking answer
+from the wrong source. It is the fifth.
+
+## The part that is NOT just a stale copy — seven commits live only there
+
+Retiring the directory is the right call. Deleting it is not yet, because it
+holds work this repository does not:
+
+| commit | subject |
+| --- | --- |
+| `eaff2fc` | `fix(security): harden the secret scanner's reader, reporting and coverage` |
+| `c47dcfc` | `ci: scope both workflow tokens to contents: read` |
+| `063ebcb` | `fix(api): vendor swagger-ui and escape the generated page title` |
+| `500507f` | `fix(api): let the page gate finish printing, and hold the vendored assets to it` |
+| `6ea3b5a` | `chore(api): run the browsable-page gate in one place` |
+| `606343e` | `fix(admin,storefront): let the host assign the port in production` |
+| `de8a353` | `docs(work-log): the canary audit covered 14 classes; the scanner ships more` |
+
+All seven are dated 2026-09-11. Two of them are security work — a hardening of
+the scanner that found the live `ANTHROPIC_API_KEY`, and a token-scoping change
+to both workflows. Neither exists here.
+
+They are also not cleanly cherry-pickable in every case: `606343e` ("let the
+host assign the port in production") and this repository's `09a4fe4` ("pin each
+app's port so they stop colliding") are **different answers to overlapping
+problems**, so that pair needs a decision, not a transplant.
+
+**Nothing in this entry moves them.** Recording where they are is the task;
+deciding what to do with them is the owner's, and doing it blind would be the
+same mistake at a different address.
+
+## What to do when opening any directory in this project
+
+Run `git remote -v` first and read the answer. If it says `Nest_Electro`, stop:
+that repository is archived and superseded, nothing should be pushed to it, and
+nothing read from it describes the current state of this project.
+
+The live repository is `kerolles2003/Nest_Electronics_Project`, and on this
+machine it is `D:\eng-mina\Nest_Electronics_Project` and nowhere else.
