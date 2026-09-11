@@ -38,21 +38,85 @@ import { fileURLToPath } from 'node:url';
  * every `<` with its `<` escape yields a document that parses to an
  * IDENTICAL object and cannot terminate the surrounding `</script>` tag. The
  * checker compares parsed objects, so this transformation is invisible to it.
+ *
+ * The SAME reasoning applies to `info.title` and `info.version`, which come out
+ * of the same document and go into markup rather than into a script block. They
+ * are escaped through `escapeHtml` below. An earlier version interpolated them
+ * raw, which meant a title containing `<` — legal in OpenAPI, and the sibling
+ * `info.description` already carries markdown — broke out of `<title>` in a
+ * committed file the README tells a mobile developer to open.
+ *
+ * ## Why Swagger UI is VENDORED and not loaded from a CDN
+ *
+ * `swagger-ui-bundle.js` and `swagger-ui.css` are committed next to this page.
+ * They used to be `<script src>`/`<link href>` at jsDelivr, pinned by version
+ * and marked `crossorigin="anonymous"` — which without an `integrity` hash does
+ * nothing at all, because a version tag on a CDN is a mutable pointer to bytes
+ * rather than the bytes themselves. Anything that can answer for that host can
+ * change what this page executes, and the page executes it with the contract in
+ * hand.
+ *
+ * Vendoring closes that and also finishes the job the page was built for: the
+ * old offline path rendered a banner apologising that Swagger UI could not be
+ * reached, which is a page that does not work offline. Classic `<script src>`
+ * and `<link href>` both load from `file://` — unlike the `fetch` this page
+ * already works around — so the whole thing now works from disk with no
+ * network. `SWAGGER_UI_VERSION` stays as the record of which release these
+ * bytes are; bumping it means re-downloading both files in the same commit.
+ *
+ * ## Why this page is COMMITTED at all, given it duplicates the artifact
+ *
+ * Publishing `docs/` through GitHub Pages would serve the page over http, where
+ * `SwaggerUIBundle({ url: './openapi.v1.json' })` just works — no second copy,
+ * no escaping, no drift gate, no ~430KB per contract change. That is a real
+ * alternative and it was weighed. It is not taken because it trades away the
+ * property this page exists for: reading the contract with no server, no
+ * network, and no repository settings, which is the first thing README.md asks
+ * a mobile developer to do. The duplicate is the price, and
+ * `check-openapi-page.mjs` is what keeps the price honest.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ARTIFACT = resolve(HERE, '../../../docs/api/openapi.v1.json');
-const OUTPUT = resolve(HERE, '../../../docs/api/index.html');
+const DOCS = resolve(HERE, '../../../docs/api');
+const ARTIFACT = resolve(DOCS, 'openapi.v1.json');
+const OUTPUT = resolve(DOCS, 'index.html');
 
 /**
- * Pinned, deliberately.
+ * The Swagger UI release these vendored bytes came from.
  *
- * `latest` would mean the page a developer opens on Tuesday is not the page
- * that was reviewed on Monday, and a Swagger UI regression would arrive
- * unannounced in a document this team treats as frozen. Bumping it is a commit.
+ * Pinned, deliberately: `latest` would mean the page a developer opens on
+ * Tuesday is not the page that was reviewed on Monday, and a Swagger UI
+ * regression would arrive unannounced in a document this team treats as frozen.
+ *
+ * Bumping it is a commit, and the commit must re-download BOTH files:
+ *
+ *   curl -sSL -o docs/api/swagger-ui-bundle.js \
+ *     https://cdn.jsdelivr.net/npm/swagger-ui-dist@<version>/swagger-ui-bundle.js
+ *   curl -sSL -o docs/api/swagger-ui.css \
+ *     https://cdn.jsdelivr.net/npm/swagger-ui-dist@<version>/swagger-ui.css
+ *
+ * Then `pnpm secrets:scan-file` each one before `git add` — they are bytes from
+ * outside this repository, and a false positive discovered after the commit
+ * costs an allowlist entry.
  */
 const SWAGGER_UI_VERSION = '5.17.14';
-const CDN = `https://cdn.jsdelivr.net/npm/swagger-ui-dist@${SWAGGER_UI_VERSION}`;
+
+const ASSETS = [
+  ['swagger-ui-bundle.js', resolve(DOCS, 'swagger-ui-bundle.js')],
+  ['swagger-ui.css', resolve(DOCS, 'swagger-ui.css')],
+];
+
+const sha256Of = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/**
+ * For values that land in MARKUP rather than in the JSON script block.
+ *
+ * `info.title` and `info.version` are attacker-adjacent in the same sense the
+ * spec body is: they come out of a document this script does not author. See
+ * the header comment.
+ */
+const escapeHtml = (value) =>
+  String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 const raw = readFileSync(ARTIFACT, 'utf8');
 
@@ -60,17 +124,45 @@ const raw = readFileSync(ARTIFACT, 'utf8');
 // emitting a page that renders nothing.
 const document = JSON.parse(raw);
 
+// The vendored assets are read, not just referenced: a page pointing at a file
+// that is not there renders nothing, and it should fail here rather than in a
+// browser. Their hashes go into the page so `check-openapi-page.mjs` can tell
+// a missing or edited asset from an intact one.
+const assetHashes = ASSETS.map(([name, path]) => {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    process.stderr.write(
+      `openapi page: docs/api/${name} is missing.\n` +
+        '  Swagger UI is vendored, not fetched from a CDN — see the header comment\n' +
+        '  in this file for the two curl commands that restore it.\n',
+    );
+    process.exit(1);
+  }
+  return [name, sha256Of(text)];
+});
+
 const title = document?.info?.title ?? 'API';
-const version = document?.info?.version ?? 'v1';
-const sha256 = createHash('sha256').update(raw, 'utf8').digest('hex');
+const rawVersion = String(document?.info?.version ?? '1');
+// `setVersion("1")` makes info.version the bare string "1", so an unprefixed
+// title reads "Nest Electronics API 1", which looks like a truncation next to
+// `/api/v1`, `openapi.v1.json` and every other surface. Prefix it for display
+// only — the frozen artifact is not this script's to edit.
+const version = /^\d/.test(rawVersion) ? `v${rawVersion}` : rawVersion;
+const sha256 = sha256Of(raw);
 const embedded = raw.replaceAll('<', '\\u003c');
+
+const assetMeta = assetHashes
+  .map(([name, hash]) => `<meta name="vendored-asset-sha256" content="${name} ${hash}">`)
+  .join('\n');
 
 const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} ${version} — API reference</title>
+<title>${escapeHtml(title)} ${escapeHtml(version)} — API reference</title>
 <!--
   GENERATED FILE — DO NOT EDIT.
 
@@ -81,10 +173,14 @@ const html = `<!doctype html>
 
   The spec below is embedded so this file works when opened directly from
   disk. CI fails if it disagrees with docs/api/openapi.v1.json.
+
+  Swagger UI is vendored alongside this file rather than loaded from a CDN,
+  so the whole page works with no server and no network.
 -->
 <meta name="openapi-artifact-sha256" content="${sha256}">
 <meta name="swagger-ui-version" content="${SWAGGER_UI_VERSION}">
-<link rel="stylesheet" href="${CDN}/swagger-ui.css">
+${assetMeta}
+<link rel="stylesheet" href="./swagger-ui.css">
 <style>
   body { margin: 0; background: #fafafa; }
   .nest-offline-note {
@@ -101,13 +197,15 @@ const html = `<!doctype html>
 </head>
 <body>
 <p class="nest-offline-note" id="offline-note">
-  Swagger UI's own assets could not be loaded from the CDN, so this page cannot
-  render. The API contract itself is embedded in this file and is readable
-  without it: open <code>docs/api/openapi.v1.json</code>.
+  <code>swagger-ui-bundle.js</code> did not load, so this page cannot render. It
+  sits next to this file — if you copied <code>index.html</code> somewhere on its
+  own, copy its two siblings too. The API contract itself is embedded in this
+  file and is readable without them: open
+  <code>docs/api/openapi.v1.json</code>.
 </p>
 <div id="swagger-ui"></div>
 <script type="application/json" id="openapi-spec">${embedded}</script>
-<script src="${CDN}/swagger-ui-bundle.js" crossorigin="anonymous"></script>
+<script src="./swagger-ui-bundle.js"></script>
 <script>
   (function () {
     if (typeof SwaggerUIBundle !== 'function') {
@@ -136,5 +234,6 @@ writeFileSync(OUTPUT, html, 'utf8');
 
 process.stdout.write(
   `openapi page: wrote docs/api/index.html ` +
-    `(${title} ${version}, spec sha256 ${sha256.slice(0, 12)}…, swagger-ui ${SWAGGER_UI_VERSION})\n`,
+    `(${title} ${version}, spec sha256 ${sha256.slice(0, 12)}…, ` +
+    `swagger-ui ${SWAGGER_UI_VERSION} vendored: ${assetHashes.map(([n]) => n).join(', ')})\n`,
 );

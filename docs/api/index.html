@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nest Electronics API 1 — API reference</title>
+<title>Nest Electronics API v1 — API reference</title>
 <!--
   GENERATED FILE — DO NOT EDIT.
 
@@ -14,10 +14,15 @@
 
   The spec below is embedded so this file works when opened directly from
   disk. CI fails if it disagrees with docs/api/openapi.v1.json.
+
+  Swagger UI is vendored alongside this file rather than loaded from a CDN,
+  so the whole page works with no server and no network.
 -->
 <meta name="openapi-artifact-sha256" content="d967edb46c8901808610badd68b2185d14d2f78e998bdcc6002e3715ad042656">
 <meta name="swagger-ui-version" content="5.17.14">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+<meta name="vendored-asset-sha256" content="swagger-ui-bundle.js c2e4a9ef08144839ff47c14202063ecfe4e59e70a4e7154a26bd50d880c88ba1">
+<meta name="vendored-asset-sha256" content="swagger-ui.css 40170f0ee859d17f92131ba707329a88a070e4f66874d11365e9a77d232f6117">
+<link rel="stylesheet" href="./swagger-ui.css">
 <style>
   body { margin: 0; background: #fafafa; }
   .nest-offline-note {
@@ -34,9 +39,11 @@
 </head>
 <body>
 <p class="nest-offline-note" id="offline-note">
-  Swagger UI's own assets could not be loaded from the CDN, so this page cannot
-  render. The API contract itself is embedded in this file and is readable
-  without it: open <code>docs/api/openapi.v1.json</code>.
+  <code>swagger-ui-bundle.js</code> did not load, so this page cannot render. It
+  sits next to this file — if you copied <code>index.html</code> somewhere on its
+  own, copy its two siblings too. The API contract itself is embedded in this
+  file and is readable without them: open
+  <code>docs/api/openapi.v1.json</code>.
 </p>
 <div id="swagger-ui"></div>
 <script type="application/json" id="openapi-spec">{
@@ -12904,7 +12911,7 @@
   }
 }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin="anonymous"></script>
+<script src="./swagger-ui-bundle.js"></script>
 <script>
   (function () {
     if (typeof SwaggerUIBundle !== 'function') {
