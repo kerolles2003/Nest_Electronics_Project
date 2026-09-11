@@ -229,6 +229,57 @@ test.describe('the chrome does not link to pages that do not exist', () => {
 
     expect(broken, 'Linked from the site chrome and not a page.').toEqual([]);
   });
+
+  test('/blog is gone, and stays gone until Phase 8 rebuilds it', async ({ page, request }) => {
+    /*
+     * A TRIPWIRE, in the shape of the walk above, for the one link that was not
+     * a 404 but a 500.
+     *
+     * `/blog` was in `MAIN_NAV_LINKS`, so it was in the main navigation of
+     * every page. It is the only route that still read Supabase, through
+     * non-null assertions on `NEXT_PUBLIC_SUPABASE_URL` and
+     * `NEXT_PUBLIC_SUPABASE_ANON_KEY` — present in a developer's `.env.local`,
+     * absent in CI, and absent on the Phase 11 target too. So it was not a
+     * test-environment quirk: it was a live 500 waiting for production, linked
+     * from the chrome of every page, for a page with no posts, no CMS and no
+     * author.
+     *
+     * The walk above would catch it coming back as a 500, but only while the
+     * credentials are missing — supply them anywhere and the link goes quiet
+     * again while still pointing at an empty Supabase-backed page this project
+     * has decided to replace. This test does not depend on that: it asserts the
+     * DECISION, not the symptom.
+     *
+     * Both halves matter. Restoring the nav entry without the rebuild fails
+     * here; so does restoring the route while leaving it unlinked.
+     */
+    const response = await request.get('/blog', { maxRedirects: 0 });
+
+    expect(
+      response.status(),
+      '/blog answered something other than 404 — the route is back before Phase 8 rebuilt it',
+    ).toBe(404);
+
+    const linked: string[] = [];
+
+    for (const route of ['/', '/products', '/products/esp32-devkit-v1', '/cart', '/login']) {
+      await page.goto(route);
+      await settle(page);
+
+      const found = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href]'))
+          .map((a) => a.getAttribute('href') ?? '')
+          .filter((href) => href === '/blog' || href.startsWith('/blog/') || href.startsWith('/blog?')),
+      );
+
+      for (const href of found) linked.push(`${route} links ${href}`);
+    }
+
+    expect(
+      linked,
+      'the chrome links to /blog again — see MAIN_NAV_LINKS in packages/config/src/constants.ts',
+    ).toEqual([]);
+  });
 });
 
 test.describe('the shared component library is styled', () => {

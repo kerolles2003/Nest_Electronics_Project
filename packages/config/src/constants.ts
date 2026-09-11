@@ -73,10 +73,35 @@ export const TOP_NAV_LINKS = [
   { label: 'Contact', href: '/contact' },
 ] as const;
 
+/*
+ * "Blog" is deliberately absent, and it is a stronger case than the six above.
+ *
+ * Those were 404s. This one was a **500**, in the main navigation of every
+ * page, and it would have been a 500 in production for the same reason it was
+ * one in CI: `/blog` is the only route that still reads Supabase, and
+ * `lib/supabase.ts` takes `NEXT_PUBLIC_SUPABASE_URL` and
+ * `NEXT_PUBLIC_SUPABASE_ANON_KEY` behind non-null assertions. A developer
+ * machine has them in `.env.local`. CI does not, and the Phase 11 target will
+ * not either — so the page that hard-crashes is linked from the chrome of
+ * every page on the site.
+ *
+ * It also has no content: no post model, no CMS and no author (see
+ * `components/home/README.md`). So this is not a page being hidden while it is
+ * repaired; it is a link to something that does not work and has nothing to
+ * show.
+ *
+ * The route is removed with the link, so `/blog` is an honest 404 rather than
+ * an unreachable crash. `ROUTES.blog` stays — exactly as `ROUTES.about` and
+ * `ROUTES.faq` stayed — because Phase 8 rebuilds blog on the API, and the entry
+ * comes back here the day that route does.
+ *
+ * `e2e/qa-layout.spec.ts` asserts both halves: nothing links to `/blog`, and
+ * `/blog` answers 404. Restoring the link without the Phase 8 rebuild fails CI
+ * rather than a customer's browser.
+ */
 export const MAIN_NAV_LINKS = [
   { label: 'Home', href: ROUTES.home },
   { label: 'Shop', href: ROUTES.products },
-  { label: 'Blog', href: ROUTES.blog },
   { label: 'Contact', href: '/contact' },
 ] as const;
 
