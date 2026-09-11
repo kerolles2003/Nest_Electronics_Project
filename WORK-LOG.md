@@ -8807,3 +8807,129 @@ nothing read from it describes the current state of this project.
 
 The live repository is `kerolles2003/Nest_Electronics_Project`, and on this
 machine it is `D:\eng-mina\Nest_Electronics_Project` and nowhere else.
+
+---
+
+# Part 18 — the cart-merge defect, which was a defect in the test
+
+The browser gates went in, and their first run on unbroken `main` failed
+`guest-cart-journey.spec.ts:387` — *"a merge INTERRUPTED part-way and retried
+does not double anything"* — expecting `{product: 5}` and receiving `7`. It
+failed its retry too, so it was not a flake.
+
+That is the test the file introduces as **"THE case. Everything else is
+arithmetic; this is the one that costs a customer money if it is wrong."** The
+working assumption, mine and the owner's, was a money defect: a guest with five
+of a product who signs in during a network hiccup ends with seven.
+
+**That assumption was wrong. The application code is correct. The test was
+lying, and had been lying since it was written.**
+
+## Reproduced before anything was changed
+
+Docker was not running, which is why the earlier session could not run this
+suite at all. Started it, brought up the replica set, and ran the single case.
+
+- Three repeats: **3 passed**.
+- One more run: **1 failed**, `applyGuestCartMerge([{…, quantity: 7}])`.
+
+So it reproduces locally and it is a coin flip. The server log is what makes the
+mechanism visible, because the two outcomes have different SHAPES:
+
+    PASS   plan([2]) · (apply aborted) · plan([2]) · apply([5])
+    FAIL   plan([2]) · (apply aborted) · plan([2]) · apply([7])
+
+**Both re-plan.** The retry calls `planGuestCartMerge` a second time in every
+run, passing or failing. It never once read the frozen plan. What decides the
+verdict is whether the aborted write reached the API first: if it did not, the
+cart still holds 3 and a re-plan computes 2 + 3 = 5, which is the right answer
+by coincidence; if it did, the cart holds 5 and the re-plan computes 2 + 5 = 7.
+
+CI is slower, so the write lands more often. The local machine wins the race and
+the test is quiet. **The invariant this case exists to prove has never been
+exercised, on any machine, in either outcome.**
+
+## Why the plan was not there to read
+
+Instrumenting `localStorage` around the retry navigation:
+
+    A (before unroute)   pendingMerge = [{product, quantity: 5}]   ← frozen
+    B (after goto)       pendingMerge = null                        ← gone
+
+No store transition fired between them; the store never saw the value change.
+On the second page the store was *created* with `pendingMerge: null`, because
+`localStorage` already read null at module-eval time.
+
+The cause is in the harness, four lines of it:
+
+```ts
+await page.addInitScript(([key, value]) => {
+  window.localStorage.setItem(key as string, value as string);
+}, [STORE_KEY, JSON.stringify({ state: { items, pendingMerge }, version: 0 })]);
+```
+
+**Playwright runs an init script on every navigation, not only the first.** The
+retry's `page.goto('/account/orders')` re-ran the seed, overwriting
+`localStorage` with the original `{items: [2], pendingMerge: null}` and deleting
+the frozen plan the application had just written. The test destroyed its own
+precondition and then measured what was left.
+
+## The application code was never wrong, and there is independent proof
+
+`mergeGuestCartOnLogin` reads `pendingMerge` first and short-circuits to
+`apply(pending)` before planning anything. That is correct and always was.
+
+The proof is already in the same file. `a merge whose plan was already applied
+is not applied twice` (:493) reconstructs the identical situation *without* a
+network race — it seeds a frozen plan of 5 and a server cart of 5, and asserts
+5 rather than 7. It passes, and it has always passed. Two tests claimed one
+guarantee; the deterministic one was telling the truth and the racy one was not
+testing anything.
+
+**So nothing shipped wrong.** A production guest does not lose money to this:
+nothing in a browser rewrites `localStorage` on navigation.
+
+## What changed, and why each part
+
+1. **The seed writes once.** `if (localStorage.getItem(key) === null)`. A
+   harness that silently resets application state part-way through a test can
+   invalidate any assertion after the first navigation, not just this one —
+   making the clobber impossible beats not doing it.
+2. **The interruption is now deterministic and takes the HARD branch.**
+   `route.fetch()` forwards the write to the API, and only then
+   `route.abort('failed')` tells the client the network died. That is exactly
+   "the write landed and the response was lost", which is the only interruption
+   that can double a cart. Previously the branch under test was chosen by a
+   race, and the machine that ran it most often chose the harmless one.
+3. **The frozen plan is asserted to survive the navigation**, with a message
+   that names the failure: *"the frozen plan did not survive the retry
+   navigation, so the retry re-planned"*. Its absence was invisible before,
+   because a re-plan looks exactly like a working merge whenever the numbers
+   happen to agree.
+
+## Proved by making it fail
+
+With (2) and (3) kept and only the seed fix reverted:
+
+    plan([2]) · plan([2]) · applyGuestCartMerge([{…, quantity: 7}])
+    Error: the frozen plan did not survive the retry navigation, so the retry re-planned
+      Expected: [{ productId: …, quantity: 5 }]
+      Received: null
+
+Deterministic, and it fails at the cause rather than three steps downstream at
+`5 !== 7`. Restored, the shape is the one the design describes — **one** plan,
+then the frozen absolute target applied twice:
+
+    plan([2]) · apply([5]) · apply([5])          3 repeats, 3 passed
+
+## The lesson, which is the same one again
+
+This is the fifth confident signal here that meant nothing, and the second in
+two days where the artifact existed and the guarantee did not. The gate that
+found it was added the same afternoon, for exactly that reason.
+
+Worth naming precisely: **a test that passes because two different wrong paths
+produce the same number is indistinguishable from a test that passes.** The only
+thing that separated them was a machine slow enough to take the other branch —
+which is an argument for running the browser suites somewhere other than the
+developer's laptop, and is what CI now does.
