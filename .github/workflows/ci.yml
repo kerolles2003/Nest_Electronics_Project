@@ -1,7 +1,9 @@
-# Nest Electronics — CI (workspace checks + MongoDB transaction gate + API contract gate)
+# Nest Electronics — CI (workspace checks + MongoDB transaction gate + API contract
+# gate + the two browser gates)
 #
-# Scope: the pnpm + Turborepo workspace, the MongoDB transaction hard gate, and the
-# frozen OpenAPI v1 contract gate.
+# Scope: the pnpm + Turborepo workspace, the MongoDB transaction hard gate, the
+# frozen OpenAPI v1 contract gate, and the Playwright suites for both front
+# ends.
 # Deliberately NOT included:
 #   - no deploy / CD : still out of scope
 #   - no secrets     : no job requires a credential, and none is referenced.
@@ -256,6 +258,188 @@ jobs:
       # covers the rest is in the same section.
       - name: Check the OpenAPI artifact against the live API
         run: pnpm --filter api openapi:check
+
+      - name: Stop MongoDB
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v
+
+  # ---------------------------------------------------------------------------
+  # THE BROWSER GATES.
+  #
+  # Until now this workflow had five jobs and none of them opened a browser.
+  # 169 Playwright tests existed — 95 storefront, 74 admin — and every one of
+  # them ran only where a developer chose to run it. That is the fifth time in
+  # this repository that an artifact existed while the guarantee it implies did
+  # not, and it is the worst instance of the five, because these specs were
+  # written precisely BECAUSE the developer machine could not be trusted: the
+  # sharp defect existed only on linux-x64, and a Windows host could not
+  # reproduce it in either direction.
+  #
+  # A suite nothing runs is documentation. These jobs are real gates — no
+  # continue-on-error, no `|| true`, no conditional skip.
+  #
+  # ## Why two jobs rather than one
+  #
+  # Same reasoning the contract gate gives for being separate from the
+  # transaction gate: when CI goes red the JOB NAME should already say what
+  # broke. "Browser gate" failing tells you to go reading; "Admin browser gate"
+  # failing tells you where. They also run on separate runners, so the wall
+  # clock is the slower of the two rather than their sum.
+  #
+  # ## What they do NOT need, and why the step list is this short
+  #
+  # No seed step, no `indexes:sync` step, no admin provisioning step. Each
+  # Playwright config starts its own API through `webServer`, and that command
+  # runs `test-db --suite <suite> --ensure-clean` first, which synchronises the
+  # declared indexes, seeds the catalogue, seeds the 27 shipping rates and
+  # provisions the development admin — into a scratch database named per suite
+  # (`nest_electronics_scratch_storefront`, `..._admin`), never the one in
+  # MONGODB_URI. Adding those steps here would duplicate the preparation in a
+  # second place that could drift from the first.
+  #
+  # What they DO need is the replica set, because the suites open transactions,
+  # and a signing key, because the API refuses to boot without one.
+  #
+  # ## What is NOT protected by these jobs
+  #
+  # This workflow is `on: push: branches: [main]` + `pull_request`. A push to a
+  # feature branch runs the secret scan (which is `branches: ['**']`) and
+  # NOTHING ELSE — no lint, no types, no tests, and now no browser gate either.
+  # That predates these jobs and is unchanged by them, but it is worth saying
+  # plainly rather than leaving implied: between feature-branch pushes the
+  # browser suites are unenforced, and the enforcement point is the pull
+  # request. Work that never opens one is never gated.
+  # ---------------------------------------------------------------------------
+  storefront-browser-gate:
+    name: Storefront browser gate
+    runs-on: ubuntu-latest
+    # A hung `next dev` should cost minutes, not the six-hour default.
+    timeout-minutes: 30
+
+    env:
+      # Credential-free and runner-local, exactly like the gates above. The
+      # suite overrides MONGODB_DB_NAME to its own scratch database, so the name
+      # here is only what an unconfigured connection would land in.
+      MONGODB_URI: mongodb://127.0.0.1:27017/nest_electronics_browser_storefront
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Chromium only: `playwright.config.ts` declares exactly one project.
+      # Installing the other two engines would add minutes for browsers no
+      # project names.
+      - name: Install Chromium
+        run: pnpm --filter storefront exec playwright install --with-deps chromium
+
+      # Same reasoning as the gates above: generated per run, throwaway, never
+      # stored, so this workflow keeps its promise that no job needs a secret.
+      - name: Generate an ephemeral JWT_SECRET
+        run: |
+          echo "JWT_SECRET=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))")" >> "$GITHUB_ENV"
+
+      - name: Start MongoDB replica set
+        run: docker compose -f docker-compose.dev.yml up -d --wait
+
+      # Asserted, not assumed — a compose filename is not evidence of a
+      # topology, and `global-setup.ts` opens a transaction before the first
+      # spec runs.
+      - name: Prove the topology has a PRIMARY
+        run: >
+          docker exec nest-electronics-mongo mongosh --quiet --eval
+          'const h = db.adminCommand({ hello: 1 });
+           if (!h.setName || !h.isWritablePrimary) {
+             print("FAIL: not a replica set PRIMARY: " + JSON.stringify(h));
+             quit(1);
+           }
+           print("replica set " + h.setName + " PRIMARY at " + h.me + ", server " + db.version());'
+
+      - name: Storefront browser suite
+        run: pnpm --filter storefront test:e2e
+
+      # `trace: retain-on-failure` and `screenshot: only-on-failure` write here.
+      # Without the upload a red run in CI is a stack trace and nothing to look
+      # at, which is how a browser failure becomes "probably flaky".
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storefront-browser-failures
+          path: |
+            apps/storefront/test-results/
+            apps/storefront/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop MongoDB
+        if: always()
+        run: docker compose -f docker-compose.dev.yml down -v
+
+  admin-browser-gate:
+    name: Admin browser gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017/nest_electronics_browser_admin
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter admin exec playwright install --with-deps chromium
+
+      - name: Generate an ephemeral JWT_SECRET
+        run: |
+          echo "JWT_SECRET=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))")" >> "$GITHUB_ENV"
+
+      - name: Start MongoDB replica set
+        run: docker compose -f docker-compose.dev.yml up -d --wait
+
+      - name: Prove the topology has a PRIMARY
+        run: >
+          docker exec nest-electronics-mongo mongosh --quiet --eval
+          'const h = db.adminCommand({ hello: 1 });
+           if (!h.setName || !h.isWritablePrimary) {
+             print("FAIL: not a replica set PRIMARY: " + JSON.stringify(h));
+             quit(1);
+           }
+           print("replica set " + h.setName + " PRIMARY at " + h.me + ", server " + db.version());'
+
+      # `admin`'s `test:e2e` is TWO Playwright runs, and both matter: the main
+      # config, and `playwright.unreachable-api.config.ts`, which starts a
+      # second admin pointed at a port nothing is listening on to prove the
+      # console degrades honestly when the API is unreachable. Running only the
+      # first would gate the happy path and leave the failure path where the
+      # whole suite was a week ago.
+      - name: Admin browser suite (main + unreachable-API configs)
+        run: pnpm --filter admin test:e2e
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-browser-failures
+          path: |
+            apps/admin/test-results/
+            apps/admin/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Stop MongoDB
         if: always()
